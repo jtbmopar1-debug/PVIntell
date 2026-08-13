@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PVIntell
 
-## Getting Started
+PVIntell is an AI-first workspace for designing, building, commissioning, monitoring, and diagnosing solar power systems. The user describes what they want in ordinary language; Wattson turns that into a structured, explainable system design.
 
-First, run the development server:
+## MVP
+
+- Wattson-first natural-language onboarding with beginner-friendly defaults
+- Persistent structured demo project and visible assumption tracking
+- Independent load, solar, battery, and inverter calculators
+- Simple/technical system topology views
+- Safety-aware installation stages and permanent commissioning records
+- Manufacturer-independent telemetry, mock inverter/BMS drivers, and rule diagnostics
+- Monitoring dashboard, mock weather, seeded 48 V off-grid home, and widget API
+- PostgreSQL/Supabase Prisma schema covering the complete project lifecycle
+
+The demo runs without credentials. Browser edits persist in `localStorage`; the schema is ready for live Supabase persistence once database connection variables are supplied.
+
+## Setup
+
+Requirements: Node.js 20.9+ and npm.
 
 ```bash
+npm install
+copy .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`. Do not commit `.env.local`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The supplied Supabase endpoint belongs in `NEXT_PUBLIC_SUPABASE_URL`. Add its anon key for client APIs. Prisma additionally needs the pooled `DATABASE_URL` and migration-safe `DIRECT_URL` shown in Supabase Database → Connect.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run db:generate
+npm run db:push
+```
 
-## Learn More
+## Architecture
 
-To learn more about Next.js, take a look at the following resources:
+```text
+src/app             Next.js routes and compact widget API
+src/components      Wattson-first product workspace
+src/domain          Project types and pure calculation engine
+src/ai              Project-aware AIProvider and mock provider
+src/telemetry       Normalized measurements and DeviceDriver interface
+src/diagnostics     Deterministic rules consumed by Wattson
+src/weather         WeatherProvider and mock forecast
+src/persistence     Storage adapter (browser MVP; Prisma next)
+src/data            Seeded realistic demo system and telemetry
+prisma              PostgreSQL data model
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The structured `Project` is the source of truth. Conversation is an input mechanism, not the database: user statements update loads and assumptions, calculators derive recommendations, and Wattson explains those results using project context.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### AI
 
-## Deploy on Vercel
+`AIProvider` separates orchestration from any model vendor. Its methods cover chat, system analysis, fault diagnosis, recommendation explanation, installation, and commissioning. `MockAIProvider` makes the MVP deterministic without API credentials. A production provider should receive only the structured `WattsonContext`, enforce authorization, and retain tool/audit records.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Telemetry and hardware
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+All downstream features consume normalized keys such as `battery.soc`, `pv.power`, and `inverter.state`. Manufacturer payloads must be translated inside a `DeviceDriver`; they never leak into UI or AI code. The included `MockInverterDriver` and `MockBMSDriver` demonstrate the boundary. Future Modbus, CAN, serial, LAN, Bluetooth, or cloud drivers implement the same interface.
+
+Timestamped measurements, faults, events, and alerts have indexed Prisma entities. At production scale, retention/downsampling can move into TimescaleDB or Supabase scheduled jobs without changing the normalized application contract.
+
+### Safety decision
+
+Installation steps explicitly classify user-level, low-voltage, high-current DC, and licensed work. Wattson may explain and collect results, but the UI never presents regulated or hazardous electrical work as trivial.
+
+## APIs
+
+`GET /api/widget` returns a compact normalized payload for future mobile widgets:
+
+```json
+{"pvPower":3820,"loadPower":1240,"batterySoc":78,"batteryPower":2487,"batteryDirection":"charging","systemStatus":"normal"}
+```
+
+## Verification
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+## Deployment
+
+The repository includes `vercel.json`. Import the Git repository in Vercel or run `npx vercel`. Add Supabase/AI environment variables in Vercel Project Settings; use separate Supabase credentials for preview and production where possible.
+
+## Next monitoring integrations
+
+1. Add a server-only Prisma repository and Supabase Auth/RLS policies.
+2. Implement one real driver behind a gateway/collector service.
+3. Stream normalized readings through a durable ingestion route.
+4. Add historical aggregation, alert delivery, and weather-adjusted generation forecasts.
+5. Replace the mock AI provider with a tool-using provider and evaluated safety policy.

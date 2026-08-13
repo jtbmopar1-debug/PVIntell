@@ -1,0 +1,3 @@
+import { describe, expect, it } from "vitest";
+import { evaluateDiagnostics } from "./rules";
+describe("diagnostic rules",()=>{it("flags zero PV during daylight",()=>{const result=evaluateDiagnostics({current:{timestamp:"now",source:"test","pv.power":0,"battery.voltage":52,"load.power":100},inverterRatedWatts:1000,lowBatteryVoltage:48,isDaylight:true});expect(result.some(f=>f.id==="zero-pv")).toBe(true)});it("returns healthy when no rules fire",()=>{const result=evaluateDiagnostics({current:{timestamp:"now",source:"test","pv.power":500,"battery.voltage":52,"load.power":100,"battery.cellDelta":.01},inverterRatedWatts:1000,lowBatteryVoltage:48,isDaylight:true});expect(result[0].id).toBe("healthy")})});

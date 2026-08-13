@@ -1,0 +1,240 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Confidence {
+  ESTIMATED
+  CONFIRMED
+}
+
+enum ProjectMode {
+  OFF_GRID
+  GRID_TIED
+  HYBRID
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  name      String?
+  projects  Project[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Project {
+  id                   String                @id @default(cuid())
+  userId               String
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                 String
+  description          String?
+  mode                 ProjectMode
+  phase                String                @default("DISCOVER")
+  location             String?
+  systemVoltage        Float?
+  settings             Json?
+  goals                ProjectGoal[]
+  assumptions          Assumption[]
+  components           SystemComponent[]
+  pvArrays             PVArray[]
+  batteryBanks         BatteryBank[]
+  inverters            Inverter[]
+  loads                Load[]
+  installationSteps    InstallationStep[]
+  commissioningRecords CommissioningRecord[]
+  telemetry            TelemetryReading[]
+  events               SystemEvent[]
+  alerts               Alert[]
+  conversations        Conversation[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+}
+
+model ProjectGoal {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  text      String
+  priority  Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model Assumption {
+  id         String     @id @default(cuid())
+  projectId  String
+  project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  label      String
+  value      Json
+  reason     String?
+  confidence Confidence @default(ESTIMATED)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+}
+
+model SystemComponent {
+  id                   String     @id @default(cuid())
+  projectId            String
+  project              Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type                 String
+  manufacturer         String?
+  model                String?
+  quantity             Int        @default(1)
+  specifications       Json?
+  notes                String?
+  installationLocation String?
+  serialNumber         String?
+  firmwareVersion      String?
+  manualUrl            String?
+  photoUrl             String?
+  confidence           Confidence @default(ESTIMATED)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+}
+
+model PVArray {
+  id              String  @id @default(cuid())
+  projectId       String
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name            String
+  panelWatts      Float
+  panelCount      Int
+  strings         Int?
+  panelsPerString Int?
+  specifications  Json?
+}
+
+model BatteryBank {
+  id             String  @id @default(cuid())
+  projectId      String
+  project        Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name           String
+  chemistry      String
+  nominalVoltage Float
+  nominalKWh     Float
+  usableKWh      Float
+  specifications Json?
+}
+
+model Inverter {
+  id              String  @id @default(cuid())
+  projectId       String
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name            String
+  continuousWatts Float
+  surgeWatts      Float
+  specifications  Json?
+}
+
+model Load {
+  id           String     @id @default(cuid())
+  projectId    String
+  project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name         String
+  watts        Float
+  quantity     Int        @default(1)
+  hoursPerDay  Float
+  surgeWatts   Float?
+  currentType  String     @default("AC")
+  simultaneous Boolean    @default(true)
+  confidence   Confidence @default(ESTIMATED)
+}
+
+model InstallationStep {
+  id             String    @id @default(cuid())
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  position       Int
+  title          String
+  instructions   String
+  safetyLevel    String
+  expectedResult String?
+  notes          String?
+  photoUrls      Json?
+  completedAt    DateTime?
+
+  @@unique([projectId, position])
+}
+
+model CommissioningRecord {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type          String
+  value         Json
+  expectedRange Json?
+  result        String
+  notes         String?
+  recordedAt    DateTime @default(now())
+}
+
+model TelemetryReading {
+  id           BigInt   @id @default(autoincrement())
+  projectId    String
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  key          String
+  numericValue Float?
+  textValue    String?
+  unit         String?
+  source       String
+  recordedAt   DateTime @default(now())
+
+  @@index([projectId, key, recordedAt])
+}
+
+model SystemEvent {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type       String
+  severity   String
+  code       String?
+  message    String
+  metadata   Json?
+  occurredAt DateTime @default(now())
+
+  @@index([projectId, occurredAt])
+}
+
+model Alert {
+  id             String    @id @default(cuid())
+  projectId      String
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title          String
+  severity       String
+  status         String    @default("OPEN")
+  explanation    String?
+  acknowledgedAt DateTime?
+  createdAt      DateTime  @default(now())
+}
+
+model Conversation {
+  id        String        @id @default(cuid())
+  projectId String
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title     String?
+  messages  ChatMessage[]
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+model ChatMessage {
+  id                String       @id @default(cuid())
+  conversationId    String
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role              MessageRole
+  content           String
+  structuredContext Json?
+  createdAt         DateTime     @default(now())
+}
