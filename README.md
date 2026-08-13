@@ -29,6 +29,15 @@ Open `http://localhost:3000`. Do not commit `.env.local`.
 
 The supplied Supabase endpoint belongs in `NEXT_PUBLIC_SUPABASE_URL`. Add its anon key for client APIs. Prisma additionally needs the pooled `DATABASE_URL` and migration-safe `DIRECT_URL` shown in Supabase Database → Connect.
 
+The initial Supabase migration is [supabase/migrations/202608140001_initial_pvintell.sql](supabase/migrations/202608140001_initial_pvintell.sql). It creates Auth-linked profiles, all MVP tables, private project-photo storage, signup triggers, and owner-only row-level security policies. Apply it once with the Supabase CLI or paste it into the project's SQL Editor.
+
+```bash
+supabase link --project-ref ewrbdrglvjacsyfqlrym
+supabase db push
+```
+
+Supabase Auth remains the identity authority. Do not create passwords or sessions in the `profiles` table; it stores only application-facing profile information keyed to `auth.users.id`.
+
 ```bash
 npm run db:generate
 npm run db:push

@@ -9,42 +9,52 @@ datasource db {
 }
 
 enum Confidence {
-  ESTIMATED
-  CONFIRMED
+  ESTIMATED @map("estimated")
+  CONFIRMED @map("confirmed")
+
+  @@map("confidence")
 }
 
 enum ProjectMode {
-  OFF_GRID
-  GRID_TIED
-  HYBRID
+  OFF_GRID  @map("off_grid")
+  GRID_TIED @map("grid_tied")
+  HYBRID    @map("hybrid")
+
+  @@map("project_mode")
 }
 
 enum MessageRole {
-  USER
-  ASSISTANT
-  SYSTEM
+  USER      @map("user")
+  ASSISTANT @map("assistant")
+  SYSTEM    @map("system")
+
+  @@map("message_role")
 }
 
+// Backed by public.profiles; IDs are created by Supabase Auth, not Prisma.
 model User {
-  id        String    @id @default(cuid())
-  email     String    @unique
-  name      String?
+  id        String    @id @db.Uuid
+  email     String?
+  name      String?   @map("display_name")
+  avatarUrl String?   @map("avatar_url")
   projects  Project[]
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("profiles")
 }
 
 model Project {
-  id                   String                @id @default(cuid())
-  userId               String
+  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId               String                @map("owner_id") @db.Uuid
   user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   name                 String
   description          String?
   mode                 ProjectMode
-  phase                String                @default("DISCOVER")
+  phase                String                @default("discover")
   location             String?
-  systemVoltage        Float?
-  settings             Json?
+  systemVoltage        Float?                @map("system_voltage")
+  settings             Json                  @default("{}")
   goals                ProjectGoal[]
   assumptions          Assumption[]
   components           SystemComponent[]
@@ -58,183 +68,211 @@ model Project {
   events               SystemEvent[]
   alerts               Alert[]
   conversations        Conversation[]
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([userId])
+  @@map("projects")
 }
 
 model ProjectGoal {
-  id        String   @id @default(cuid())
-  projectId String
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   text      String
   priority  Int      @default(0)
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("project_goals")
 }
 
 model Assumption {
-  id         String     @id @default(cuid())
-  projectId  String
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId  String     @map("project_id") @db.Uuid
   project    Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   label      String
   value      Json
   reason     String?
   confidence Confidence @default(ESTIMATED)
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("assumptions")
 }
 
 model SystemComponent {
-  id                   String     @id @default(cuid())
-  projectId            String
+  id                   String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId            String     @map("project_id") @db.Uuid
   project              Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   type                 String
   manufacturer         String?
   model                String?
   quantity             Int        @default(1)
-  specifications       Json?
+  specifications       Json       @default("{}")
   notes                String?
-  installationLocation String?
-  serialNumber         String?
-  firmwareVersion      String?
-  manualUrl            String?
-  photoUrl             String?
+  installationLocation String?    @map("installation_location")
+  serialNumber         String?    @map("serial_number")
+  firmwareVersion      String?    @map("firmware_version")
+  manualUrl            String?    @map("manual_url")
+  photoUrl             String?    @map("photo_url")
   confidence           Confidence @default(ESTIMATED)
-  createdAt            DateTime   @default(now())
-  updatedAt            DateTime   @updatedAt
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("system_components")
 }
 
 model PVArray {
-  id              String  @id @default(cuid())
-  projectId       String
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String  @map("project_id") @db.Uuid
   project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name            String
-  panelWatts      Float
-  panelCount      Int
+  panelWatts      Float   @map("panel_watts")
+  panelCount      Int     @map("panel_count")
   strings         Int?
-  panelsPerString Int?
-  specifications  Json?
+  panelsPerString Int?    @map("panels_per_string")
+  specifications  Json    @default("{}")
+
+  @@map("pv_arrays")
 }
 
 model BatteryBank {
-  id             String  @id @default(cuid())
-  projectId      String
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String  @map("project_id") @db.Uuid
   project        Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name           String
   chemistry      String
-  nominalVoltage Float
-  nominalKWh     Float
-  usableKWh      Float
-  specifications Json?
+  nominalVoltage Float   @map("nominal_voltage")
+  nominalKWh     Float   @map("nominal_kwh")
+  usableKWh      Float   @map("usable_kwh")
+  specifications Json    @default("{}")
+
+  @@map("battery_banks")
 }
 
 model Inverter {
-  id              String  @id @default(cuid())
-  projectId       String
+  id              String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String  @map("project_id") @db.Uuid
   project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name            String
-  continuousWatts Float
-  surgeWatts      Float
-  specifications  Json?
+  continuousWatts Float   @map("continuous_watts")
+  surgeWatts      Float   @map("surge_watts")
+  specifications  Json    @default("{}")
+
+  @@map("inverters")
 }
 
 model Load {
-  id           String     @id @default(cuid())
-  projectId    String
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId    String     @map("project_id") @db.Uuid
   project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name         String
   watts        Float
   quantity     Int        @default(1)
-  hoursPerDay  Float
-  surgeWatts   Float?
-  currentType  String     @default("AC")
+  hoursPerDay  Float      @map("hours_per_day")
+  surgeWatts   Float?     @map("surge_watts")
+  currentType  String     @default("AC") @map("current_type")
   simultaneous Boolean    @default(true)
   confidence   Confidence @default(ESTIMATED)
+
+  @@map("loads")
 }
 
 model InstallationStep {
-  id             String    @id @default(cuid())
-  projectId      String
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
   project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   position       Int
   title          String
   instructions   String
-  safetyLevel    String
-  expectedResult String?
+  safetyLevel    String    @map("safety_level")
+  expectedResult String?   @map("expected_result")
   notes          String?
-  photoUrls      Json?
-  completedAt    DateTime?
+  photoUrls      Json      @default("[]") @map("photo_urls")
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz
 
   @@unique([projectId, position])
+  @@map("installation_steps")
 }
 
 model CommissioningRecord {
-  id            String   @id @default(cuid())
-  projectId     String
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId     String   @map("project_id") @db.Uuid
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   type          String
   value         Json
-  expectedRange Json?
+  expectedRange Json?    @map("expected_range")
   result        String
   notes         String?
-  recordedAt    DateTime @default(now())
+  recordedAt    DateTime @default(now()) @map("recorded_at") @db.Timestamptz
+
+  @@map("commissioning_records")
 }
 
 model TelemetryReading {
   id           BigInt   @id @default(autoincrement())
-  projectId    String
+  projectId    String   @map("project_id") @db.Uuid
   project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   key          String
-  numericValue Float?
-  textValue    String?
+  numericValue Float?   @map("numeric_value")
+  textValue    String?  @map("text_value")
   unit         String?
   source       String
-  recordedAt   DateTime @default(now())
+  recordedAt   DateTime @default(now()) @map("recorded_at") @db.Timestamptz
 
   @@index([projectId, key, recordedAt])
+  @@map("telemetry_readings")
 }
 
 model SystemEvent {
-  id         String   @id @default(cuid())
-  projectId  String
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId  String   @map("project_id") @db.Uuid
   project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   type       String
   severity   String
   code       String?
   message    String
-  metadata   Json?
-  occurredAt DateTime @default(now())
+  metadata   Json     @default("{}")
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz
 
   @@index([projectId, occurredAt])
+  @@map("system_events")
 }
 
 model Alert {
-  id             String    @id @default(cuid())
-  projectId      String
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String    @map("project_id") @db.Uuid
   project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   title          String
   severity       String
-  status         String    @default("OPEN")
+  status         String    @default("open")
   explanation    String?
-  acknowledgedAt DateTime?
-  createdAt      DateTime  @default(now())
+  acknowledgedAt DateTime? @map("acknowledged_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("alerts")
 }
 
 model Conversation {
-  id        String        @id @default(cuid())
-  projectId String
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String        @map("project_id") @db.Uuid
   project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   title     String?
   messages  ChatMessage[]
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("conversations")
 }
 
 model ChatMessage {
-  id                String       @id @default(cuid())
-  conversationId    String
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId    String       @map("conversation_id") @db.Uuid
   conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role              MessageRole
   content           String
-  structuredContext Json?
-  createdAt         DateTime     @default(now())
+  structuredContext Json?        @map("structured_context")
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("chat_messages")
 }
