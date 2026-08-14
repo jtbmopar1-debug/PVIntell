@@ -41,10 +41,10 @@ Supabase Auth remains the identity authority. Do not create passwords or session
 For the chosen no-confirmation signup flow, disable **Confirm email** in Supabase Authentication → Providers → Email. The signup form requires users to enter the same email twice. Before launch, set Authentication → URL Configuration as follows:
 
 - Site URL: `https://www.pvintell.com`
-- Redirect URL: `https://www.pvintell.com/auth/confirm`
+- Redirect URLs: `https://www.pvintell.com/auth/confirm` and `https://www.pvintell.com/auth/callback`
 - Local redirect URL: `http://localhost:3000/auth/confirm`
 
-The login page includes a disabled Google button ready for a later Supabase Google OAuth configuration.
+Google sign-in uses Supabase's server-side PKCE flow. In Google Cloud, add `https://ewrbdrglvjacsyfqlrym.supabase.co/auth/v1/callback` as the OAuth client's authorized redirect URI, then add the Google client ID and secret under Supabase Authentication → Providers → Google.
 
 ```bash
 npm run db:generate
