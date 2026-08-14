@@ -13,7 +13,7 @@ PVIntell is an AI-first workspace for designing, building, commissioning, monito
 - Monitoring dashboard, mock weather, seeded 48 V off-grid home, and widget API
 - PostgreSQL/Supabase Prisma schema covering the complete project lifecycle
 
-The demo runs without credentials. Browser edits persist in `localStorage`; the schema is ready for live Supabase persistence once database connection variables are supplied.
+Without credentials, the app runs in demo mode and browser edits persist in `localStorage`. With Supabase public credentials, it switches to real email/password accounts, verified cookie sessions, owner-isolated cloud projects, and database-backed Wattson conversations. With `OPENAI_API_KEY`, Wattson uses the OpenAI Responses API; otherwise the project-aware mock remains available.
 
 ## Setup
 
@@ -37,6 +37,14 @@ supabase db push
 ```
 
 Supabase Auth remains the identity authority. Do not create passwords or sessions in the `profiles` table; it stores only application-facing profile information keyed to `auth.users.id`.
+
+For the chosen no-confirmation signup flow, disable **Confirm email** in Supabase Authentication → Providers → Email. The signup form requires users to enter the same email twice. Before launch, set Authentication → URL Configuration as follows:
+
+- Site URL: `https://www.pvintell.com`
+- Redirect URL: `https://www.pvintell.com/auth/confirm`
+- Local redirect URL: `http://localhost:3000/auth/confirm`
+
+The login page includes a disabled Google button ready for a later Supabase Google OAuth configuration.
 
 ```bash
 npm run db:generate
@@ -62,7 +70,7 @@ The structured `Project` is the source of truth. Conversation is an input mechan
 
 ### AI
 
-`AIProvider` separates orchestration from any model vendor. Its methods cover chat, system analysis, fault diagnosis, recommendation explanation, installation, and commissioning. `MockAIProvider` makes the MVP deterministic without API credentials. A production provider should receive only the structured `WattsonContext`, enforce authorization, and retain tool/audit records.
+`AIProvider` separates orchestration from any model vendor. Its methods cover chat, system analysis, fault diagnosis, recommendation explanation, installation, and commissioning. `POST /api/wattson` verifies the signed-in user owns the requested project, supplies structured project context to the OpenAI Responses API, and permanently records user and assistant messages. `MockAIProvider` remains a deterministic fallback without API credentials.
 
 ### Telemetry and hardware
 
@@ -93,7 +101,7 @@ npm run build
 
 ## Deployment
 
-The repository includes `vercel.json`. Import the Git repository in Vercel or run `npx vercel`. Add Supabase/AI environment variables in Vercel Project Settings; use separate Supabase credentials for preview and production where possible.
+The repository includes `vercel.json`, sets `www.pvintell.com` as the canonical host, and redirects the apex domain to it. Import the Git repository in Vercel or run `npx vercel`. Add Supabase/AI environment variables in Vercel Project Settings; use separate Supabase credentials for preview and production where possible.
 
 ## Next monitoring integrations
 

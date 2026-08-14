@@ -89,6 +89,9 @@ export function sizeBattery(input: BatterySizingInput) {
 }
 
 export function sizeInverter(summary: LoadSummary, headroom = 1.25) {
+  if (summary.connectedWatts === 0) {
+    return { minimumContinuousWatts: 0, recommendedWatts: 0, minimumSurgeWatts: 0 };
+  }
   const minimumContinuousWatts = Math.ceil(summary.simultaneousWatts * headroom / 500) * 500;
   const minimumSurgeWatts = Math.ceil(summary.surgeWatts / 500) * 500;
   return {
