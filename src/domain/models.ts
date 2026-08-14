@@ -11,6 +11,42 @@ export type LifecyclePhase =
   | "diagnose"
   | "maintain";
 
+export interface Site {
+  id: string;
+  name: string;
+  location: string;
+  latitude?: number;
+  longitude?: number;
+  timezone: string;
+  locationSource: "manual" | "device" | "search" | "imported";
+  locationConfirmed: boolean;
+}
+
+export interface SystemSummary {
+  id: string;
+  siteId: string;
+  name: string;
+  projectType: ProjectType;
+  phase: LifecyclePhase;
+}
+
+export interface SiteEquipment {
+  id: string;
+  siteId: string;
+  assignedProjectId?: string;
+  type: "panel" | "pv_string" | "battery" | "inverter" | "generator" | "protection" | "meter" | "other";
+  name: string;
+  manufacturer?: string;
+  model?: string;
+  serialNumber?: string;
+  quantity: number;
+  condition: "new" | "used_good" | "used_unknown" | "needs_testing" | "for_parts";
+  status: "available" | "considering" | "assigned" | "installed" | "rejected" | "retired";
+  specifications: Record<string, string | number>;
+  notes?: string;
+  photoUrls?: string[];
+}
+
 export interface Load {
   id: string;
   name: string;
@@ -33,14 +69,53 @@ export interface Assumption {
 
 export interface ComponentSpec {
   id: string;
-  kind: "panel" | "battery" | "inverter" | "generator" | "protection" | "meter";
+  kind: "panel" | "pv_string" | "battery" | "inverter" | "charger" | "generator" | "protection" | "isolator" | "cable" | "connector" | "combiner" | "meter" | "monitoring" | "load" | "other";
   name: string;
   manufacturer?: string;
   model?: string;
   quantity: number;
   location?: string;
+  notes?: string;
+  serialNumber?: string;
+  firmwareVersion?: string;
+  manualUrl?: string;
+  photoUrl?: string;
   status: Confidence;
   specs: Record<string, string | number>;
+}
+
+export interface PVArray {
+  id: string;
+  name: string;
+  manufacturer?: string;
+  panelModel?: string;
+  panelType?: string;
+  supplier?: string;
+  purchasedOn?: string;
+  installedOn?: string;
+  maximumPowerVoltageV?: number;
+  maximumPowerCurrentA?: number;
+  openCircuitVoltageV?: number;
+  shortCircuitCurrentA?: number;
+  maximumSystemVoltageV?: number;
+  nominalOperatingCellTempC?: number;
+  maximumSeriesFuseA?: number;
+  labelPhotoPath?: string;
+  panelWatts?: number;
+  panelCount?: number;
+  strings?: number;
+  panelsPerString?: number;
+  orientationDegrees?: number;
+  tiltDegrees?: number;
+  cableSizeMm2?: number;
+  cableLengthM?: number;
+  connectorType?: string;
+  breakerDetails?: string;
+  isolatorDetails?: string;
+  combinerDetails?: string;
+  installationNotes?: string;
+  specifications: Record<string, string | number>;
+  confidence: Confidence;
 }
 
 export interface InstallationStep {
@@ -63,6 +138,8 @@ export interface CommissioningMeasurement {
 
 export interface Project {
   id: string;
+  siteId?: string;
+  updatedAt?: string;
   name: string;
   description: string;
   projectType: ProjectType;
@@ -76,6 +153,7 @@ export interface Project {
   loads: Load[];
   assumptions: Assumption[];
   components: ComponentSpec[];
+  pvArrays: PVArray[];
   installationSteps: InstallationStep[];
   commissioning: CommissioningMeasurement[];
 }
@@ -85,4 +163,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  imageUrl?: string;
+  imagePath?: string;
+  citations?: Array<{ title: string; url: string }>;
 }

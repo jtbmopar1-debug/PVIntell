@@ -23,6 +23,7 @@
     "openai": "^7.4.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "tz-lookup": "^6.1.25",
     "zod": "^4.4.3"
   },
   "devDependencies": {
