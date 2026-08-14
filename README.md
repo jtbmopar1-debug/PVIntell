@@ -46,6 +46,8 @@ For the chosen no-confirmation signup flow, disable **Confirm email** in Supabas
 
 Google sign-in uses Supabase's server-side PKCE flow. In Google Cloud, add `https://ewrbdrglvjacsyfqlrym.supabase.co/auth/v1/callback` as the OAuth client's authorized redirect URI, then add the Google client ID and secret under Supabase Authentication → Providers → Google.
 
+For the Google Web OAuth client, use `http://localhost:3000` as an authorized JavaScript origin during development and add `https://www.pvintell.com` later. The Supabase provider's **Client IDs** field requires the generated value ending in `.apps.googleusercontent.com`; it is not a Gmail address. Keep nonce checks enabled (leave “Skip nonce checks” off) and require Google to return an email.
+
 ```bash
 npm run db:generate
 npm run db:push

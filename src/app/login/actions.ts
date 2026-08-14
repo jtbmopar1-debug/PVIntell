@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 
@@ -28,7 +29,11 @@ export async function signup(formData: FormData) {
 
 export async function loginWithGoogle() {
   const supabase=await createClient();
-  const origin=process.env.NEXT_PUBLIC_APP_URL??"https://www.pvintell.com";
+  const requestHeaders=await headers();
+  const host=requestHeaders.get("x-forwarded-host")??requestHeaders.get("host")??"localhost:3000";
+  const protocol=requestHeaders.get("x-forwarded-proto")??(host.startsWith("localhost")?"http":"https");
+  const requestOrigin=`${protocol}://${host}`;
+  const origin=process.env.NODE_ENV==="development"?requestOrigin:(process.env.NEXT_PUBLIC_APP_URL??requestOrigin);
   const {data,error}=await supabase.auth.signInWithOAuth({provider:"google",options:{redirectTo:`${origin}/auth/callback`}});
   if(error)redirect(`/login?error=${encodeURIComponent(error.message)}`);
   if(data.url)redirect(data.url);
