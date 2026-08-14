@@ -18,12 +18,12 @@ export async function login(formData: FormData) {
 
 export async function signup(formData: FormData) {
   const email=formData.get("email");
-  if(email!==formData.get("emailConfirm")) redirect("/login?error=The+two+email+addresses+do+not+match");
+  if(email!==formData.get("emailConfirm")) redirect("/login?mode=signup&error=The+two+email+addresses+do+not+match");
   const parsed = credentialsSchema.safeParse({ email, password: formData.get("password") });
-  if (!parsed.success) redirect("/login?error=Enter+a+valid+email+and+an+8-character+password");
+  if (!parsed.success) redirect("/login?mode=signup&error=Enter+a+valid+email+and+an+8-character+password");
   const supabase = await createClient();
   const { error } = await supabase.auth.signUp(parsed.data);
-  if (error) redirect(`/login?error=${encodeURIComponent(error.message)}`);
+  if (error) redirect(`/login?mode=signup&error=${encodeURIComponent(error.message)}`);
   redirect("/");
 }
 
