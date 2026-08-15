@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 140" role="img" aria-label="Grid connection">
+  <rect width="180" height="140" rx="18" fill="#fff"/>
+  <g fill="none" stroke="#165d9c" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M90 18 57 121M90 18l33 103M69 83h42M62 103h56M73 63h34M79 43h22"/>
+    <path d="M38 48h104M28 62h124" stroke-width="3"/>
+    <path d="m68 121 22-18 22 18"/>
+  </g>
+  <circle cx="90" cy="18" r="8" fill="#f6c945" stroke="#165d9c" stroke-width="4"/>
+</svg>

@@ -184,6 +184,24 @@ const earthingFields = {
   testResult: "Earth continuity / resistance result",
   inspectedBy: "Tested / inspected by",
 } as const;
+const isolatorFields = {
+  circuitIsolated: "Circuit / equipment isolated",
+  currentType: "AC / DC type",
+  ratedVoltage: "Rated operational voltage",
+  ratedCurrent: "Rated current",
+  poles: "Number of poles",
+  utilizationCategory: "Utilisation / switching category",
+  enclosureRating: "Enclosure / IP rating",
+  installationEnvironment: "Indoor / outdoor location",
+  lockable: "Lockable in OFF position",
+  cableTerminalCapacity: "Cable / terminal capacity",
+  upstreamDevice: "Connected from / upstream device",
+  downstreamDevice: "Connected to / downstream device",
+  identificationLabel: "Isolation label / identifier",
+  standard: "Standard / certification",
+  testedBy: "Installed / tested by",
+  testDate: "Test date",
+} as const;
 
 function Field({
   label,
@@ -321,7 +339,65 @@ function EarthingDetails({
   );
 }
 
-type BaseProps = { siteId: string; systemId: string; systemName: string };
+function IsolatorDetails({
+  specs,
+}: {
+  specs: Record<string, string | number>;
+}) {
+  return (
+    <section className="card mb-4 p-6">
+      <div className="eyebrow">Isolation device</div>
+      <h2 className="mt-2 text-lg font-extrabold">DC shutoff details</h2>
+      <p className="mt-1 text-[10px] leading-5 text-muted">
+        Record the device rating and exactly what it disconnects. Values copied
+        from a label should still be reviewed before saving.
+      </p>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        {Object.entries(isolatorFields).map(([key, label]) => (
+          <Field key={key} label={label}>
+            {key === "currentType" ? (
+              <select
+                data-isolator-field={key}
+                defaultValue={String(specs[label] ?? "DC")}
+                className="field"
+              >
+                <option value="DC">DC</option>
+                <option value="AC">AC</option>
+              </select>
+            ) : key === "lockable" ? (
+              <select
+                data-isolator-field={key}
+                defaultValue={String(specs[label] ?? "Not confirmed")}
+                className="field"
+              >
+                <option>Not confirmed</option>
+                <option>Yes</option>
+                <option>No</option>
+              </select>
+            ) : (
+              <input
+                data-isolator-field={key}
+                defaultValue={specs[label]}
+                className="field"
+                placeholder={
+                  key === "ratedVoltage"
+                    ? "e.g. 500 V DC"
+                    : key === "ratedCurrent"
+                      ? "e.g. 32 A"
+                      : key === "circuitIsolated"
+                        ? "e.g. PV1 to Inverter 1 MPPT"
+                        : undefined
+                }
+              />
+            )}
+          </Field>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+type BaseProps = { siteId: string; systemId: string; systemName: string; returnTo?: string };
 
 export function ComponentDetail({
   siteId,
@@ -329,9 +405,10 @@ export function ComponentDetail({
   systemName,
   component,
   defaults,
+  returnTo,
 }: BaseProps & {
   component?: ComponentSpec;
-  defaults?: { kind: ComponentSpec["kind"]; name: string };
+  defaults?: { kind: ComponentSpec["kind"]; name: string; schematicImage?: string };
 }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -340,7 +417,7 @@ export function ComponentDetail({
   const [extraction, setExtraction] = useState<EquipmentLabelExtraction>();
   const [photoPath, setPhotoPath] = useState(component?.photoUrl ?? "");
   const icon = itemIcon(component?.kind ?? defaults?.kind ?? "other");
-  const back = `/sites/${siteId}/systems/${systemId}`;
+  const back = returnTo ?? `/sites/${siteId}/systems/${systemId}`;
   const isAcConnection =
     (component?.name ?? defaults?.name ?? "")
       .toLowerCase()
@@ -348,16 +425,31 @@ export function ComponentDetail({
     component?.specs["Connection type"] === "Inverter to switchboard AC";
   const isInverter =
     (component?.kind ?? defaults?.kind ?? "other") === "inverter";
+  const isIsolator =
+    (component?.kind ?? defaults?.kind ?? "other") === "isolator";
   const isEarthing =
     (component?.name ?? defaults?.name ?? "")
       .toLowerCase()
       .includes("earthing / bonding") ||
     component?.specs["Equipment record"] === "System earthing and bonding";
   const editableAdditionalSpecs = Object.entries(component?.specs ?? {}).filter(
-    ([name]) =>
-      !isAcConnection ||
-      (name !== "Connection type" &&
-        !Object.values(acConnectionFields).some((label) => label === name)),
+    ([name]) => {
+      if (
+        name === "Equipment record" ||
+        name === "Connection type" ||
+        name === "Schematic image"
+      )
+        return false;
+      if (isAcConnection && Object.values(acConnectionFields).includes(name as never))
+        return false;
+      if (isInverter && Object.values(inverterAssignmentFields).includes(name as never))
+        return false;
+      if (isEarthing && Object.values(earthingFields).includes(name as never))
+        return false;
+      if (isIsolator && Object.values(isolatorFields).includes(name as never))
+        return false;
+      return true;
+    },
   );
   function setField(name: string, value: string) {
     if (!value) return;
@@ -372,7 +464,7 @@ export function ComponentDetail({
   }
   function applyExtraction(result: EquipmentLabelExtraction) {
     if (!isAcConnection) {
-      setField("type", result.equipmentType);
+      if (!isIsolator) setField("type", result.equipmentType);
       setField(
         "name",
         [result.manufacturer, result.model].filter(Boolean).join(" "),
@@ -396,6 +488,21 @@ export function ComponentDetail({
       .map(([label, value]) => `${label}: ${value}`)
       .join("\n");
     if (specs) setField("specifications", specs);
+    if (isIsolator) {
+      const values: Partial<Record<keyof typeof isolatorFields, string>> = {
+        ratedVoltage: result.ratedVoltage,
+        ratedCurrent: result.ratedCurrent,
+        enclosureRating: result.ingressRating,
+        standard: result.certifications.join(", "),
+      };
+      for (const [key, value] of Object.entries(values)) {
+        if (!value) continue;
+        const field = document.querySelector(
+          `[data-isolator-field="${key}"]`,
+        ) as HTMLInputElement | HTMLSelectElement | null;
+        if (field) field.value = value;
+      }
+    }
   }
   async function analyze(file?: File) {
     if (!file) return;
@@ -430,6 +537,12 @@ export function ComponentDetail({
     setSaving(true);
     setError("");
     const specifications = parseSpecs(form.get("specifications"));
+    const savedSchematicImage = component?.specs["Schematic image"];
+    const schematicImage =
+      typeof savedSchematicImage === "string"
+        ? savedSchematicImage
+        : defaults?.schematicImage;
+    if (schematicImage) specifications["Schematic image"] = schematicImage;
     if (isAcConnection) {
       specifications["Connection type"] = "Inverter to switchboard AC";
       for (const [key, label] of Object.entries(acConnectionFields)) {
@@ -460,6 +573,17 @@ export function ComponentDetail({
         ) as HTMLInputElement | null;
         const value = field?.value.trim();
         if (value) specifications[label] = value;
+        else delete specifications[label];
+      }
+    }
+    if (isIsolator) {
+      specifications["Equipment record"] = "Isolation device";
+      for (const [key, label] of Object.entries(isolatorFields)) {
+        const field = document.querySelector(
+          `[data-isolator-field="${key}"]`,
+        ) as HTMLInputElement | HTMLSelectElement | null;
+        const value = field?.value.trim();
+        if (value && value !== "Not confirmed") specifications[label] = value;
         else delete specifications[label];
       }
     }
@@ -546,12 +670,14 @@ export function ComponentDetail({
   return (
     <PageShell
       back={back}
+      backLabel={returnTo ? "Back to schematic" : "Back to system overview"}
+      wattsonHref={`/sites/${siteId}/systems/${systemId}?view=wattson`}
       eyebrow="System equipment"
       title={component ? component.name : (defaults?.name ?? "Add equipment")}
       description={`Technical record for ${systemName}. Changes here become part of Wattson's system context.`}
       icon={icon}
     >
-      <label className="mb-4 flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-[#9db1a2] bg-[#f5f8f2] p-4">
+      <label className="mb-4 flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-[#91aec9] bg-[#f7fafd] p-4">
         <span className="grid size-11 place-items-center rounded-xl bg-white text-brand">
           <Camera size={20} />
         </span>
@@ -581,7 +707,7 @@ export function ComponentDetail({
         />
       </label>
       {extraction && (
-        <div className="mb-4 rounded-xl border border-line bg-[#f7f9f5] p-3 text-[10px]">
+        <div className="mb-4 rounded-xl border border-line bg-[#f8fafc] p-3 text-[10px]">
           <div className="flex justify-between">
             <strong>Label values added for review</strong>
             <span className="uppercase text-brand">
@@ -600,6 +726,7 @@ export function ComponentDetail({
         <InverterAssignmentDetails specs={component?.specs ?? {}} />
       )}
       {isEarthing && <EarthingDetails specs={component?.specs ?? {}} />}
+      {isIsolator && <IsolatorDetails specs={component?.specs ?? {}} />}
       {component?.kind === "inverter" && component.quantity > 1 && (
         <div className="mb-4 rounded-2xl border border-[#d8bd77] bg-[#fff8df] p-5">
           <strong className="block text-sm">
@@ -684,7 +811,7 @@ export function ComponentDetail({
               placeholder="e.g. Studio utility wall"
             />
           </Field>
-          {!isAcConnection && (
+          {!isAcConnection && !isIsolator && (
             <>
               <Field label="Serial number">
                 <input
@@ -714,18 +841,22 @@ export function ComponentDetail({
             label={
               isAcConnection
                 ? "Additional connection information"
+                : isIsolator
+                  ? "Other isolator details"
                 : "Technical specifications"
             }
             help={
               isAcConnection
                 ? "Add anything not covered above in plain language, or use Name: Value for structured details."
+                : isIsolator
+                  ? "Only add details that are not covered by the isolator fields above."
                 : "One Name: Value per line, or enter plain-language notes. Use any values relevant to this item: voltage, current, power, cable size, breaker rating, torque, chemistry, capacity, and so on."
             }
             wide
           >
             <textarea
               name="specifications"
-              rows={10}
+              rows={isIsolator ? 4 : 10}
               defaultValue={editableAdditionalSpecs
                 .map(([key, value]) => `${key}: ${value}`)
                 .join("\n")}
@@ -1029,6 +1160,8 @@ export function PVArrayDetail({
 
 function PageShell({
   back,
+  backLabel = "Back to system overview",
+  wattsonHref,
   eyebrow,
   title,
   description,
@@ -1036,6 +1169,8 @@ function PageShell({
   children,
 }: {
   back: string;
+  backLabel?: string;
+  wattsonHref?: string;
   eyebrow: string;
   title: string;
   description: string;
@@ -1043,7 +1178,7 @@ function PageShell({
   children: React.ReactNode;
 }) {
   return (
-    <main className="min-h-screen bg-[#f4f6f1] px-5 py-8 md:px-10">
+    <main className="min-h-screen bg-[#f5f7fa] px-5 py-8 md:px-10">
       <div className="mx-auto max-w-4xl">
         <div className="flex items-center justify-between gap-4">
           <Link
@@ -1051,11 +1186,11 @@ function PageShell({
             className="inline-flex items-center gap-2 text-xs font-bold text-brand"
           >
             <ArrowLeft size={15} />
-            Back to system overview
+            {backLabel}
           </Link>
           <Link
-            href={`${back}?view=wattson`}
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#213c30] px-4 text-xs font-bold text-white"
+            href={wattsonHref ?? `${back}?view=wattson`}
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#123b66] px-4 text-xs font-bold text-white"
           >
             <Zap size={14} />
             Ask Wattson

@@ -6,6 +6,7 @@ const createSystemSchema = z.object({
   siteId: z.uuid(),
   name: z.string().trim().min(1).max(120),
   projectType: z.enum(["off-grid", "grid-tied", "hybrid"]).optional(),
+  startingGoal: z.string().trim().min(1).max(300).optional(),
 });
 
 export async function POST(request: Request) {
@@ -18,7 +19,7 @@ export async function POST(request: Request) {
   const site = await supabase.from("sites").select("id").eq("id", parsed.data.siteId).maybeSingle();
   if (site.error || !site.data) return Response.json({ error: "Site not found" }, { status: 404 });
   try {
-    const id = await createSystem(supabase, userId, parsed.data.siteId, parsed.data.name, parsed.data.projectType);
+    const id = await createSystem(supabase, userId, parsed.data.siteId, parsed.data.name, parsed.data.projectType, parsed.data.startingGoal);
     return Response.json({ id }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Could not create system" }, { status: 400 });

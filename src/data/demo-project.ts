@@ -33,6 +33,9 @@ export const demoProject: Project = {
     { id: "component-inverter", kind: "inverter", name: "8 kW hybrid inverter", manufacturer: "SunForge", model: "HX-8K", quantity: 1, location: "Utility room", status: "confirmed", specs: { continuousW: 8000, surgeW: 16000, mpptRange: "120–430 V" } },
     { id: "component-generator", kind: "generator", name: "Backup generator", manufacturer: "DemoPower", model: "DG-7", quantity: 1, location: "External generator bay", status: "confirmed", specs: { ratedW: 6500, fuel: "petrol" } },
   ],
+  connections: [],
+  schematicPositions: [],
+  overviewCardOrder: [],
   pvArrays: [
     { id: "array-pv1", name: "PV1", manufacturer: "Demo Solar", panelModel: "DS450-N", panelWatts: 450, panelCount: 6, strings: 1, panelsPerString: 6, orientationDegrees: 0, tiltDegrees: 25, cableSizeMm2: 6, cableLengthM: 18, connectorType: "MC4-compatible", breakerDetails: "Not yet confirmed", isolatorDetails: "Roof and inverter DC isolators", specifications: { voc: "247.2 V", vmp: "207 V" }, confidence: "estimated" },
     { id: "array-pv2", name: "PV2", manufacturer: "Demo Solar", panelModel: "DS450-N", panelWatts: 450, panelCount: 6, strings: 1, panelsPerString: 6, orientationDegrees: 0, tiltDegrees: 25, specifications: { voc: "247.2 V", vmp: "207 V" }, confidence: "estimated" },

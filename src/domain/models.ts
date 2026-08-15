@@ -84,6 +84,35 @@ export interface ComponentSpec {
   specs: Record<string, string | number>;
 }
 
+export interface SystemConnection {
+  id: string;
+  projectId: string;
+  sourceRef: string;
+  targetRef: string;
+  name: string;
+  connectionType: "dc" | "ac" | "data" | "earth" | "other";
+  polarity?: "positive" | "negative" | "pair" | "na";
+  cableSize?: string;
+  cableLength?: string;
+  breakerSize?: string;
+  fuseSize?: string;
+  isolator?: string;
+  route?: string;
+  notes?: string;
+  confidence: Confidence;
+}
+
+export interface SchematicPosition {
+  nodeRef: string;
+  x: number;
+  y: number;
+}
+
+export interface OverviewCardOrder {
+  nodeRef: string;
+  position: number;
+}
+
 export interface PVArray {
   id: string;
   name: string;
@@ -153,6 +182,9 @@ export interface Project {
   loads: Load[];
   assumptions: Assumption[];
   components: ComponentSpec[];
+  connections: SystemConnection[];
+  schematicPositions: SchematicPosition[];
+  overviewCardOrder: OverviewCardOrder[];
   pvArrays: PVArray[];
   installationSteps: InstallationStep[];
   commissioning: CommissioningMeasurement[];

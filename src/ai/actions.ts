@@ -23,6 +23,55 @@ const addComponentSchema = z.object({
   quantity: z.number().int().min(1).max(100),
   component_name: z.string().trim().min(1).max(120).optional(),
 });
+const proposedComponentSchema = z.object({
+  component_type: componentType,
+  component_name: z.string().trim().min(1).max(120),
+  quantity: z.number().int().min(1).max(100).default(1),
+  reason: z.string().trim().min(1).max(500).optional(),
+});
+const designPreferenceSchema = z.object({
+  architecture: z.enum([
+    "combined_hybrid_inverter",
+    "separate_solar_controller_and_inverter",
+    "ac_coupled",
+    "not_decided",
+  ]),
+  notes: z.string().trim().min(1).max(1000).optional(),
+});
+const discoveryKey = z.enum([
+  "utility_relationship",
+  "primary_outcome",
+  "current_energy_use",
+  "bill_evidence",
+  "backup_preference",
+  "outage_essential_loads",
+  "backup_duration",
+  "heavy_or_surge_loads",
+  "cooking_energy",
+  "water_heating_energy",
+  "space_heating_energy",
+  "everyday_needs",
+  "building_type",
+  "property_authority",
+  "proposed_panel_location",
+  "usable_solar_space",
+  "orientation_and_pitch",
+  "shading",
+  "structure_condition",
+  "installation_access",
+  "property_constraints",
+  "planning_constraints",
+  "network_constraints",
+  "expected_expansion",
+  "delivery_approach",
+  "repair_access",
+  "redundancy_needs",
+]);
+const designDiscoverySchema = z.object({
+  key: discoveryKey,
+  value: z.string().trim().min(1).max(1500),
+  confidence: z.enum(["user_confirmed", "evidence_provided"]).default("user_confirmed"),
+});
 const updateSettingsSchema = z
   .object({
     system_name: z.string().trim().min(1).max(120).optional(),
@@ -110,6 +159,47 @@ const pvArrayActionSchema = z
     (value) => value.operation === "add" || value.array_id !== undefined,
     { message: "An exact array ID is required when updating an array." },
   );
+const connectionActionSchema = z
+  .object({
+    operation: z.enum(["add", "update"]),
+    connection_id: z.uuid().optional(),
+    source_ref: z.string().trim().min(1).max(160).optional(),
+    target_ref: z.string().trim().min(1).max(160).optional(),
+    connection_name: z.string().trim().min(1).max(120),
+    connection_type: z.enum(["dc", "ac", "data", "earth", "other"]),
+    polarity: z.enum(["positive", "negative", "pair", "na"]).optional(),
+    cable_size: z.string().trim().min(1).max(120).optional(),
+    cable_length: z.string().trim().min(1).max(120).optional(),
+    breaker_size: z.string().trim().min(1).max(120).optional(),
+    fuse_size: z.string().trim().min(1).max(120).optional(),
+    isolator: z.string().trim().min(1).max(240).optional(),
+    route: z.string().trim().min(1).max(500).optional(),
+    notes: z.string().trim().min(1).max(2000).optional(),
+  })
+  .refine(
+    (value) =>
+      value.operation === "update"
+        ? value.connection_id !== undefined
+        : value.source_ref !== undefined && value.target_ref !== undefined,
+    { message: "Add requires both endpoints; update requires a connection ID." },
+  );
+const loadActionSchema = z
+  .object({
+    operation: z.enum(["add", "update"]),
+    load_id: z.uuid().optional(),
+    load_name: z.string().trim().min(1).max(120),
+    watts: z.number().min(0),
+    quantity: z.number().int().min(1).max(1000).default(1),
+    hours_per_day: z.number().min(0).max(24),
+    surge_watts: z.number().min(0).optional(),
+    current_type: z.enum(["AC", "DC"]).default("AC"),
+    simultaneous: z.boolean().default(true),
+    confidence: z.enum(["estimated", "confirmed"]),
+  })
+  .refine(
+    (value) => value.operation === "add" || value.load_id !== undefined,
+    { message: "An exact load ID is required when updating a load." },
+  );
 
 export interface WattsonActionRequest {
   name: string;
@@ -119,14 +209,108 @@ export interface WattsonActionRequest {
 export interface AppliedWattsonAction {
   type:
     | "component_added"
+    | "component_proposed"
     | "component_updated"
+    | "design_preference_updated"
+    | "design_discovery_updated"
     | "settings_updated"
     | "pv_array_added"
-    | "pv_array_updated";
+    | "pv_array_updated"
+    | "connection_added"
+    | "connection_updated"
+    | "load_added"
+    | "load_updated"
+    | "workspace_created";
   summary: string;
 }
 
 export const wattsonActionTools = [
+  {
+    type: "function",
+    name: "create_power_system_workspace",
+    description:
+      "Dashboard only: create the user's first empty place and power-system workspace after the public-electricity relationship and primary goal have both been confirmed in plain language. This creates a discovery workspace only; it does not select architecture or equipment. Use onboarding location and do not ask for coordinates again. Do not call when connectedSiteSystems already contains a system.",
+    parameters: {
+      type: "object",
+      properties: {
+        place_name: { type: "string", description: "Plain name such as Home, Farm or Cabin." },
+        system_name: { type: "string", description: "Plain name such as House solar or Cabin power." },
+      },
+      required: ["place_name", "system_name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "record_proposed_component",
+    description:
+      "Add or refresh one clearly proposed design component only after the basic energy/site discovery gate and architecture decision are complete and the recorded evidence supports that component. This is a proposal, not installed equipment. Use a stable plain name so later calls update rather than duplicate it. Never invent a manufacturer, model, rating or quantity. Do not use this for inverter-architecture components because record_design_preference creates those automatically.",
+    parameters: {
+      type: "object",
+      properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
+        component_type: { type: "string", enum: componentType.options },
+        component_name: { type: "string" },
+        quantity: { type: "integer", minimum: 1, maximum: 100 },
+        reason: { type: "string" },
+      },
+      required: ["component_type", "component_name", "quantity"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "record_design_preference",
+    description:
+      "Save the user's confirmed architecture preference only after basic energy and site suitability discovery is complete and the relevant choices have been explained in plain language. Use not_decided when the user explicitly wants Wattson to recommend an architecture after discovery. A preference is not installed equipment.",
+    parameters: {
+      type: "object",
+      properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
+        architecture: {
+          type: "string",
+          enum: [
+            "combined_hybrid_inverter",
+            "separate_solar_controller_and_inverter",
+            "ac_coupled",
+            "not_decided",
+          ],
+        },
+        notes: { type: "string" },
+      },
+      required: ["architecture"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "record_design_discovery",
+    description:
+      "Save one material fact learned during design discovery after the user states or confirms it. This is a design brief, not installed equipment. Keep the value faithful to the user's words or supplied evidence; do not invent measurements, consumption, constraints or approvals.",
+    parameters: {
+      type: "object",
+      properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
+        key: { type: "string", enum: discoveryKey.options },
+        value: { type: "string" },
+        confidence: {
+          type: "string",
+          enum: ["user_confirmed", "evidence_provided"],
+        },
+      },
+      required: ["key", "value", "confidence"],
+      additionalProperties: false,
+    },
+  },
   {
     type: "function",
     name: "record_added_component",
@@ -135,6 +319,10 @@ export const wattsonActionTools = [
     parameters: {
       type: "object",
       properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
         component_type: { type: "string", enum: componentType.options },
         quantity: {
           type: "integer",
@@ -160,6 +348,10 @@ export const wattsonActionTools = [
     parameters: {
       type: "object",
       properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
         system_name: { type: "string" },
         system_voltage: { type: "number", exclusiveMinimum: 0, maximum: 1000 },
         autonomy_days: { type: "number", exclusiveMinimum: 0, maximum: 30 },
@@ -176,6 +368,10 @@ export const wattsonActionTools = [
     parameters: {
       type: "object",
       properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
         component_id: {
           type: "string",
           description: "Exact existing system component UUID from context.",
@@ -223,6 +419,10 @@ export const wattsonActionTools = [
     parameters: {
       type: "object",
       properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
         operation: { type: "string", enum: ["add", "update"] },
         array_id: {
           type: "string",
@@ -307,6 +507,67 @@ export const wattsonActionTools = [
       additionalProperties: false,
     },
   },
+  {
+    type: "function",
+    name: "record_or_update_system_connection",
+    description:
+      "Add or update a saved schematic connection only when the user explicitly identifies both exact equipment endpoints or an exact existing connection and provides the installed details. Use endpoint references and connection IDs exactly as supplied in PVIntell context. Never invent cable or protection ratings.",
+    parameters: {
+      type: "object",
+      properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
+        operation: { type: "string", enum: ["add", "update"] },
+        connection_id: { type: "string" },
+        source_ref: { type: "string" },
+        target_ref: { type: "string" },
+        connection_name: { type: "string" },
+        connection_type: {
+          type: "string",
+          enum: ["dc", "ac", "data", "earth", "other"],
+        },
+        polarity: {
+          type: "string",
+          enum: ["positive", "negative", "pair", "na"],
+        },
+        cable_size: { type: "string" },
+        cable_length: { type: "string" },
+        breaker_size: { type: "string" },
+        fuse_size: { type: "string" },
+        isolator: { type: "string" },
+        route: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["operation", "connection_name", "connection_type"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "record_or_update_load",
+    description:
+      "Add or update one load in the power-use model only when watts and daily use are supported by a user value, readable label, measurement, model specification, bill-derived calculation, or an explicitly stated planning estimate. Never assign generic wattage or hours from an appliance name alone. Use confirmed only for user/label/measurement values and estimated for clearly identified planning estimates.",
+    parameters: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Exact system UUID. Required when working from dashboard context." },
+        operation: { type: "string", enum: ["add", "update"] },
+        load_id: { type: "string" },
+        load_name: { type: "string" },
+        watts: { type: "number", minimum: 0 },
+        quantity: { type: "integer", minimum: 1, maximum: 1000 },
+        hours_per_day: { type: "number", minimum: 0, maximum: 24 },
+        surge_watts: { type: "number", minimum: 0 },
+        current_type: { type: "string", enum: ["AC", "DC"] },
+        simultaneous: { type: "boolean" },
+        confidence: { type: "string", enum: ["estimated", "confirmed"] },
+      },
+      required: ["operation", "load_name", "watts", "quantity", "hours_per_day", "current_type", "simultaneous", "confidence"],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 function labelFor(type: z.infer<typeof componentType>, quantity: number) {
@@ -321,6 +582,110 @@ export async function applyWattsonActions(
 ) {
   const applied: AppliedWattsonAction[] = [];
   for (const action of actions) {
+    if (action.name === "record_proposed_component") {
+      const parsed = proposedComponentSchema.safeParse(action.arguments);
+      if (!parsed.success) continue;
+      const input = parsed.data;
+      const existing = await supabase
+        .from("system_components")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("type", input.component_type)
+        .eq("display_name", input.component_name)
+        .eq("confidence", "estimated")
+        .limit(1)
+        .maybeSingle();
+      if (existing.error) throw existing.error;
+      const values = {
+        quantity: input.quantity,
+        notes: input.reason
+          ? `Proposed by Wattson: ${input.reason}`
+          : "Proposed by Wattson; not confirmed or installed",
+        confidence: "estimated",
+      };
+      const changed = existing.data
+        ? await supabase.from("system_components").update(values).eq("id", existing.data.id).eq("project_id", projectId)
+        : await supabase.from("system_components").insert({ project_id: projectId, type: input.component_type, display_name: input.component_name, ...values });
+      if (changed.error) throw changed.error;
+      applied.push({
+        type: "component_proposed",
+        summary: `Proposed ${input.component_name} in the working design`,
+      });
+    }
+
+    if (action.name === "record_design_preference") {
+      const parsed = designPreferenceSchema.safeParse(action.arguments);
+      if (!parsed.success) continue;
+      const current = await supabase.from("projects").select("settings").eq("id", projectId).single();
+      if (current.error) throw current.error;
+      const settings = (current.data.settings ?? {}) as Record<string, unknown>;
+      settings.designPreferences = {
+        ...((settings.designPreferences ?? {}) as Record<string, unknown>),
+        architecture: parsed.data.architecture,
+        notes: parsed.data.notes ?? null,
+        confirmedThroughWattson: true,
+      };
+      const changed = await supabase.from("projects").update({ settings }).eq("id", projectId);
+      if (changed.error) throw changed.error;
+      const architectureMarker = "Proposed by Wattson: architecture preference";
+      const cleared = await supabase
+        .from("system_components")
+        .delete()
+        .eq("project_id", projectId)
+        .eq("confidence", "estimated")
+        .eq("notes", architectureMarker);
+      if (cleared.error) throw cleared.error;
+      const proposed =
+        parsed.data.architecture === "combined_hybrid_inverter"
+          ? [{ type: "inverter", display_name: "Proposed hybrid inverter" }]
+          : parsed.data.architecture === "separate_solar_controller_and_inverter"
+            ? [
+                { type: "charger", display_name: "Proposed MPPT solar charge controller" },
+                { type: "inverter", display_name: "Proposed battery inverter" },
+              ]
+            : parsed.data.architecture === "ac_coupled"
+              ? [{ type: "inverter", display_name: "Proposed AC-coupled inverter" }]
+              : [];
+      if (proposed.length) {
+        const inserted = await supabase.from("system_components").insert(
+          proposed.map((component) => ({
+            project_id: projectId,
+            type: component.type,
+            display_name: component.display_name,
+            quantity: 1,
+            confidence: "estimated",
+            notes: architectureMarker,
+          })),
+        );
+        if (inserted.error) throw inserted.error;
+      }
+      applied.push({
+        type: "design_preference_updated",
+        summary: "Saved the architecture preference and updated the working schematic",
+      });
+    }
+
+    if (action.name === "record_design_discovery") {
+      const parsed = designDiscoverySchema.safeParse(action.arguments);
+      if (!parsed.success) continue;
+      const current = await supabase.from("projects").select("settings").eq("id", projectId).single();
+      if (current.error) throw current.error;
+      const settings = (current.data.settings ?? {}) as Record<string, unknown>;
+      const discovery = (settings.designDiscovery ?? {}) as Record<string, unknown>;
+      discovery[parsed.data.key] = {
+        value: parsed.data.value,
+        confidence: parsed.data.confidence,
+        recordedAt: new Date().toISOString(),
+      };
+      settings.designDiscovery = discovery;
+      const changed = await supabase.from("projects").update({ settings }).eq("id", projectId);
+      if (changed.error) throw changed.error;
+      applied.push({
+        type: "design_discovery_updated",
+        summary: `Added ${parsed.data.key.replaceAll("_", " ")} to the discovery notes`,
+      });
+    }
+
     if (action.name === "record_added_component") {
       const parsed = addComponentSchema.safeParse(action.arguments);
       if (!parsed.success) continue;
@@ -564,6 +929,79 @@ export async function applyWattsonActions(
           type: "pv_array_added",
           summary: `Added ${input.array_name} to this system`,
         });
+      }
+    }
+
+    if (action.name === "record_or_update_system_connection") {
+      const parsed = connectionActionSchema.safeParse(action.arguments);
+      if (!parsed.success) continue;
+      const input = parsed.data;
+      const values = {
+        name: input.connection_name,
+        connection_type: input.connection_type,
+        polarity: input.polarity ?? "na",
+        cable_size: input.cable_size ?? null,
+        cable_length: input.cable_length ?? null,
+        breaker_size: input.breaker_size ?? null,
+        fuse_size: input.fuse_size ?? null,
+        isolator: input.isolator ?? null,
+        route: input.route ?? null,
+        notes: input.notes ?? null,
+        confidence: "confirmed",
+      };
+      if (input.operation === "update") {
+        const changed = await supabase
+          .from("system_connections")
+          .update(values)
+          .eq("id", input.connection_id!)
+          .eq("project_id", projectId)
+          .select("id")
+          .maybeSingle();
+        if (changed.error) throw changed.error;
+        if (!changed.data) continue;
+        applied.push({
+          type: "connection_updated",
+          summary: `Updated ${input.connection_name} connection`,
+        });
+      } else {
+        if (input.source_ref === input.target_ref) continue;
+        const inserted = await supabase.from("system_connections").insert({
+          project_id: projectId,
+          source_ref: input.source_ref,
+          target_ref: input.target_ref,
+          ...values,
+        });
+        if (inserted.error) throw inserted.error;
+        applied.push({
+          type: "connection_added",
+          summary: `Connected ${input.connection_name}`,
+        });
+      }
+    }
+
+    if (action.name === "record_or_update_load") {
+      const parsed = loadActionSchema.safeParse(action.arguments);
+      if (!parsed.success) continue;
+      const input = parsed.data;
+      const values = {
+        name: input.load_name,
+        watts: input.watts,
+        quantity: input.quantity,
+        hours_per_day: input.hours_per_day,
+        surge_watts: input.surge_watts ?? null,
+        current_type: input.current_type,
+        simultaneous: input.simultaneous,
+        confidence: input.confidence,
+      };
+      if (input.operation === "update") {
+        const changed = await supabase.from("loads").update(values).eq("id", input.load_id!).eq("project_id", projectId).select("id").maybeSingle();
+        if (changed.error) throw changed.error;
+        if (!changed.data) continue;
+        applied.push({ type: "load_updated", summary: `Updated ${input.load_name} in the power-use model` });
+      } else {
+        const inserted = await supabase.from("loads").insert({ project_id: projectId, ...values });
+        if (inserted.error) throw inserted.error;
+        applied.push({ type: "load_added", summary: `Added ${input.load_name} to the power-use model` });
       }
     }
   }

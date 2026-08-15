@@ -13,7 +13,7 @@ export async function login(formData: FormData) {
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) redirect(`/login?error=${encodeURIComponent(error.message)}`);
-  redirect("/");
+  redirect("/dashboard");
 }
 
 export async function signup(formData: FormData) {
@@ -29,7 +29,7 @@ export async function signup(formData: FormData) {
     redirect("/login?setup=password&error=This+email+already+has+a+Google+account.+Continue+with+Google+below+to+add+a+PVIntell+password.");
   }
   if (error) redirect(`/login?mode=signup&error=${encodeURIComponent(error.message)}`);
-  redirect("/");
+  redirect("/dashboard");
 }
 
 export async function loginWithGoogle(formData:FormData) {
@@ -40,7 +40,7 @@ export async function loginWithGoogle(formData:FormData) {
   const requestOrigin=`${protocol}://${host}`;
   const origin=process.env.NODE_ENV==="development"?requestOrigin:(process.env.NEXT_PUBLIC_APP_URL??requestOrigin);
   const requestedNext=formData.get("next");
-  const next=typeof requestedNext==="string"&&requestedNext.startsWith("/")&&!requestedNext.startsWith("//")?requestedNext:"/";
+  const next=typeof requestedNext==="string"&&requestedNext.startsWith("/")&&!requestedNext.startsWith("//")?requestedNext:"/dashboard";
   const callback=new URL("/auth/callback",origin);callback.searchParams.set("next",next);
   const {data,error}=await supabase.auth.signInWithOAuth({provider:"google",options:{redirectTo:callback.toString()}});
   if(error)redirect(`/login?error=${encodeURIComponent(error.message)}`);

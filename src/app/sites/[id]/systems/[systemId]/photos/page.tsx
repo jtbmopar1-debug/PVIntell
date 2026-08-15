@@ -65,7 +65,7 @@ export default async function SystemPhotosPage({
 
   const back = `/sites/${siteId}/systems/${systemId}`;
   return (
-    <main className="min-h-screen bg-[#f4f6f1] px-5 py-8 md:px-10">
+    <main className="min-h-screen bg-[#f5f7fa] px-5 py-8 md:px-10">
       <div className="mx-auto max-w-6xl">
         <Link href={back} className="inline-flex items-center gap-2 text-xs font-bold text-brand">
           <ArrowLeft size={15} /> Back to system overview
@@ -93,7 +93,7 @@ export default async function SystemPhotosPage({
                 href={photo.url}
                 target="_blank"
                 rel="noreferrer"
-                className="card overflow-hidden hover:border-[#91ad98]"
+                className="card overflow-hidden hover:border-[#7aa6d1]"
               >
                 {/* Private signed storage URL; native img avoids a public remote-image allowlist. */}
                 {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 140" role="img" aria-label="Earth electrode">
+  <rect width="180" height="140" rx="18" fill="#fff"/>
+  <path d="M90 18v72" stroke="#257a4b" stroke-width="8" stroke-linecap="round"/>
+  <path d="M57 91h66M66 103h48M77 115h26" fill="none" stroke="#257a4b" stroke-width="6" stroke-linecap="round"/>
+  <path d="M31 122c18-10 37-10 56 0 20-10 40-10 61 0" fill="none" stroke="#b68137" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="90" cy="23" r="11" fill="#f6c945" stroke="#257a4b" stroke-width="4"/>
+</svg>

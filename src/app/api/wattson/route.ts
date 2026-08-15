@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { askGemini } from "@/ai/gemini";
 import { applyWattsonActions, type AppliedWattsonAction } from "@/ai/actions";
+import { discoveryGuidance, nextRequiredDiscoveryQuestion, userExpressesUncertainty } from "@/ai/discovery";
 import { MockAIProvider } from "@/ai/provider";
 import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
@@ -10,6 +11,22 @@ const requestSchema = z.object({
   projectId: z.uuid(),
   project: z.custom<Project>(),
 });
+
+function proposedArchitectureReply(actions: Array<{ name: string; arguments: unknown }>) {
+  const action = actions.find((item) => item.name === "record_design_preference");
+  if (!action?.arguments || typeof action.arguments !== "object") return null;
+  const architecture = (action.arguments as Record<string, unknown>).architecture;
+  const equipment =
+    architecture === "combined_hybrid_inverter"
+      ? "a hybrid inverter"
+      : architecture === "separate_solar_controller_and_inverter"
+        ? "a separate solar charge controller and battery inverter"
+        : architecture === "ac_coupled"
+          ? "an AC-coupled inverter"
+          : null;
+  if (!equipment) return null;
+  return `I’ve added ${equipment} to the working design as a proposed item—it is not marked as purchased or installed. Before I develop the first sizing estimate, is there a firm budget or planned future expansion I need to allow for?`;
+}
 
 export async function POST(request: Request) {
   let candidate: unknown;
@@ -100,7 +117,7 @@ export async function POST(request: Request) {
     .from("conversations")
     .select("id")
     .eq("project_id", parsed.data.projectId)
-    .order("created_at")
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (conversation.error)
@@ -162,6 +179,16 @@ export async function POST(request: Request) {
       { error: questionnaireResult.error.message },
       { status: 400 },
     );
+  const profileResult = await supabase
+    .from("profiles")
+    .select("home_location,timezone,onboarding_assessment")
+    .eq("id", userId)
+    .single();
+  if (profileResult.error)
+    return Response.json(
+      { error: profileResult.error.message },
+      { status: 400 },
+    );
   const equipmentResult = await supabase
     .from("site_equipment")
     .select(
@@ -185,7 +212,7 @@ export async function POST(request: Request) {
   const siteSystemIds = (siteSystemsResult.data ?? []).map(
     (system) => system.id,
   );
-  const [siteComponentsResult, siteArraysResult] = siteSystemIds.length
+  const [siteComponentsResult, siteArraysResult, siteConnectionsResult] = siteSystemIds.length
     ? await Promise.all([
         supabase
           .from("system_components")
@@ -199,16 +226,32 @@ export async function POST(request: Request) {
             "id,project_id,name,manufacturer,panel_model,panel_type,panel_watts,panel_count,specifications,confidence",
           )
           .in("project_id", siteSystemIds),
+        supabase
+          .from("system_connections")
+          .select(
+            "id,project_id,source_ref,target_ref,name,connection_type,polarity,cable_size,cable_length,breaker_size,fuse_size,isolator,route,notes,confidence",
+          )
+          .in("project_id", siteSystemIds),
       ])
     : [
         { data: [], error: null },
         { data: [], error: null },
+        { data: [], error: null },
       ];
-  if (siteComponentsResult.error || siteArraysResult.error)
+  const connectionTableMissing =
+    siteConnectionsResult.error?.code === "PGRST205" ||
+    siteConnectionsResult.error?.code === "42P01";
+  if (
+    siteComponentsResult.error ||
+    siteArraysResult.error ||
+    (siteConnectionsResult.error && !connectionTableMissing)
+  )
     return Response.json(
       {
         error:
-          siteComponentsResult.error?.message ?? siteArraysResult.error?.message,
+          siteComponentsResult.error?.message ??
+          siteArraysResult.error?.message ??
+          siteConnectionsResult.error?.message,
       },
       { status: 400 },
     );
@@ -220,6 +263,9 @@ export async function POST(request: Request) {
     ),
     pvStrings: (siteArraysResult.data ?? []).filter(
       (array) => array.project_id === system.id,
+    ),
+    connections: (siteConnectionsResult.data ?? []).filter(
+      (connection) => connection.project_id === system.id,
     ),
   }));
 
@@ -234,25 +280,58 @@ export async function POST(request: Request) {
         project: parsed.data.project,
         recentConversation: priorHistory,
         questionnaireContext: {
+          onboardingLocation: profileResult.data.home_location,
+          userTimezone: profileResult.data.timezone,
+          userAssessment: profileResult.data.onboarding_assessment ?? {},
           responses: questionnaireResult.data ?? [],
           siteEquipment: equipmentResult.data ?? [],
           connectedSiteSystems,
         },
         image,
       });
+      const systemSettings = connectedSiteSystems.find((system) => system.id === parsed.data.projectId)?.settings;
+      const currentDiscovery = nextRequiredDiscoveryQuestion(systemSettings);
+      const nextDiscovery = nextRequiredDiscoveryQuestion(systemSettings, result.actions);
+      const blockedArchitecture = result.actions.some((action) => action.name === "record_design_preference") && nextDiscovery;
+      const uncertainDiscovery = userExpressesUncertainty(parsed.data.message) && Boolean(currentDiscovery);
       appliedActions = await applyWattsonActions(
         supabase,
         parsed.data.projectId,
-        result.actions,
+        result.actions.filter((action) =>
+          (action.name !== "record_design_preference" || !blockedArchitecture)
+          && (action.name !== "record_design_discovery" || !uncertainDiscovery),
+        ),
       );
       const updateSummary = appliedActions
         .map((action) => action.summary)
         .join("; ");
       message = result.message.trim();
-      if (updateSummary)
+      const architectureReply = appliedActions.some(
+        (action) => action.type === "design_preference_updated",
+      )
+        ? proposedArchitectureReply(result.actions)
+        : null;
+      const discoveryReply = appliedActions.some(
+        (action) => action.type === "design_discovery_updated",
+      )
+        ? nextDiscovery
+          ? `I’ve added that to the design discovery notes. ${nextDiscovery[1]}`
+          : "I’ve added that to the design discovery notes. The basic energy and site discovery is now complete."
+        : null;
+      if (!message && architectureReply) message = architectureReply;
+      if (!message && discoveryReply) message = discoveryReply;
+      if (blockedArchitecture)
+        message = `We’re still in discovery, so I haven’t added an inverter arrangement yet. ${blockedArchitecture[1]}`;
+      if (uncertainDiscovery)
+        message = `No problem—I haven’t saved that as an answer. ${currentDiscovery ? discoveryGuidance(currentDiscovery[0]) : "Tell me which part is unclear and I’ll explain it another way."}`;
+      if (updateSummary && message !== architectureReply && message !== discoveryReply)
         message = message
           ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`
           : `Done — ${updateSummary}.`;
+      if (!message)
+        message = result.actions.length
+          ? "I couldn’t safely apply that change to a specific record. Tell me which item it belongs to."
+          : "I didn’t produce a useful reply. Please send that once more.";
       citations = result.citations;
       structuredContext = {
         provider: "gemini",

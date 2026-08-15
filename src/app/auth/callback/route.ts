@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request:Request){
-  const url=new URL(request.url);const code=url.searchParams.get("code");let next=url.searchParams.get("next")??"/";if(!next.startsWith("/"))next="/";
+  const url=new URL(request.url);const code=url.searchParams.get("code");let next=url.searchParams.get("next")??"/dashboard";if(!next.startsWith("/"))next="/dashboard";
   if(code){
     const supabase=await createClient();
     const {data,error}=await supabase.auth.exchangeCodeForSession(code);

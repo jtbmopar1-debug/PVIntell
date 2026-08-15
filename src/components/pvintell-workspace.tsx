@@ -11,7 +11,6 @@ import {
   ChevronRight,
   CircleGauge,
   ClipboardCheck,
-  ClipboardList,
   CloudSun,
   Compass,
   HelpCircle,
@@ -20,15 +19,16 @@ import {
   Lightbulb,
   MapPin,
   Menu,
-  MessageCircle,
   Package,
   Plus,
   PlugZap,
+  RotateCcw,
   Send,
   Settings2,
   ShieldCheck,
   Sparkles,
   Sun,
+  Waypoints,
   Wrench,
   X,
   Zap,
@@ -77,6 +77,7 @@ export type WorkspaceView =
   | "equipment"
   | "weather"
   | "system"
+  | "schematic"
   | "build"
   | "commission"
   | "monitor";
@@ -133,10 +134,10 @@ function Badge({
 }) {
   const c =
     tone === "green"
-      ? "bg-[#e6f3e9] text-[#226342]"
+      ? "bg-[#e7f0fb] text-[#175a96]"
       : tone === "amber"
         ? "bg-[#fff1cf] text-[#8b6512]"
-        : "bg-[#edf0eb] text-[#59645e]";
+        : "bg-[#edf2f7] text-[#566579]";
   return (
     <span
       className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[.08em] ${c}`}
@@ -148,7 +149,7 @@ function Badge({
 function Logo() {
   return (
     <div className="flex items-center gap-3">
-      <span className="grid size-9 place-items-center rounded-[11px] bg-brand text-white">
+      <span className="grid size-9 place-items-center rounded-[11px] bg-[#f6c945] text-[#143c63]">
         <Zap size={19} fill="currentColor" />
       </span>
       <div>
@@ -492,6 +493,22 @@ export function PVIntellWorkspace({
     ]);
     setSending(false);
   }
+
+  async function startConversationAgain() {
+    if (!cloud || sending) return;
+    const response = await fetch("/api/wattson/reset", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: "system", projectId: project.id }),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      window.alert(body.error ?? "Could not start a new conversation");
+      return;
+    }
+    setMessages([]);
+    setInput("");
+  }
   async function sendImage(file: File) {
     if (sending) return;
     const message =
@@ -550,11 +567,10 @@ export function PVIntellWorkspace({
     ...(sitePage
       ? [{ id: "site" as View, label: "Site overview", icon: Home }]
       : []),
-    { id: "wattson" as View, label: "Wattson", icon: MessageCircle },
-    { id: "setup" as View, label: "System questionnaire", icon: ClipboardList },
     { id: "equipment" as View, label: "Site equipment", icon: Package },
     { id: "weather" as View, label: "Solar weather", icon: CloudSun },
     { id: "system" as View, label: "System overview", icon: LayoutDashboard },
+    { id: "schematic" as View, label: "System schematic", icon: Waypoints },
     { id: "build" as View, label: "Build", icon: Wrench },
     { id: "commission" as View, label: "Commission", icon: ClipboardCheck },
     { id: "monitor" as View, label: "Monitor", icon: CircleGauge },
@@ -562,7 +578,7 @@ export function PVIntellWorkspace({
   return (
     <div className="min-h-screen lg:grid lg:grid-cols-[226px_1fr]">
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[226px] flex-col overflow-y-auto border-r border-[#dce3da] bg-[#f8faf6] p-4 transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${menu ? "translate-x-0" : "-translate-x-full"}`}
+        className={`fixed inset-y-0 left-0 z-40 flex w-[226px] flex-col overflow-y-auto border-r border-[#dce4ec] bg-[#f8fafc] p-4 transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${menu ? "translate-x-0" : "-translate-x-full"}`}
       >
         <div className="flex h-12 items-center justify-between px-2">
           <Logo />
@@ -581,11 +597,11 @@ export function PVIntellWorkspace({
         {cloud && (
           <div className="mt-5 rounded-2xl border border-line bg-white p-2">
             <div className="flex items-center justify-between px-2 py-1">
-              <div className="eyebrow text-[#869089]">My sites</div>
+              <div className="eyebrow text-[#7b8a9c]">My sites</div>
               <button
                 onClick={addSite}
                 aria-label="Add site"
-                className="grid size-7 place-items-center rounded-lg bg-[#edf3e9] text-brand"
+                className="grid size-7 place-items-center rounded-lg bg-[#eaf2fb] text-brand"
               >
                 <Plus size={14} />
               </button>
@@ -595,7 +611,7 @@ export function PVIntellWorkspace({
                 <Link
                   key={site.id}
                   href={`/sites/${site.id}`}
-                  className={`flex items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] font-bold ${site.id === initialSite.id ? "bg-[#e6efe7] text-brand" : "text-muted hover:bg-[#f1f4ef]"}`}
+                  className={`flex items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] font-bold ${site.id === initialSite.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}
                 >
                   <MapPin size={12} />
                   <span className="truncate">{site.name}</span>
@@ -605,30 +621,55 @@ export function PVIntellWorkspace({
           </div>
         )}
         <nav className="mt-5 space-y-1">
-          {nav.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              onClick={() => {
-                setView(id);
-                setMenu(false);
-              }}
-              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold ${view === id ? "bg-[#e8eee7] text-ink" : "text-[#6c7770] hover:bg-[#eef2ec]"}`}
+          {cloud && (
+            <Link
+              href="/dashboard"
+              className="flex w-full items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"
             >
-              <Icon size={17} />
-              {label}
-            </button>
-          ))}
+              <LayoutDashboard size={17} />
+              Dashboard
+            </Link>
+          )}
+          {nav.map(({ id, label, icon: Icon }) =>
+            id === "weather" || id === "schematic" ? (
+              <Link
+                key={id}
+                prefetch={id !== "weather"}
+                href={
+                  id === "weather"
+                    ? `/sites/${initialSite.id}/weather`
+                    : `/sites/${initialSite.id}/systems/${project.id}/schematic`
+                }
+                className="flex w-full items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"
+              >
+                <Icon size={17} />
+                {label}
+              </Link>
+            ) : (
+              <button
+                key={id}
+                onClick={() => {
+                  setView(id);
+                  setMenu(false);
+                }}
+                className={`flex w-full items-center gap-3 rounded-xl border-l-4 px-3 py-2.5 text-sm font-semibold ${view === id ? "border-[#f6c945] bg-[#fff6cf] text-[#143c63]" : "border-transparent text-[#66758a] hover:bg-[#eef3f8]"}`}
+              >
+                <Icon size={17} />
+                {label}
+              </button>
+            ),
+          )}
         </nav>
         <div className="mt-7 px-3">
-          <div className="eyebrow mb-4 text-[#869089]">Lifecycle</div>
+          <div className="eyebrow mb-4 text-[#7b8a9c]">Lifecycle</div>
           {["Discover", "Design", "Build", "Commission", "Monitor"].map(
             (p, i) => (
               <div
                 key={p}
-                className={`mb-3 flex items-center gap-3 text-[11px] font-semibold ${i < 2 ? "text-brand" : "text-[#8d9690]"}`}
+                className={`mb-3 flex items-center gap-3 text-[11px] font-semibold ${i < 2 ? "text-brand" : "text-[#7c8998]"}`}
               >
                 <span
-                  className={`size-2 rounded-full ${i < 2 ? "bg-brand" : "bg-[#c8d0c8]"}`}
+                  className={`size-2 rounded-full ${i < 2 ? "bg-brand" : "bg-[#c8d4e0]"}`}
                 />
                 {p}
                 {i === 1 && <Badge tone="green">Now</Badge>}
@@ -638,7 +679,7 @@ export function PVIntellWorkspace({
         </div>
         <div className="mt-auto rounded-2xl border border-line bg-white p-3.5">
           <div className="flex items-center gap-2 text-xs font-bold">
-            <span className="size-2 rounded-full bg-[#4cb36e]" />
+            <span className="size-2 rounded-full bg-[#2f80c1]" />
             {cloud ? "Cloud systems saved" : "Demo system online"}
           </div>
           <p className="mt-2 truncate text-[10px] leading-4 text-muted">
@@ -660,7 +701,7 @@ export function PVIntellWorkspace({
         />
       )}
       <main className="min-w-0">
-        <header className="sticky top-0 z-20 flex h-[68px] items-center border-b border-line bg-[rgba(244,246,241,.9)] px-5 backdrop-blur-xl md:px-8">
+        <header className="sticky top-0 z-20 flex h-[68px] items-center border-b border-line bg-[rgba(245,247,250,.9)] px-5 backdrop-blur-xl md:px-8">
           <button className="mr-3 lg:hidden" onClick={() => setMenu(true)}>
             <Menu size={21} />
           </button>
@@ -695,7 +736,9 @@ export function PVIntellWorkspace({
               solarArrayKw={installedSolarKw}
               onAddSystem={addSystem}
               onOpenSystem={() => setView("system")}
-              onOpenWeather={() => setView("weather")}
+              onOpenWeather={() =>
+                router.push(`/sites/${initialSite.id}/weather`)
+              }
               onOpenEquipment={(id) => {
                 setEquipmentToEdit(id || undefined);
                 setView("equipment");
@@ -715,6 +758,7 @@ export function PVIntellWorkspace({
               solar={solar}
               battery={battery}
               inverter={inverter}
+              startAgain={startConversationAgain}
             />
           )}{" "}
           {view === "setup" && (
@@ -764,7 +808,7 @@ function GoogleWelcome() {
   const [open, setOpen] = useState(true);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#10251c]/45 p-5 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[#0b2740]/45 p-5 backdrop-blur-sm">
       <div
         role="dialog"
         aria-modal="true"
@@ -772,13 +816,13 @@ function GoogleWelcome() {
         className="card w-full max-w-md bg-white p-7 shadow-2xl"
       >
         <div className="flex items-start justify-between">
-          <span className="grid size-11 place-items-center rounded-2xl bg-[#eaf3e7] font-bold text-[#4285f4]">
+          <span className="grid size-11 place-items-center rounded-2xl bg-[#eaf2fb] font-bold text-[#4285f4]">
             G
           </span>
           <button
             onClick={() => setOpen(false)}
             aria-label="Close"
-            className="grid size-8 place-items-center rounded-lg text-muted hover:bg-[#eef2ec]"
+            className="grid size-8 place-items-center rounded-lg text-muted hover:bg-[#eef3f8]"
           >
             <X size={17} />
           </button>
@@ -825,11 +869,12 @@ function Wattson({
   solar,
   battery,
   inverter,
+  startAgain,
 }: any) {
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
       <section className="card overflow-hidden">
-        <div className="border-b border-line bg-[linear-gradient(125deg,#f9fbf6_10%,#eef5e6)] px-6 py-7 md:px-8">
+        <div className="border-b border-line bg-[linear-gradient(125deg,#fafcfe_10%,#fff7d6)] px-6 py-7 md:px-8">
           <div className="flex gap-4">
             <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-brand text-white">
               <Bot size={23} />
@@ -844,6 +889,7 @@ function Wattson({
                 calculations, assumptions, and explanations.
               </p>
             </div>
+            <button type="button" onClick={() => void startAgain()} disabled={sending} className="ml-auto flex h-9 shrink-0 items-center gap-2 rounded-xl border border-line bg-white px-3 text-[10px] font-bold text-brand disabled:opacity-40"><RotateCcw size={13}/>Start again</button>
           </div>
         </div>
         <div className="grid gap-3 border-b border-line p-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -855,10 +901,10 @@ function Wattson({
                   `I want to start with: ${title}. I don't know much about solar yet.`,
                 )
               }
-              className="group rounded-2xl border border-line bg-white p-4 text-left hover:border-[#9bb5a4]"
+              className="group rounded-2xl border border-line bg-white p-4 text-left hover:border-[#7ea8ce]"
             >
               <div className="flex justify-between">
-                <span className="grid size-8 place-items-center rounded-xl bg-[#edf3e9] text-brand">
+                <span className="grid size-8 place-items-center rounded-xl bg-[#eaf2fb] text-brand">
                   <Icon size={16} />
                 </span>
                 <ArrowRight size={14} />
@@ -870,7 +916,7 @@ function Wattson({
             </button>
           ))}
         </div>
-        <div className="thin-scrollbar max-h-[330px] space-y-5 overflow-y-auto p-6">
+        <div className="wattson-conversation thin-scrollbar space-y-5 overflow-y-auto p-6">
           {messages.map((m: ChatMessage) => (
             <div
               key={m.id}
@@ -882,7 +928,7 @@ function Wattson({
                 </span>
               )}
               <div
-                className={`max-w-[82%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-xs leading-5 ${m.role === "user" ? "rounded-br-md bg-[#213c30] text-white" : "rounded-tl-md bg-[#edf1eb]"}`}
+                className={`max-w-[82%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-xs leading-5 ${m.role === "user" ? "rounded-br-md bg-[#123b66] text-white" : "rounded-tl-md bg-[#eef3f8]"}`}
               >
                 {m.imageUrl && (
                   <a href={m.imageUrl} target="_blank" rel="noreferrer">
@@ -897,7 +943,7 @@ function Wattson({
                 )}
                 <div>{m.content}</div>
                 {m.citations?.length ? (
-                  <div className="mt-3 border-t border-[#d4ddd2] pt-2 text-[10px]">
+                  <div className="mt-3 border-t border-[#d4dee8] pt-2 text-[10px]">
                     <strong>Sources</strong>
                     {m.citations.map((citation, index) => (
                       <a
@@ -924,7 +970,7 @@ function Wattson({
             e.preventDefault();
             send();
           }}
-          className="m-6 mt-0 flex items-end gap-2 rounded-2xl border border-[#cfd8ce] bg-white p-2 shadow-lg"
+          className="m-6 mt-0 flex items-end gap-2 rounded-2xl border border-[#cfdae5] bg-white p-2 shadow-lg"
         >
           <textarea
             value={input}
@@ -969,7 +1015,7 @@ function Wattson({
           </div>
           <button
             onClick={() => send("Why do I need this inverter size?")}
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#e8eee7] py-2.5 text-xs font-bold"
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#e8f0f8] py-2.5 text-xs font-bold"
           >
             <HelpCircle size={14} />
             Explain this design
@@ -994,7 +1040,7 @@ function Wattson({
 function Rec({ icon: Icon, label, value, detail }: any) {
   return (
     <div className="flex gap-3">
-      <span className="grid size-9 place-items-center rounded-xl bg-[#edf3e9] text-brand">
+      <span className="grid size-9 place-items-center rounded-xl bg-[#eaf2fb] text-brand">
         <Icon size={17} />
       </span>
       <div>
@@ -1029,7 +1075,7 @@ function Metric({
     <div className="card flex min-h-36 flex-col justify-between p-5">
       <div className="flex justify-between">
         <span className="text-xs font-semibold text-muted">{label}</span>
-        <span className="grid size-8 place-items-center rounded-xl bg-[#e4f2e9] text-brand">
+        <span className="grid size-8 place-items-center rounded-xl bg-[#e6f0fa] text-brand">
           <Icon size={16} />
         </span>
       </div>
@@ -1155,7 +1201,7 @@ function System({
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[650px] text-left text-xs">
-            <thead className="bg-[#f2f5f0] text-[10px] uppercase text-muted">
+            <thead className="bg-[#f2f6fa] text-[10px] uppercase text-muted">
               <tr>
                 <th className="px-6 py-3">Load</th>
                 <th>Power</th>
@@ -1202,7 +1248,7 @@ function Flow({ technical }: { technical: boolean }) {
       {nodes.map(([l, v, I, t], i) => (
         <div key={l} className="contents">
           <div className="flex flex-1 items-center gap-3 rounded-2xl border border-line bg-white p-4 md:flex-col md:text-center">
-            <span className="grid size-10 place-items-center rounded-2xl bg-[#eaf3e7] text-brand">
+            <span className="grid size-10 place-items-center rounded-2xl bg-[#eaf2fb] text-brand">
               <I size={19} />
             </span>
             <div>
@@ -1262,7 +1308,7 @@ function Build({
             {done}/{project.installationSteps.length}
           </strong>
         </div>
-        <div className="mt-4 h-2 rounded-full bg-[#e4e9e2]">
+        <div className="mt-4 h-2 rounded-full bg-[#e4eaf0]">
           <div
             className="h-full rounded-full bg-brand"
             style={{
@@ -1346,7 +1392,7 @@ function Commission({
               key={r.id}
               className="flex items-center gap-4 border-b border-line px-6 py-4"
             >
-              <span className="grid size-8 place-items-center rounded-full bg-[#e5f2e8] text-brand">
+              <span className="grid size-8 place-items-center rounded-full bg-[#e7f0fb] text-brand">
                 <Check size={15} />
               </span>
               <div className="flex-1">
@@ -1465,13 +1511,13 @@ function Chart() {
         <polyline
           points={p(a)}
           fill="none"
-          stroke="#86b64e"
+          stroke="#d8a000"
           strokeWidth="1.5"
         />
         <polyline
           points={p(b)}
           fill="none"
-          stroke="#365a4d"
+          stroke="#2f5272"
           strokeWidth="1.2"
         />
       </svg>
@@ -1497,7 +1543,7 @@ function WattsonPhotoButton({
     <label
       title="Add a photo for Wattson"
       aria-label="Add a photo for Wattson"
-      className={`grid size-10 shrink-0 cursor-pointer place-items-center rounded-xl border border-line bg-[#f4f7f2] text-brand ${disabled ? "pointer-events-none opacity-50" : ""}`}
+      className={`grid size-10 shrink-0 cursor-pointer place-items-center rounded-xl border border-line bg-[#f5f8fc] text-brand ${disabled ? "pointer-events-none opacity-50" : ""}`}
     >
       <Camera size={17} />
       <input

@@ -52,6 +52,6 @@ export class MockAIProvider implements AIProvider {
     return step ? `${step.description} Expected result: ${step.expectedResult}` : "Choose an installation stage and I’ll guide you through it.";
   }
   async guideCommissioning(_recordId: string, context: WattsonContext) {
-    return `Before energising ${context.project.name}, verify polarity with a suitable meter and have regulated mains work checked by a licensed electrician.`;
+    return `Before energising ${context.project.name}, verify polarity using the required test procedure and arrange any inspection, certification or authorised connection required at the site location.`;
   }
 }

@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
   if (tokenHash && type) {
     const supabase = await createClient();
     const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
-    if (!error) { destination.pathname = "/"; return NextResponse.redirect(destination); }
+    if (!error) { destination.pathname = "/dashboard"; return NextResponse.redirect(destination); }
   }
   destination.pathname = "/login";
   destination.searchParams.set("error", "That confirmation link is invalid or has expired");

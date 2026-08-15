@@ -179,6 +179,7 @@ export async function createSystem(
   siteId: string,
   name: string,
   type: ProjectType = "off-grid",
+  startingGoal?: string,
 ) {
   const created = await supabase
     .from("projects")
@@ -186,7 +187,7 @@ export async function createSystem(
       owner_id: userId,
       site_id: siteId,
       name,
-      description: "Tell Wattson what you want this system to do.",
+      description: startingGoal || "Tell Wattson what you want this system to do.",
       mode:
         type === "grid-tied"
           ? "grid_tied"
@@ -195,7 +196,7 @@ export async function createSystem(
             : "off_grid",
       phase: "discover",
       system_voltage: 48,
-      settings: { autonomyDays: 2, peakSunHours: 4.2, priorities: [] },
+      settings: { autonomyDays: 2, peakSunHours: 4.2, priorities: [], startingGoal: startingGoal || null },
     })
     .select("id")
     .single();
@@ -266,6 +267,9 @@ export async function loadWorkspace(
     loads,
     assumptions,
     components,
+    connections,
+    schematicPositions,
+    overviewCardOrder,
     pvArrays,
     steps,
     records,
@@ -283,6 +287,20 @@ export async function loadWorkspace(
       .select("*")
       .eq("project_id", row.id)
       .order("created_at"),
+    supabase
+      .from("system_connections")
+      .select("*")
+      .eq("project_id", row.id)
+      .order("created_at"),
+    supabase
+      .from("system_schematic_positions")
+      .select("node_ref,position_x,position_y")
+      .eq("project_id", row.id),
+    supabase
+      .from("system_overview_card_order")
+      .select("node_ref,position")
+      .eq("project_id", row.id)
+      .order("position"),
     supabase
       .from("pv_arrays")
       .select("*")
@@ -302,7 +320,7 @@ export async function loadWorkspace(
       .from("conversations")
       .select("id")
       .eq("project_id", row.id)
-      .order("created_at")
+      .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
     supabase
@@ -314,13 +332,25 @@ export async function loadWorkspace(
     loads,
     assumptions,
     components,
+    connections,
+    schematicPositions,
+    overviewCardOrder,
     pvArrays,
     steps,
     records,
     conversation,
     questionnaires,
-  ])
+  ]) {
+    if (
+      (result === connections ||
+        result === schematicPositions ||
+        result === overviewCardOrder) &&
+      result.error &&
+      (result.error.code === "PGRST205" || result.error.code === "42P01")
+    )
+      continue;
     if (result.error) throw result.error;
+  }
 
   let messages: ChatMessage[] = [];
   if (conversation.data?.id) {
@@ -332,7 +362,7 @@ export async function loadWorkspace(
       .limit(50);
     if (result.error) throw result.error;
     messages = await Promise.all(
-      (result.data ?? []).map(async (message) => {
+      (result.data ?? []).filter((message) => String(message.content).trim()).map(async (message) => {
         const context = (message.structured_context ?? {}) as {
           citations?: Array<{ title: string; url: string }>;
           imagePath?: string;
@@ -413,6 +443,32 @@ export async function loadWorkspace(
       photoUrl: component.photo_url ?? undefined,
       status: component.confidence,
       specs: component.specifications ?? {},
+    })),
+    connections: (connections.data ?? []).map((connection) => ({
+      id: connection.id,
+      projectId: connection.project_id,
+      sourceRef: connection.source_ref,
+      targetRef: connection.target_ref,
+      name: connection.name,
+      connectionType: connection.connection_type,
+      polarity: connection.polarity ?? "na",
+      cableSize: connection.cable_size ?? undefined,
+      cableLength: connection.cable_length ?? undefined,
+      breakerSize: connection.breaker_size ?? undefined,
+      fuseSize: connection.fuse_size ?? undefined,
+      isolator: connection.isolator ?? undefined,
+      route: connection.route ?? undefined,
+      notes: connection.notes ?? undefined,
+      confidence: connection.confidence,
+    })),
+    schematicPositions: (schematicPositions.data ?? []).map((position) => ({
+      nodeRef: position.node_ref,
+      x: Number(position.position_x),
+      y: Number(position.position_y),
+    })),
+    overviewCardOrder: (overviewCardOrder.data ?? []).map((item) => ({
+      nodeRef: item.node_ref,
+      position: Number(item.position),
     })),
     pvArrays: (pvArrays.data ?? []).map((array) => ({
       id: array.id,
