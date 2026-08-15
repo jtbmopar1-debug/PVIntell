@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpen, Bot, CircleGauge, ClipboardCheck, CloudRain, CloudSun, Home, ImagePlus, LayoutDashboard, MapPin, Menu, Package, Plus, RotateCcw, Send, Settings2, Sparkles, Sun, Waypoints, Wrench, X, Zap } from "lucide-react";
+import { ArrowRight, BookOpen, Bot, Calculator, CircleGauge, ClipboardCheck, CloudRain, CloudSun, Home, ImagePlus, LayoutDashboard, MapPin, Menu, Package, Plus, RotateCcw, Send, Settings2, Sparkles, Sun, Waypoints, Wrench, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -13,6 +13,7 @@ type Profile = { displayName: string; location: string; timezone: string; assess
 const dashboardSystemNavigation = [
   ["equipment", "Site equipment", Package],
   ["weather", "Solar weather", CloudSun],
+  ["design", "Design calculator", Calculator],
   ["system", "System overview", LayoutDashboard],
   ["schematic", "System schematic", Waypoints],
   ["build", "Build", Wrench],
@@ -94,6 +95,7 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
 
   function systemHref(system: SystemSummary, view: string) {
     if (view === "schematic") return `/sites/${system.siteId}/systems/${system.id}/schematic`;
+    if (view === "design") return `/sites/${system.siteId}/systems/${system.id}/design`;
     if (view === "system") return `/sites/${system.siteId}/systems/${system.id}`;
     return `/sites/${system.siteId}/systems/${system.id}?view=${view}`;
   }

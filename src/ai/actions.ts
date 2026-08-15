@@ -29,6 +29,23 @@ const proposedComponentSchema = z.object({
   quantity: z.number().int().min(1).max(100).default(1),
   reason: z.string().trim().min(1).max(500).optional(),
 });
+const preliminaryDesignSchema = z.object({
+  design_basis: z.string().trim().min(1).max(1200),
+  starting_stage: z.string().trim().min(1).max(800),
+  expansion_path: z.string().trim().min(1).max(1200),
+  next_validation: z.string().trim().min(1).max(800),
+  pv_kw: z.number().positive().max(1000).optional(),
+  panel_count: z.number().int().positive().max(10000).optional(),
+  representative_panel_watts: z.number().positive().max(5000).optional(),
+  panel_type: z.enum(["bifacial", "monofacial", "other", "not_selected"]).default("not_selected"),
+  panel_length_mm: z.number().positive().max(10000).optional(),
+  panel_width_mm: z.number().positive().max(10000).optional(),
+  panel_weight_kg: z.number().positive().max(500).optional(),
+  required_panel_area_m2: z.number().positive().max(100000).optional(),
+  fit_status: z.enum(["verified", "unverified", "does_not_fit"]),
+  inverter_kw: z.number().positive().max(1000).optional(),
+  battery_usable_kwh: z.number().positive().max(10000).optional(),
+});
 const designPreferenceSchema = z.object({
   architecture: z.enum([
     "combined_hybrid_inverter",
@@ -55,6 +72,8 @@ const discoveryKey = z.enum([
   "property_authority",
   "proposed_panel_location",
   "usable_solar_space",
+  "panel_area_dimensions",
+  "panel_area_constraints",
   "orientation_and_pitch",
   "shading",
   "structure_condition",
@@ -210,6 +229,7 @@ export interface AppliedWattsonAction {
   type:
     | "component_added"
     | "component_proposed"
+    | "preliminary_design_updated"
     | "component_updated"
     | "design_preference_updated"
     | "design_discovery_updated"
@@ -258,6 +278,35 @@ export const wattsonActionTools = [
         reason: { type: "string" },
       },
       required: ["component_type", "component_name", "quantity"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "record_preliminary_design",
+    description:
+      "Save or refresh Wattson's evidence-led preliminary working design after discovery and an architecture direction are complete. Use this for proposed sizing only, never installed or purchased equipment. Prefer a modest useful starting stage plus a compatible expansion path. A panel count is a candidate only: set fit_status to verified solely when recorded usable dimensions, obstructions, clearances and the candidate panel dimensions demonstrate that it fits; otherwise use unverified. Do not use budget to determine technical size.",
+    parameters: {
+      type: "object",
+      properties: {
+        project_id: { type: "string", description: "Exact system UUID from connectedSiteSystems." },
+        design_basis: { type: "string", description: "Short evidence summary, including energy and resilience inputs used." },
+        starting_stage: { type: "string", description: "A useful minimum starting stage, clearly described as proposed." },
+        expansion_path: { type: "string", description: "How the design can expand without stranding the starting equipment." },
+        next_validation: { type: "string", description: "The single most important measurement or evidence still needed." },
+        pv_kw: { type: "number", exclusiveMinimum: 0 },
+        panel_count: { type: "integer", minimum: 1 },
+        representative_panel_watts: { type: "number", exclusiveMinimum: 0 },
+        panel_type: { type: "string", enum: ["bifacial", "monofacial", "other", "not_selected"] },
+        panel_length_mm: { type: "number", exclusiveMinimum: 0 },
+        panel_width_mm: { type: "number", exclusiveMinimum: 0 },
+        panel_weight_kg: { type: "number", exclusiveMinimum: 0 },
+        required_panel_area_m2: { type: "number", exclusiveMinimum: 0 },
+        fit_status: { type: "string", enum: ["verified", "unverified", "does_not_fit"] },
+        inverter_kw: { type: "number", exclusiveMinimum: 0 },
+        battery_usable_kwh: { type: "number", exclusiveMinimum: 0 },
+      },
+      required: ["design_basis", "starting_stage", "expansion_path", "next_validation", "panel_type", "fit_status"],
       additionalProperties: false,
     },
   },
@@ -613,6 +662,44 @@ export async function applyWattsonActions(
       });
     }
 
+    if (action.name === "record_preliminary_design") {
+      const parsed = preliminaryDesignSchema.safeParse(action.arguments);
+      if (!parsed.success) continue;
+      const input = parsed.data;
+      const current = await supabase.from("projects").select("settings").eq("id", projectId).single();
+      if (current.error) throw current.error;
+      const settings = (current.data.settings ?? {}) as Record<string, unknown>;
+      const previous = settings.designCalculator && typeof settings.designCalculator === "object"
+        ? settings.designCalculator as Record<string, unknown>
+        : {};
+      settings.designCalculator = {
+        ...previous,
+        designBasis: input.design_basis,
+        startingStage: input.starting_stage,
+        expansionPath: input.expansion_path,
+        nextValidation: input.next_validation,
+        panelType: input.panel_type,
+        targetPvKw: input.pv_kw ?? previous.targetPvKw,
+        panelWatts: input.representative_panel_watts ?? previous.panelWatts,
+        panelCount: input.panel_count ?? previous.panelCount,
+        panelLengthMm: input.panel_length_mm ?? previous.panelLengthMm,
+        panelWidthMm: input.panel_width_mm ?? previous.panelWidthMm,
+        panelWeightKg: input.panel_weight_kg ?? previous.panelWeightKg,
+        requiredPanelAreaM2: input.required_panel_area_m2 ?? previous.requiredPanelAreaM2,
+        fitStatus: input.fit_status,
+        inverterKw: input.inverter_kw ?? previous.inverterKw,
+        batteryUsableKwh: input.battery_usable_kwh ?? previous.batteryUsableKwh,
+        updatedAt: new Date().toISOString(),
+        updatedBy: "wattson",
+      };
+      const changed = await supabase.from("projects").update({ settings }).eq("id", projectId);
+      if (changed.error) throw changed.error;
+      applied.push({
+        type: "preliminary_design_updated",
+        summary: "Updated the proposed Design Calculator",
+      });
+    }
+
     if (action.name === "record_design_preference") {
       const parsed = designPreferenceSchema.safeParse(action.arguments);
       if (!parsed.success) continue;
@@ -625,6 +712,15 @@ export async function applyWattsonActions(
         notes: parsed.data.notes ?? null,
         confirmedThroughWattson: true,
       };
+      const calculator = settings.designCalculator && typeof settings.designCalculator === "object"
+        ? settings.designCalculator as Record<string, unknown>
+        : {};
+      settings.designCalculator = {
+        ...calculator,
+        architecture: parsed.data.architecture,
+        updatedAt: new Date().toISOString(),
+        updatedBy: "wattson",
+      };
       const changed = await supabase.from("projects").update({ settings }).eq("id", projectId);
       if (changed.error) throw changed.error;
       const architectureMarker = "Proposed by Wattson: architecture preference";
@@ -635,33 +731,9 @@ export async function applyWattsonActions(
         .eq("confidence", "estimated")
         .eq("notes", architectureMarker);
       if (cleared.error) throw cleared.error;
-      const proposed =
-        parsed.data.architecture === "combined_hybrid_inverter"
-          ? [{ type: "inverter", display_name: "Proposed hybrid inverter" }]
-          : parsed.data.architecture === "separate_solar_controller_and_inverter"
-            ? [
-                { type: "charger", display_name: "Proposed MPPT solar charge controller" },
-                { type: "inverter", display_name: "Proposed battery inverter" },
-              ]
-            : parsed.data.architecture === "ac_coupled"
-              ? [{ type: "inverter", display_name: "Proposed AC-coupled inverter" }]
-              : [];
-      if (proposed.length) {
-        const inserted = await supabase.from("system_components").insert(
-          proposed.map((component) => ({
-            project_id: projectId,
-            type: component.type,
-            display_name: component.display_name,
-            quantity: 1,
-            confidence: "estimated",
-            notes: architectureMarker,
-          })),
-        );
-        if (inserted.error) throw inserted.error;
-      }
       applied.push({
         type: "design_preference_updated",
-        summary: "Saved the architecture preference and updated the working schematic",
+        summary: "Saved the architecture preference for the Design Calculator",
       });
     }
 

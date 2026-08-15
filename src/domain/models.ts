@@ -113,6 +113,43 @@ export interface OverviewCardOrder {
   position: number;
 }
 
+export interface DesignCalculatorState {
+  architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
+  designBasis?: string;
+  startingStage?: string;
+  expansionPath?: string;
+  nextValidation?: string;
+  panelType?: "bifacial" | "monofacial" | "other" | "not_selected";
+  panelWatts?: number;
+  panelCount?: number;
+  targetPvKw?: number;
+  panelLengthMm?: number;
+  panelWidthMm?: number;
+  panelWeightKg?: number;
+  requiredPanelAreaM2?: number;
+  fitStatus?: "verified" | "unverified" | "does_not_fit";
+  azimuthDegrees?: number;
+  tiltDegrees?: number;
+  peakSunHours?: number;
+  systemEfficiencyPercent?: number;
+  inverterKw?: number;
+  batteryChemistry?: string;
+  batteryVoltage?: number;
+  batteryAh?: number;
+  batteryQuantity?: number;
+  usableBatteryPercent?: number;
+  batteryUsableKwh?: number;
+  connectionType?: "dc" | "ac_single" | "ac_three";
+  connectionVoltage?: number;
+  connectionCurrent?: number;
+  connectionLengthM?: number;
+  cableSizeMm2?: number;
+  breakerAmps?: number;
+  maxVoltageDropPercent?: number;
+  updatedAt?: string;
+  updatedBy?: "user" | "wattson";
+}
+
 export interface PVArray {
   id: string;
   name: string;
@@ -185,6 +222,7 @@ export interface Project {
   connections: SystemConnection[];
   schematicPositions: SchematicPosition[];
   overviewCardOrder: OverviewCardOrder[];
+  designCalculator?: DesignCalculatorState;
   pvArrays: PVArray[];
   installationSteps: InstallationStep[];
   commissioning: CommissioningMeasurement[];

@@ -14,7 +14,10 @@ export async function PATCH(request:Request,{params}:{params:Promise<{id:string}
   if(!parsed.success||parsed.data.id!==id)return Response.json({error:"Invalid project update"},{status:400});
   const supabase=await createClient();const claims=await supabase.auth.getClaims();if(claims.error||!claims.data?.claims?.sub)return Response.json({error:"Unauthorized"},{status:401});
   const p=parsed.data;const mode=p.projectType==="off-grid"?"off_grid":p.projectType==="grid-tied"?"grid_tied":"hybrid";
-  const update=await supabase.from("projects").update({name:p.name,description:p.description,mode,phase:p.phase,location:p.location,system_voltage:p.systemVoltage,settings:{goal:p.goal,priorities:p.priorities,autonomyDays:p.autonomyDays,peakSunHours:p.peakSunHours}}).eq("id",id);
+  const current=await supabase.from("projects").select("settings").eq("id",id).single();
+  if(current.error)return Response.json({error:current.error.message},{status:400});
+  const settings={...((current.data.settings??{}) as Record<string,unknown>),goal:p.goal,priorities:p.priorities,autonomyDays:p.autonomyDays,peakSunHours:p.peakSunHours};
+  const update=await supabase.from("projects").update({name:p.name,description:p.description,mode,phase:p.phase,location:p.location,system_voltage:p.systemVoltage,settings}).eq("id",id);
   if(update.error)return Response.json({error:update.error.message},{status:400});
   const writes=[];
   if(p.loads.length)writes.push(supabase.from("loads").upsert(p.loads.map(l=>({id:l.id,project_id:id,name:l.name,watts:l.watts,quantity:l.quantity,hours_per_day:l.hoursPerDay,surge_watts:l.surgeWatts,current_type:l.currentType,confidence:l.confidence,simultaneous:l.simultaneous}))));

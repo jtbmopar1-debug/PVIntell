@@ -50,7 +50,7 @@ function proposedArchitectureReply(actions: WattsonActionRequest[]) {
           ? "an AC-coupled inverter"
           : null;
   if (!equipment) return null;
-  return `I’ve added ${equipment} to the working design as a proposed item—it is not marked as purchased or installed. Next I’ll size the system from the recorded site, loads, resilience goal and future needs, with every estimate clearly marked.`;
+  return `I’ve added ${equipment} to the proposed Design Calculator—it is not marked as purchased or installed and has not changed the overview or schematic. Next I’ll size the system from the recorded site, loads, resilience goal and future needs, with every estimate clearly marked.`;
 }
 
 function dashboardProject(location: string): Project {
@@ -238,7 +238,7 @@ export async function POST(request: Request) {
       ? guidedReview.answers as Record<string, unknown>
       : {};
     if (guidedReview && guidedReview.systemId === activeSystem?.id) {
-      for (const questionId of ["cooking_energy", "water_heating_energy", "space_heating_energy", "delivery_approach"]) {
+      for (const questionId of ["panel_area_dimensions", "panel_area_constraints", "orientation_and_pitch", "cooking_energy", "water_heating_energy", "space_heating_energy", "delivery_approach"]) {
         if (!Object.hasOwn(guidedAnswers, questionId) && !Object.hasOwn(recordedDiscovery, questionId) && !guidedUnknownIds.includes(questionId)) guidedUnknownIds.push(questionId);
       }
     }
@@ -279,13 +279,13 @@ export async function POST(request: Request) {
         if (nextGuided) discoveryFollowup = nextGuided[1];
       }
     }
-    const updateSummary = appliedActions.map((action) => action.summary).join("; ");
+    let updateSummary = appliedActions.map((action) => action.summary).join("; ");
     let autonomousContinuation: string | undefined;
     if (activeSystem && !guidedUnknownIds.length && !discoveryFollowup && !blockedArchitectureQuestion && appliedActions.some((action) => action.type === "design_discovery_updated" || action.type === "design_preference_updated")) {
       const refreshed = await supabase.from("projects").select("settings").eq("id", activeSystem.id).single();
       if (refreshed.error) throw refreshed.error;
       const continuation = await askGemini({
-        message: `The user just answered: ${parsed.data.message}\nSaved in PVIntell: ${updateSummary}. Continue leading this new user now. Do not merely announce that discovery is complete and do not ask permission to continue. Respect the recorded DIY, shared-work or turnkey delivery choice. Do not assume a fully professional installation. Design from the site, loads, resilience goal and future needs—not from a budget. If enough information exists, provide the first useful preliminary design or sizing direction now, clearly distinguish estimates from confirmed facts, explain the immediate next step, and end with exactly one focused question. If a material fact is still missing, briefly teach why it matters and ask for that fact. Keep the response under 180 words.`,
+        message: `The user just answered: ${parsed.data.message}\nSaved in PVIntell: ${updateSummary}. Continue leading this new user now. Do not merely announce that discovery is complete and do not ask permission to continue. Respect the recorded DIY, shared-work or turnkey delivery choice. Do not assume a fully professional installation. Design from the site, loads, resilience goal and future needs—not from a budget. If enough information exists, create an evidence-led staged proposal with record_preliminary_design so it appears in the Design Calculator. Do not add proposed items to the installed overview or schematic. Clearly distinguish estimates from confirmed facts, explain the immediate next step, and end with exactly one focused question. If physical panel fit is not proven from usable dimensions, obstructions, clearances and panel dimensions, mark it unverified. Keep the response under 180 words.`,
         project: dashboardProject(profile.data.home_location ?? ""),
         recentConversation: prior,
         questionnaireContext: {
@@ -293,10 +293,17 @@ export async function POST(request: Request) {
           userTimezone: profile.data.timezone,
           sites: sites.data ?? [],
           connectedSiteSystems: connectedSystems.map((system) => system.id === activeSystem.id ? { ...system, settings: refreshed.data.settings } : system),
-          scope: "Lead the user from completed discovery into a practical preliminary design. Proposed values must remain estimates and must not be marked purchased or installed.",
+          scope: "Lead the user from completed discovery into a practical preliminary design. Use record_preliminary_design only for proposed sizing. The Design Calculator is separate from the user-managed installed overview and schematic.",
         },
-        allowActions: false,
+        allowActions: true,
       });
+      const proposalActions = continuation.actions.filter((action) =>
+        action.name === "record_preliminary_design" && actionProjectId(action) === activeSystem.id,
+      );
+      if (proposalActions.length) {
+        appliedActions.push(...(await applyWattsonActions(supabase, activeSystem.id, proposalActions)));
+        updateSummary = appliedActions.map((action) => action.summary).join("; ");
+      }
       autonomousContinuation = continuation.message.trim() || undefined;
     }
     let message = autonomousContinuation ?? result.message.trim();

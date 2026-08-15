@@ -7,6 +7,7 @@ import {
   BatteryCharging,
   Bot,
   Camera,
+  Calculator,
   Check,
   ChevronRight,
   CircleGauge,
@@ -69,6 +70,7 @@ import { SiteEquipmentInventory } from "@/components/site-equipment";
 import { SolarWeather } from "@/components/solar-weather";
 import { SiteOverview } from "@/components/site-overview";
 import { SystemEquipmentOverview } from "@/components/system-equipment-overview";
+import { DesignCalculator } from "@/components/design-calculator";
 
 export type WorkspaceView =
   | "site"
@@ -76,6 +78,7 @@ export type WorkspaceView =
   | "setup"
   | "equipment"
   | "weather"
+  | "design"
   | "system"
   | "schematic"
   | "build"
@@ -569,6 +572,7 @@ export function PVIntellWorkspace({
       : []),
     { id: "equipment" as View, label: "Site equipment", icon: Package },
     { id: "weather" as View, label: "Solar weather", icon: CloudSun },
+    { id: "design" as View, label: "Design calculator", icon: Calculator },
     { id: "system" as View, label: "System overview", icon: LayoutDashboard },
     { id: "schematic" as View, label: "System schematic", icon: Waypoints },
     { id: "build" as View, label: "Build", icon: Wrench },
@@ -631,13 +635,15 @@ export function PVIntellWorkspace({
             </Link>
           )}
           {nav.map(({ id, label, icon: Icon }) =>
-            id === "weather" || id === "schematic" ? (
+            id === "weather" || id === "design" || id === "schematic" ? (
               <Link
                 key={id}
                 prefetch={id !== "weather"}
                 href={
                   id === "weather"
                     ? `/sites/${initialSite.id}/weather`
+                    : id === "design"
+                      ? `/sites/${initialSite.id}/systems/${project.id}/design`
                     : `/sites/${initialSite.id}/systems/${project.id}/schematic`
                 }
                 className="flex w-full items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"
@@ -781,6 +787,7 @@ export function PVIntellWorkspace({
           {view === "weather" && (
             <SolarWeather site={initialSite} solarArrayKw={installedSolarKw} />
           )}{" "}
+          {view === "design" && <DesignCalculator project={project} site={initialSite} />}{" "}
           {view === "system" && (
             <SystemEquipmentOverview
               project={project}

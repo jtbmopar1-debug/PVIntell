@@ -83,6 +83,20 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     technicalHelp: "Record approximate usable dimensions and any required setbacks or obstructions.", type: "textarea",
   },
   {
+    id: "panel_area_dimensions", stage: "site", title: "Do you know the usable length and width of each possible panel area?",
+    noviceHelp: "Enter rough usable dimensions for each roof face or ground area, such as ‘north roof 8 m × 4 m’. Choose ‘I don’t know’ if measurements or a photo are still needed.",
+    technicalHelp: "Record usable—not total—dimensions for each mounting plane. Keep separate roof faces or orientations separate.", type: "textarea",
+  },
+  {
+    id: "panel_area_constraints", stage: "site", title: "What takes up space or limits panel placement?",
+    noviceHelp: "List chimneys, vents, skylights, ridges, roof edges, shaded sections, access paths or anything else panels must avoid. A clear photo is useful if you are unsure.",
+    technicalHelp: "Record known obstructions, access zones and unverified setbacks or clearances without assuming a regulation value.", type: "textarea",
+  },
+  {
+    id: "orientation_and_pitch", stage: "site", title: "Which way do the possible areas face, and how steep are they?",
+    noviceHelp: "A compass direction such as north-east and a rough slope—flat, low, medium or steep—is enough for now. Exact azimuth and tilt can be added in the Design Calculator later.", type: "textarea",
+  },
+  {
     id: "shading", stage: "site", title: "How much shade reaches the possible panel area?",
     noviceHelp: "Think about trees, nearby buildings and hills during the morning, middle of the day and afternoon.", type: "choice", options: [
       { value: "little", label: "Little or no shade", description: "The area appears open for most of the day." },

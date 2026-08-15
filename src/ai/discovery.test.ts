@@ -50,7 +50,8 @@ describe("Wattson discovery interpretation", () => {
     const pending = [
       "current_energy_use", "cooking_energy", "water_heating_energy", "space_heating_energy",
       "heavy_or_surge_loads", "building_type", "property_authority",
-      "proposed_panel_location", "usable_solar_space", "shading", "structure_condition",
+      "proposed_panel_location", "usable_solar_space", "panel_area_dimensions",
+      "panel_area_constraints", "orientation_and_pitch", "shading", "structure_condition",
       "expected_expansion", "delivery_approach",
     ].map((key) => ({ name: "record_design_discovery", arguments: { key, value: "confirmed" } }));
     expect(nextRequiredDiscoveryQuestion(settings, pending)).toBeNull();

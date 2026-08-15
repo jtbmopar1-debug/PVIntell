@@ -2,6 +2,7 @@
 
 import {
   BookOpen,
+  Calculator,
   CircleGauge,
   ClipboardCheck,
   CloudSun,
@@ -46,6 +47,7 @@ function Logo() {
 const systemNavigation = [
   ["equipment", "Site equipment", Package],
   ["weather", "Solar weather", CloudSun],
+  ["design", "Design calculator", Calculator],
   ["system", "System overview", LayoutDashboard],
   ["schematic", "System schematic", Waypoints],
   ["build", "Build", Wrench],
@@ -82,6 +84,8 @@ export function SiteInventoryPage({
   const systemHref = (systemId: string, view: string) =>
     view === "schematic"
       ? `/sites/${site.id}/systems/${systemId}/schematic`
+      : view === "design"
+        ? `/sites/${site.id}/systems/${systemId}/design`
       : `/sites/${site.id}/systems/${systemId}?view=${view}`;
 
   async function saveSystem(formData: FormData) {
