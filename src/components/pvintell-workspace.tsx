@@ -21,7 +21,6 @@ import {
   MapPin,
   Menu,
   Package,
-  Plus,
   PlugZap,
   RotateCcw,
   Send,
@@ -344,50 +343,6 @@ export function PVIntellWorkspace({
       });
     } else store.save(p);
   }
-  async function addSystem() {
-    const name = window
-      .prompt(
-        "Name this power system",
-        systems.length ? "New power system" : "My power system",
-      )
-      ?.trim();
-    if (!name) return;
-    const response = await fetch("/api/systems", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ siteId: initialSite.id, name }),
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      window.alert(body.error ?? "Could not create system");
-      return;
-    }
-    router.push(
-      sitePage
-        ? `/sites/${initialSite.id}?system=${body.id}`
-        : `/?system=${body.id}`,
-    );
-    router.refresh();
-  }
-  async function addSite() {
-    const name = window.prompt("Name this site or property", "My site")?.trim();
-    if (!name) return;
-    const response = await fetch("/api/sites", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }),
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      window.alert(body.error ?? "Could not create site");
-      return;
-    }
-    router.push(`/sites/${body.id}`);
-    router.refresh();
-  }
   async function saveQuestionnaire(
     answers: Record<string, QuestionnaireAnswer>,
     status: "draft" | "completed" = "draft",
@@ -455,6 +410,8 @@ export function PVIntellWorkspace({
     setSending(true);
     let reply: string;
     let citations: ChatMessage["citations"];
+    let actionUrl: string | undefined;
+    let actionLabel: string | undefined;
     try {
       if (cloud) {
         const response = await fetch("/api/wattson", {
@@ -471,7 +428,10 @@ export function PVIntellWorkspace({
           throw new Error(body.error ?? "Wattson is unavailable");
         reply = body.message;
         citations = body.citations;
-        if (body.actions?.length) router.refresh();
+        actionUrl = body.actionUrl;
+        actionLabel = body.actionLabel;
+        if (body.actionUrl) router.push(body.actionUrl);
+        else if (body.actions?.length) router.refresh();
       } else
         reply = await ai.sendMessage(message, {
           project: updated,
@@ -492,6 +452,8 @@ export function PVIntellWorkspace({
         content: reply,
         createdAt: new Date().toISOString(),
         citations,
+        actionUrl,
+        actionLabel,
       },
     ]);
     setSending(false);
@@ -572,9 +534,9 @@ export function PVIntellWorkspace({
       : []),
     { id: "equipment" as View, label: "Site equipment", icon: Package },
     { id: "weather" as View, label: "Solar weather", icon: CloudSun },
-    { id: "design" as View, label: "Design calculator", icon: Calculator },
-    { id: "system" as View, label: "System overview", icon: LayoutDashboard },
-    { id: "schematic" as View, label: "System schematic", icon: Waypoints },
+    { id: "design" as View, label: "Proposed design", icon: Calculator },
+    { id: "system" as View, label: "As-built overview", icon: LayoutDashboard },
+    { id: "schematic" as View, label: "As-built schematic", icon: Waypoints },
     { id: "build" as View, label: "Build", icon: Wrench },
     { id: "commission" as View, label: "Commission", icon: ClipboardCheck },
     { id: "monitor" as View, label: "Monitor", icon: CircleGauge },
@@ -590,9 +552,17 @@ export function PVIntellWorkspace({
             <X size={18} />
           </button>
         </div>
+        {cloud && <Link
+          href="/discovery/new-system"
+          className="mt-5 flex items-center gap-3 rounded-xl bg-[#f6c945] px-3 py-3 text-xs font-extrabold text-[#143c63]"
+        >
+          <Sparkles size={16} />
+          Start here
+          <ChevronRight className="ml-auto" size={14} />
+        </Link>}
         <button
           onClick={() => setView("wattson")}
-          className="mt-5 flex items-center gap-3 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white"
+          className={`${cloud ? "mt-2" : "mt-5"} flex items-center gap-3 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white`}
         >
           <Sparkles size={16} />
           Ask Wattson
@@ -600,15 +570,8 @@ export function PVIntellWorkspace({
         </button>
         {cloud && (
           <div className="mt-5 rounded-2xl border border-line bg-white p-2">
-            <div className="flex items-center justify-between px-2 py-1">
+            <div className="px-2 py-1">
               <div className="eyebrow text-[#7b8a9c]">My sites</div>
-              <button
-                onClick={addSite}
-                aria-label="Add site"
-                className="grid size-7 place-items-center rounded-lg bg-[#eaf2fb] text-brand"
-              >
-                <Plus size={14} />
-              </button>
             </div>
             <div className="mt-2 space-y-1">
               {sites.map((site) => (
@@ -666,23 +629,6 @@ export function PVIntellWorkspace({
             ),
           )}
         </nav>
-        <div className="mt-7 px-3">
-          <div className="eyebrow mb-4 text-[#7b8a9c]">Lifecycle</div>
-          {["Discover", "Design", "Build", "Commission", "Monitor"].map(
-            (p, i) => (
-              <div
-                key={p}
-                className={`mb-3 flex items-center gap-3 text-[11px] font-semibold ${i < 2 ? "text-brand" : "text-[#7c8998]"}`}
-              >
-                <span
-                  className={`size-2 rounded-full ${i < 2 ? "bg-brand" : "bg-[#c8d4e0]"}`}
-                />
-                {p}
-                {i === 1 && <Badge tone="green">Now</Badge>}
-              </div>
-            ),
-          )}
-        </div>
         <div className="mt-auto rounded-2xl border border-line bg-white p-3.5">
           <div className="flex items-center gap-2 text-xs font-bold">
             <span className="size-2 rounded-full bg-[#2f80c1]" />
@@ -740,7 +686,7 @@ export function PVIntellWorkspace({
               components={project.components}
               equipment={initialSiteEquipment}
               solarArrayKw={installedSolarKw}
-              onAddSystem={addSystem}
+              onAddSystem={() => router.push("/discovery/new-system")}
               onOpenSystem={() => setView("system")}
               onOpenWeather={() =>
                 router.push(`/sites/${initialSite.id}/weather`)
@@ -794,7 +740,7 @@ export function PVIntellWorkspace({
               onAskWattson={() => setView("wattson")}
             />
           )}{" "}
-          {view === "build" && <Build project={project} persist={persist} />}{" "}
+          {view === "build" && <Build project={project} />}{" "}
           {view === "commission" && (
             <Commission project={project} persist={persist} />
           )}{" "}
@@ -1283,30 +1229,46 @@ function Safety() {
     <div className="flex gap-3 rounded-2xl border border-[#ecd9aa] bg-[#fff8e7] p-4 text-[#6f5518]">
       <AlertTriangle size={18} />
       <div>
-        <div className="text-xs font-bold">Safety boundary</div>
+        <div className="text-xs font-bold">Important safety note</div>
         <p className="mt-1 text-[10px] leading-4">
           High-current DC and mains work can cause fire, serious injury, or
-          death. Follow equipment instructions and local rules; use a qualified
-          professional wherever required.
+          death. Follow the exact equipment instructions, work within your
+          knowledge and equipment limits, and get competent help when needed.
         </p>
       </div>
     </div>
   );
 }
-function Build({
-  project,
-  persist,
-}: {
-  project: Project;
-  persist: (p: Project) => void;
-}) {
+
+function buildStepDescription(title: string, fallback: string) {
+  const name = title.toLowerCase();
+  if (name.includes("planning")) return "Confirm locations, cable routes, access, manuals and any site-specific approvals you choose to track.";
+  if (name.includes("battery")) return "Mount the batteries as specified and verify isolation, protection and conductors before connection.";
+  if (name.includes("dc protection")) return "Plan and verify fusing, isolation and over-current protection for every DC conductor section.";
+  if (name.includes("inverter")) return "Mount the inverter with the required clearances and keep DC, AC and communication routes organised.";
+  if (name.includes("pv installation")) return "Install the array, earthing, cabling, labels and isolation shown in the recorded design.";
+  if (name.includes("ac wiring")) return "Complete and verify the planned AC connections, protection, changeover and isolation.";
+  if (name.includes("communication")) return "Connect and verify inverter, BMS, meter and monitoring communications.";
+  if (name.includes("configuration")) return "Apply equipment-approved limits and record the system's operating priorities.";
+  if (name.includes("pre-power")) return "Verify polarity, torque, insulation, protective devices and the as-built record before energising.";
+  if (name.includes("commission")) return "Follow the equipment startup sequence and record the initial measurements and behaviour.";
+  return fallback;
+}
+
+function buildStepTitle(title: string) {
+  return title.toLowerCase().includes("planning")
+    ? "Planning & site preparation"
+    : title;
+}
+
+function Build({ project }: { project: Project }) {
   const done = project.installationSteps.filter((s) => s.complete).length;
   return (
     <div className="animate-rise space-y-6">
       <Heading
         eyebrow="Build mode"
         title="One safe step at a time"
-        description="Wattson keeps sequence, expected results, and safety boundaries visible."
+        description="Wattson keeps the sequence, expected results and relevant checks visible."
       />
       <div className="card p-6">
         <div className="flex justify-between text-xs">
@@ -1326,34 +1288,25 @@ function Build({
       </div>
       <div className="grid gap-3 lg:grid-cols-2">
         {project.installationSteps.map((s, i) => (
-          <div key={s.id} className="card flex gap-4 p-5">
-            <button
-              onClick={() =>
-                persist({
-                  ...project,
-                  installationSteps: project.installationSteps.map((x) =>
-                    x.id === s.id ? { ...x, complete: !x.complete } : x,
-                  ),
-                })
-              }
-              className={`grid size-8 shrink-0 place-items-center rounded-full border ${s.complete ? "bg-brand text-white" : "bg-white"}`}
-            >
+          <Link key={s.id} href={`/sites/${project.siteId}/systems/${project.id}/build/${s.id}`} className="card flex gap-4 p-5 transition hover:-translate-y-0.5 hover:border-[#7da8ce] hover:shadow-md">
+            <span className={`grid size-8 shrink-0 place-items-center rounded-full border ${s.complete ? "bg-brand text-white" : "bg-white"}`}>
               {s.complete ? <Check size={15} /> : i + 1}
-            </button>
-            <div>
+            </span>
+            <div className="min-w-0 flex-1">
               <div className="flex flex-wrap gap-2">
-                <h3 className="text-sm font-bold">{s.title}</h3>
+                <h3 className="text-sm font-bold">{buildStepTitle(s.title)}</h3>
                 <Badge
                   tone={s.safetyLevel === "licensed" ? "amber" : "neutral"}
                 >
-                  {s.safetyLevel}
+                  {s.safetyLevel === "licensed" ? "check / connect" : s.safetyLevel === "high-current-dc" ? "controlled DC" : s.safetyLevel === "low-voltage" ? "equipment setup" : "DIY planning"}
                 </Badge>
               </div>
               <p className="mt-2 text-[11px] leading-5 text-muted">
-                {s.description}
+                {buildStepDescription(s.title, s.description)}
               </p>
             </div>
-          </div>
+            <ChevronRight className="mt-2 shrink-0 text-brand" size={16}/>
+          </Link>
         ))}
       </div>
       <Safety />
@@ -1419,7 +1372,9 @@ function Commission({
             Check inverter output
           </h3>
           <p className="mt-3 text-xs leading-5 text-muted">
-            A licensed electrician should verify AC output and protection.
+            Verify AC output and protection with suitable test equipment and
+            enough experience to interpret the results. An independent check
+            is sensible if anything is uncertain.
           </p>
           <button
             onClick={add}

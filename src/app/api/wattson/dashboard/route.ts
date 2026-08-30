@@ -6,10 +6,13 @@ import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 import { createSystem } from "@/data/cloud-project";
 import { newSystemQuestions } from "@/discovery/new-system";
+import { isNewSystemSetupIntent, startHereLabel, startHereMessage, startHereUrl } from "@/ai/new-system-intent";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(4000),
   projectId: z.uuid().optional(),
+  siteId: z.uuid().optional(),
+  conversationId: z.uuid().optional(),
 });
 const workspaceActionSchema = z.object({
   place_name: z.string().trim().min(1).max(120),
@@ -31,6 +34,51 @@ function guidedQuestion(questionId: string) {
   return question ? [actionKeyForQuestion(question.id), `${question.title} ${question.noviceHelp}`] as const : null;
 }
 
+function newBuildingDescription(message: string) {
+  if (!/\b(?:new|not yet built|being built|under construction)\b/i.test(message)) return null;
+  const match = message.match(/\b(shed|workshop|garage|cabin|tiny home|house|home|building)\b/i);
+  if (!match) return null;
+  const label = match[1].toLowerCase();
+  return `New ${label}; no existing electricity-use history`;
+}
+
+function systemNameFromBuilding(description: string) {
+  const value = description.split(";")[0].replace(/^New\s+/i, "").trim();
+  return value.replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function answerMatchesDiscovery(key: string, message: string) {
+  const patterns: Record<string, RegExp> = {
+    current_energy_use: /\b(?:kwh|kilowatt|bill|usage|consumption|unpowered|no (?:existing )?(?:use|power|history)|new (?:shed|building|home|house|workshop))\b/i,
+    everyday_needs: /\b(?:light|outlet|socket|tool|pump|fridge|freezer|refriger|appliance|equipment|machine|computer|charger)\w*\b/i,
+    cooking_energy: /\b(?:no cooking|cook|oven|cooktop|induction|lpg|gas|wood|microwave|none)\b/i,
+    water_heating_energy: /\b(?:no (?:hot )?water|water heat|cylinder|instant electric|heat pump|lpg|gas|solar hot|wetback|none)\b/i,
+    space_heating_energy: /\b(?:no heat|heat pump|heater|heating|wood|fire|lpg|gas|boiler|none)\b/i,
+    heavy_or_surge_loads: /\b(?:tool|pump|welder|compressor|motor|saw|oven|heater|ev|charger|none|nothing)\w*\b/i,
+    building_type: /\b(?:house|home|townhouse|apartment|unit|shed|workshop|garage|farm|cabin|building)\b/i,
+    property_authority: /\b(?:own|owner|rent|renter|landlord|body corporate|shared|permission|approval)\b/i,
+    proposed_panel_location: /\b(?:roof|ground|frame|shed|garage|carport|wall|unsure|don'?t know)\b/i,
+    delivery_approach: /\b(?:diy|myself|shared|trade|installer|turnkey|contractor)\b/i,
+  };
+  return patterns[key]?.test(message) ?? false;
+}
+
+function discoveryKeyFromAssistantQuestion(message: string | undefined) {
+  if (!message) return null;
+  const patterns: Array<[string, RegExp]> = [
+    ["current_energy_use", /\b(?:existing|current) electricity use|recent bill|monitoring total/i],
+    ["everyday_needs", /\bwhat should it power day to day|what .* intend to run/i],
+    ["cooking_energy", /\bhow is cooking done|cooking method/i],
+    ["water_heating_energy", /\bhow is water heated|water heating/i],
+    ["space_heating_energy", /\bhow is .* heated|any heating/i],
+    ["heavy_or_surge_loads", /\blargest appliances|larger tools|run at the same time/i],
+    ["building_type", /\bwhat kind of building|building or property/i],
+    ["property_authority", /\bdo you own|rent it|landlord|body corporate/i],
+    ["proposed_panel_location", /\bwhere might panels fit|panel location/i],
+  ];
+  return patterns.find(([, pattern]) => pattern.test(message))?.[0] ?? null;
+}
+
 function actionProjectId(action: WattsonActionRequest) {
   if (!action.arguments || typeof action.arguments !== "object") return undefined;
   const value = (action.arguments as Record<string, unknown>).project_id;
@@ -50,6 +98,7 @@ function proposedArchitectureReply(actions: WattsonActionRequest[]) {
           ? "an AC-coupled inverter"
           : null;
   if (!equipment) return null;
+  return `I’ve added ${equipment} to the proposed Design Calculator. It is proposed only—not purchased or installed—and the overview and schematic are unchanged. Next I need the largest load: look for a small rating label or sticker on the compressor or welder and send a clear photo; it usually shows watts (W), kilowatts (kW), amps (A), or a model number. If you cannot find it, tell me the make/model or simply say “I don’t know” and I’ll show you another way to estimate it.`;
   return `I’ve added ${equipment} to the proposed Design Calculator—it is not marked as purchased or installed and has not changed the overview or schematic. Next I’ll size the system from the recorded site, loads, resilience goal and future needs, with every estimate clearly marked.`;
 }
 
@@ -75,7 +124,7 @@ export async function POST(request: Request) {
   let imageFile: File | undefined;
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
     const form = await request.formData();
-    candidate = { message: form.get("message"), projectId: form.get("projectId") || undefined };
+    candidate = { message: form.get("message"), projectId: form.get("projectId") || undefined, siteId: form.get("siteId") || undefined, conversationId: form.get("conversationId") || undefined };
     const file = form.get("file");
     if (file instanceof File) imageFile = file;
   } else candidate = await request.json();
@@ -87,14 +136,17 @@ export async function POST(request: Request) {
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const [profile, sites, systems] = await Promise.all([
+  const [profile, sites, systems, siteDiscoveries, selectedConversation] = await Promise.all([
     supabase.from("profiles").select("display_name,home_location,timezone,onboarding_assessment").eq("id", userId).single(),
     supabase.from("sites").select("id,name,location,timezone,location_confirmed").eq("owner_id", userId).order("created_at"),
     supabase.from("projects").select("id,site_id,name,description,mode,phase,location,system_voltage,settings").eq("owner_id", userId).order("created_at"),
+    supabase.from("site_discoveries").select("site_id,status,answers,baseline_answers,impact_pending").eq("owner_id", userId),
+    parsed.data.conversationId ? supabase.from("user_conversations").select("id,site_id,project_id").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
   if (profile.error) return Response.json({ error: profile.error.message }, { status: 400 });
   if (sites.error) return Response.json({ error: sites.error.message }, { status: 400 });
   if (systems.error) return Response.json({ error: systems.error.message }, { status: 400 });
+  if (siteDiscoveries.error || selectedConversation.error) return Response.json({ error: siteDiscoveries.error?.message ?? selectedConversation.error?.message ?? "Could not load discovery context." }, { status: 400 });
   const systemIds = (systems.data ?? []).map((system) => system.id);
   const siteIds = (sites.data ?? []).map((site) => site.id);
   const [components, pvStrings, connections, loads, assumptions, goals, siteEquipment] = await Promise.all([
@@ -118,6 +170,8 @@ export async function POST(request: Request) {
     assumptions: (assumptions.data ?? []).filter((item) => item.project_id === system.id),
     goals: (goals.data ?? []).filter((item) => item.project_id === system.id),
   }));
+  const conversationSiteId = parsed.data.siteId ?? selectedConversation.data?.site_id;
+  const selectedSiteBrief = (siteDiscoveries.data ?? []).find((item) => item.site_id === conversationSiteId && item.status === "completed");
   let image: { data: string; mimeType: string } | undefined;
   let imagePath: string | undefined;
   if (imageFile) {
@@ -131,7 +185,9 @@ export async function POST(request: Request) {
     const uploaded = await supabase.storage.from("project-photos").upload(imagePath, imageFile, { contentType: imageFile.type, upsert: false });
     if (uploaded.error) return Response.json({ error: `Wattson could not store the image: ${uploaded.error.message}` }, { status: 400 });
   }
-  let conversation = await supabase.from("user_conversations").select("id").eq("owner_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  let conversation = parsed.data.conversationId
+    ? await supabase.from("user_conversations").select("id").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle()
+    : await supabase.from("user_conversations").select("id").eq("owner_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (conversation.error) return Response.json({ error: conversation.error.message }, { status: 400 });
   if (!conversation.data) {
     const created = await supabase.from("user_conversations").insert({ owner_id: userId }).select("id").single();
@@ -148,6 +204,17 @@ export async function POST(request: Request) {
   const recent = await supabase.from("user_chat_messages").select("role,content").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(12);
   const history = (recent.data ?? []).reverse();
   const prior = history.at(-1)?.content === userContent ? history.slice(0, -1) : history;
+  if (isNewSystemSetupIntent(parsed.data.message)) {
+    const message = startHereMessage();
+    const saved = await supabase.from("user_chat_messages").insert({
+      conversation_id: conversationId,
+      role: "assistant",
+      content: message,
+      structured_context: { kind: "start_here_handoff", actionUrl: startHereUrl, actionLabel: startHereLabel },
+    });
+    if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+    return Response.json({ message, actionUrl: startHereUrl, actionLabel: startHereLabel, actions: [] });
+  }
   try {
     const result = await askGemini({
       message: parsed.data.message,
@@ -156,6 +223,7 @@ export async function POST(request: Request) {
       questionnaireContext: {
         userAssessment: profile.data.onboarding_assessment ?? {},
         userTimezone: profile.data.timezone,
+        selectedSiteDiscovery: selectedSiteBrief ?? undefined,
         sites: (sites.data ?? []).map((site) => ({ ...site, unassignedEquipment: (siteEquipment.data ?? []).filter((item) => item.site_id === site.id && !item.assigned_project_id) })),
         connectedSiteSystems: connectedSystems,
         scope: "This dashboard context contains the user's complete recorded component, PV string, load, assumption and connection records across their systems. Use those records when answering. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update a structured record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If the system or target is unclear, ask one focused question instead of taking an action.",
@@ -218,23 +286,29 @@ export async function POST(request: Request) {
     }
     let blockedArchitectureQuestion: string | undefined;
     let discoveryFollowup: string | undefined;
-    const activeSystem = connectedSystems.find((item) => item.id === parsed.data.projectId)
-      ?? (connectedSystems.length === 1 ? connectedSystems[0] : undefined);
     const assessment = (profile.data.onboarding_assessment ?? {}) as Record<string, unknown>;
     const guidedReview = assessment.lastGuidedDiscovery && typeof assessment.lastGuidedDiscovery === "object"
       ? assessment.lastGuidedDiscovery as Record<string, unknown>
       : undefined;
+    const guidedSystemId = typeof guidedReview?.systemId === "string" ? guidedReview.systemId : undefined;
+    const activeSystem = connectedSystems.find((item) => item.id === parsed.data.projectId)
+      ?? connectedSystems.find((item) => item.id === selectedConversation.data?.project_id)
+      ?? connectedSystems.find((item) => item.site_id === conversationSiteId)
+      ?? connectedSystems.find((item) => item.id === guidedSystemId)
+      ?? (connectedSystems.length === 1 ? connectedSystems[0] : undefined);
     const activeSettings = activeSystem?.settings && typeof activeSystem.settings === "object"
       ? activeSystem.settings as Record<string, unknown>
       : {};
     const recordedDiscovery = activeSettings.designDiscovery && typeof activeSettings.designDiscovery === "object"
       ? activeSettings.designDiscovery as Record<string, unknown>
       : {};
-    let guidedUnknownIds = guidedReview && guidedReview.systemId === activeSystem?.id && Array.isArray(guidedReview.unknownIds)
+    let guidedUnknownIds = selectedSiteBrief ? [] : guidedReview && guidedReview.systemId === activeSystem?.id && Array.isArray(guidedReview.unknownIds)
       ? guidedReview.unknownIds.filter((value): value is string => typeof value === "string")
         .filter((questionId) => !Object.hasOwn(recordedDiscovery, actionKeyForQuestion(questionId)))
       : [];
-    const guidedAnswers = guidedReview?.answers && typeof guidedReview.answers === "object"
+    const guidedAnswers = selectedSiteBrief?.answers && typeof selectedSiteBrief.answers === "object"
+      ? selectedSiteBrief.answers as Record<string, unknown>
+      : guidedReview?.answers && typeof guidedReview.answers === "object"
       ? guidedReview.answers as Record<string, unknown>
       : {};
     if (guidedReview && guidedReview.systemId === activeSystem?.id) {
@@ -242,12 +316,69 @@ export async function POST(request: Request) {
         if (!Object.hasOwn(guidedAnswers, questionId) && !Object.hasOwn(recordedDiscovery, questionId) && !guidedUnknownIds.includes(questionId)) guidedUnknownIds.push(questionId);
       }
     }
-    const activeDiscovery = guidedQuestion(guidedUnknownIds[0]) ?? nextRequiredDiscoveryQuestion(activeSystem?.settings);
+    const activeDiscovery = selectedSiteBrief ? undefined : guidedQuestion(guidedUnknownIds[0]) ?? nextRequiredDiscoveryQuestion(activeSystem?.settings);
+    const lastAssistantMessage = [...prior].reverse().find((item) => item.role === "assistant")?.content;
+    const askedDiscoveryKey = discoveryKeyFromAssistantQuestion(lastAssistantMessage);
     const userUncertain = userExpressesUncertainty(parsed.data.message);
+    const inferredNewBuilding = activeDiscovery?.[0] === "current_energy_use"
+      ? newBuildingDescription(parsed.data.message)
+      : null;
+    if (activeSystem && inferredNewBuilding) {
+      const existing = actionsBySystem.get(activeSystem.id) ?? [];
+      const recordedKeys = new Set(existing.flatMap((action) => {
+        if (action.name !== "record_design_discovery" || !action.arguments || typeof action.arguments !== "object") return [];
+        const key = (action.arguments as Record<string, unknown>).key;
+        return typeof key === "string" ? [key] : [];
+      }));
+      const inferredActions: WattsonActionRequest[] = [];
+      if (!recordedKeys.has("building_type")) inferredActions.push({
+        name: "record_design_discovery",
+        arguments: { project_id: activeSystem.id, key: "building_type", value: inferredNewBuilding.split(";")[0], confidence: "user_confirmed" },
+      });
+      if (!recordedKeys.has("current_energy_use")) inferredActions.push({
+        name: "record_design_discovery",
+        arguments: { project_id: activeSystem.id, key: "current_energy_use", value: "No existing consumption history; size from planned loads", confidence: "user_confirmed" },
+      });
+      inferredActions.push({
+        name: "update_project_settings",
+        arguments: { project_id: activeSystem.id, system_name: systemNameFromBuilding(inferredNewBuilding) },
+      });
+      if (inferredActions.length) actionsBySystem.set(activeSystem.id, [...existing, ...inferredActions]);
+    }
+    const recordedBuildingEntry = recordedDiscovery.building_type;
+    const recordedBuildingValue = recordedBuildingEntry && typeof recordedBuildingEntry === "object" && "value" in recordedBuildingEntry
+      ? String((recordedBuildingEntry as Record<string, unknown>).value ?? "")
+      : "";
+    if (activeSystem && !inferredNewBuilding && /^new\s+(?:shed|workshop|garage|cabin|tiny home|house|home|building)\b/i.test(recordedBuildingValue)) {
+      const desiredName = systemNameFromBuilding(recordedBuildingValue);
+      if (!activeSystem.name.toLowerCase().includes(desiredName.toLowerCase())) {
+        const existing = actionsBySystem.get(activeSystem.id) ?? [];
+        actionsBySystem.set(activeSystem.id, [...existing, {
+          name: "update_project_settings",
+          arguments: { project_id: activeSystem.id, system_name: desiredName },
+        }]);
+      }
+    }
+    const answerDiscoveryKey = askedDiscoveryKey ?? activeDiscovery?.[0];
+    if (activeSystem && answerDiscoveryKey && !userUncertain && answerMatchesDiscovery(answerDiscoveryKey, parsed.data.message)) {
+      const existing = actionsBySystem.get(activeSystem.id) ?? [];
+      const alreadyRecorded = existing.some((action) => action.name === "record_design_discovery"
+        && action.arguments && typeof action.arguments === "object"
+        && (action.arguments as Record<string, unknown>).key === answerDiscoveryKey);
+      if (!alreadyRecorded) actionsBySystem.set(activeSystem.id, [...existing, {
+        name: "record_design_discovery",
+        arguments: { project_id: activeSystem.id, key: answerDiscoveryKey, value: parsed.data.message, confidence: "user_confirmed" },
+      }]);
+    }
     const resolvedGuidedIds = new Set<string>();
     for (const [projectId, actions] of actionsBySystem) {
       const system = connectedSystems.find((item) => item.id === projectId);
-      const nextDiscovery = nextRequiredDiscoveryQuestion(system?.settings, actions);
+      // A completed Site brief is the authoritative discovery gate for this
+      // conversation. Do not reopen generic system questions from stale
+      // settings while reviewing its proposed architecture.
+      const nextDiscovery = selectedSiteBrief && system?.site_id === conversationSiteId
+        ? undefined
+        : nextRequiredDiscoveryQuestion(system?.settings, actions);
       if (!userUncertain && actions.some((action) => action.name === "record_design_discovery"))
         discoveryFollowup = nextDiscovery?.[1];
       const safeActions = actions.filter((action) => {
@@ -292,6 +423,7 @@ export async function POST(request: Request) {
           userAssessment: assessment,
           userTimezone: profile.data.timezone,
           sites: sites.data ?? [],
+          selectedSiteDiscovery: selectedSiteBrief ?? undefined,
           connectedSiteSystems: connectedSystems.map((system) => system.id === activeSystem.id ? { ...system, settings: refreshed.data.settings } : system),
           scope: "Lead the user from completed discovery into a practical preliminary design. Use record_preliminary_design only for proposed sizing. The Design Calculator is separate from the user-managed installed overview and schematic.",
         },
@@ -332,6 +464,8 @@ export async function POST(request: Request) {
       message = `We’re still in discovery, so I haven’t added an inverter arrangement yet. ${blockedArchitectureQuestion}`;
     if (userUncertain && activeDiscovery)
       message = `No problem—I haven’t saved that as an answer. ${discoveryGuidance(activeDiscovery[0])}`;
+    if (inferredNewBuilding && activeSystem && discoveryFollowup)
+      message = `Got it—I’ve set up ${systemNameFromBuilding(inferredNewBuilding)} as the working power system under ${activeSystem.site?.name ?? "the current site"}. Because it is new, we’ll size it from what you intend to run rather than a previous bill. ${discoveryFollowup}`;
     if (guidedUnknownIds.length && !appliedActions.length && /\b(?:other|next|missed|continue|what now)\b/i.test(parsed.data.message)) {
       const nextGuided = guidedQuestion(guidedUnknownIds[0]);
       if (nextGuided) message = `You’re right—there ${guidedUnknownIds.length === 1 ? "is" : "are"} still ${guidedUnknownIds.length} unresolved item${guidedUnknownIds.length === 1 ? "" : "s"}. ${nextGuided[1]}`;
@@ -341,7 +475,12 @@ export async function POST(request: Request) {
     }
     if (!message && architectureReply) message = architectureReply;
     if (!message && discoveryReply) message = discoveryReply;
-    if (updateSummary && !createdWorkspace && message !== architectureReply && message !== discoveryReply)
+    const proposedDesignUpdated = appliedActions.some((action) =>
+      action.type === "design_preference_updated" || action.type === "preliminary_design_updated" || action.type === "component_proposed",
+    );
+    if (proposedDesignUpdated && (!message || /^done\s*[—-]/i.test(message)))
+      message = "I’ve updated the proposed design only; nothing has been marked purchased or installed. I’m taking you to the Design Calculator now, where you can see the proposed arrangement, the evidence behind it, and the next item Wattson needs to validate.";
+    if (updateSummary && !createdWorkspace && !inferredNewBuilding && message !== architectureReply && message !== discoveryReply)
       message = message
         ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`
         : `Done — ${updateSummary}.`;
@@ -349,9 +488,29 @@ export async function POST(request: Request) {
       message = result.actions.length
         ? "I couldn’t safely attach that change to a specific system. Tell me which system it belongs to."
         : "I didn’t produce a useful reply. Please send that once more.";
-    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath } });
+    const existingProposedDesign = Boolean(
+      activeSystem?.settings && typeof activeSystem.settings === "object" &&
+      (activeSystem.settings as Record<string, unknown>).designCalculator,
+    );
+    const asksToContinueProposal = /\b(?:next|now what|what now|continue|show|open|proposal|proposed|design)\b/i.test(parsed.data.message);
+    if (!proposedDesignUpdated && existingProposedDesign && asksToContinueProposal) {
+      message = "Your proposed design is ready in the Design Calculator. I’m taking you there now — it is separate from the as-built overview and schematic, so nothing there is being treated as installed.";
+    }
+    const proposedDesignLink = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
+      ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
+      : undefined;
+    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, actionUrl: proposedDesignLink, actionLabel: proposedDesignLink ? "Open proposed design" : undefined } });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-    return Response.json({ message, citations: result.citations, actions: appliedActions });
+    const proposedDesignUrl = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
+      ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
+      : undefined;
+    return Response.json({
+      message,
+      citations: result.citations,
+      actions: appliedActions,
+      actionUrl: proposedDesignUrl,
+      actionLabel: proposedDesignUrl ? "Open proposed design" : undefined,
+    });
   } catch (problem) {
     return Response.json({ error: problem instanceof Error ? problem.message : "Wattson is unavailable." }, { status: 502 });
   }

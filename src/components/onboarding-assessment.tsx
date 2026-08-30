@@ -119,7 +119,7 @@ export function OnboardingAssessment({ initialAnswers }: { initialAnswers: Onboa
   const prompts = [
     ["First, where are we working?", "Location sets your timezone and helps Wattson use the correct regional context."],
     ["How familiar are you with solar power?", "There is no test here. I’ll adjust the language and depth to suit you."],
-    ["What best matches your practical experience?", "Think about building, mounting, tools and electrical knowledge. This sets Wattson’s teaching level; it does not grant permission for regulated work."],
+    ["What best matches your practical experience?", "Think about building, mounting, tools and electrical knowledge. This sets Wattson’s teaching level and the detail used in each guide."],
     ["What have you worked with before?", "Choose everything that applies. Experience can be practical, informal or professional."],
     ["What do you have in front of you now?", "This decides whether we begin with design, inventory, an as-built record, an upgrade or diagnosis."],
     ["What would you like PVIntell to help with?", "Choose as many as you need. Your dashboard and next steps will be shaped around these goals."],
@@ -129,7 +129,7 @@ export function OnboardingAssessment({ initialAnswers }: { initialAnswers: Onboa
     <aside className="hidden border-r border-line bg-[#0f3b66] p-8 text-white lg:flex lg:flex-col">
       <div className="flex items-center gap-3"><span className="grid size-11 place-items-center rounded-2xl bg-[#f6c945] text-[#143c63]"><Zap size={21} fill="currentColor" /></span><div><div className="font-display text-xl font-extrabold">PVIntell</div><div className="text-[9px] font-bold uppercase tracking-[.18em] text-[#bfd3e6]">Power, made clear</div></div></div>
       <div className="mt-16"><div className="text-[10px] font-bold uppercase tracking-[.18em] text-[#f6c945]">Your starting profile</div><h2 className="mt-4 font-display text-3xl font-extrabold leading-tight">Wattson should understand you before advising you.</h2><p className="mt-4 text-sm leading-6 text-[#d5e2ee]">Your answers set the language, safety boundaries and starting workflow. You can update them later.</p></div>
-      <div className="mt-auto flex gap-3 rounded-2xl border border-white/15 bg-white/5 p-4"><ShieldCheck className="shrink-0 text-[#f6c945]" size={20}/><p className="text-[11px] leading-5 text-[#d5e2ee]">PVIntell separates DIY work from tasks that local rules reserve for inspection, certification, connection or an authorised electrical worker.</p></div>
+      <div className="mt-auto flex gap-3 rounded-2xl border border-white/15 bg-white/5 p-4"><ShieldCheck className="shrink-0 text-[#f6c945]" size={20}/><p className="text-[11px] leading-5 text-[#d5e2ee]">PVIntell adapts its explanations to your experience, highlights specific risks and helps you plan verification where it matters.</p></div>
     </aside>
     <section className="grid min-h-screen place-items-center p-5 md:p-10">
       <div className="w-full max-w-2xl">

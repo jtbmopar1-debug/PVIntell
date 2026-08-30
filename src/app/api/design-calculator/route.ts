@@ -5,6 +5,7 @@ const finite = z.number().finite().min(0).max(1_000_000);
 const calculatorSchema = z.object({
   projectId: z.uuid(),
   design: z.object({
+    proposedChecklist: z.record(z.string(), z.boolean()).optional(),
     architecture: z.enum(["combined_hybrid_inverter", "separate_solar_controller_and_inverter", "ac_coupled", "not_decided"]).optional(),
     designBasis: z.string().max(2000).optional(),
     startingStage: z.string().max(2000).optional(),

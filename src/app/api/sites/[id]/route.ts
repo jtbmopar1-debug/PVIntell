@@ -22,3 +22,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (updated.error) return Response.json({ error: updated.error.message }, { status: 400 });
   return Response.json({ ok: true, timezone: updated.data.timezone });
 }
+
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const supabase = await createClient(); const claims = await supabase.auth.getClaims();
+  const userId = claims.data?.claims?.sub;
+  if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+  // Site-owned data has foreign-key cascades. This removes its discovery,
+  // systems, equipment links and child system records as one workspace.
+  const removed = await supabase.from("sites").delete().eq("id", id).eq("owner_id", userId);
+  if (removed.error) return Response.json({ error: removed.error.message }, { status: 400 });
+  return Response.json({ deleted: true });
+}

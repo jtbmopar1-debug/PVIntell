@@ -16,6 +16,17 @@ export interface DiscoveryQuestion {
   showWhen?: (answers: DiscoveryAnswers) => boolean;
 }
 
+function includesSolarPanels(answers: DiscoveryAnswers) {
+  const locations = answers.panel_location;
+  return !(locations === "none" || (Array.isArray(locations) && locations.includes("none")));
+}
+
+function hasResidentialUse(answers: DiscoveryAnswers) {
+  const buildings = answers.building_type;
+  const values = Array.isArray(buildings) ? buildings : [buildings];
+  return values.some((value) => ["detached_house", "townhouse", "apartment", "cabin_mobile"].includes(String(value)));
+}
+
 export const discoveryStages: Array<{ id: DiscoveryStage; label: string; description: string }> = [
   { id: "discovery", label: "Discovery", description: "What you want the system to achieve" },
   { id: "site", label: "Site", description: "The property and possible solar locations" },
@@ -39,14 +50,15 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
   {
     id: "primary_outcome", stage: "discovery", title: "What do you mainly want solar to achieve?",
     noviceHelp: "Choose every outcome that matters. This sets the direction only; equipment and sizes are not selected yet.", type: "multi_choice", options: [
+      { value: "off_grid_supply", label: "Power a place with no grid supply", description: "Create a complete independent power supply for a new or unconnected property." },
       { value: "cost", label: "Lower electricity bills", description: "Use more solar energy instead of buying electricity." },
       { value: "backup", label: "Power during outages", description: "Keep chosen items operating when public electricity fails." },
       { value: "independence", label: "Rely less on the grid", description: "Use and store more of your own energy." },
     ],
   },
   {
-    id: "site_name", stage: "site", title: "What should we call this property or location?",
-    noviceHelp: "A site is the physical place, such as Home, River Views or Farm. It can contain more than one separate power system.", type: "text",
+    id: "site_name", stage: "site", title: "Where will this power system be located?",
+    noviceHelp: "Choose an existing Site when this system is at the same physical property, or create a new Site for a different location. One Site can contain several power systems, such as a house and shed.", type: "text",
   },
   {
     id: "building_type", stage: "site", title: "What kind of building or property is this?",
@@ -75,26 +87,56 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "main_roof", label: "Main roof", description: "The roof of the main building." },
       { value: "other_roof", label: "Garage, shed or another roof", description: "A separate roof may have better space or sunlight." },
       { value: "ground", label: "On the ground", description: "A purpose-built frame located away from the building." },
+      { value: "fence", label: "Fence or vertical screen", description: "Panels can form or mount to a fence; vertical bifacial panels may suit some sites." },
+      { value: "wall_facade", label: "Wall or building façade", description: "A clear exterior wall may support a vertical or building-integrated array." },
+      { value: "carport_pergola", label: "Carport, pergola or canopy", description: "Panels can provide both shade or shelter and electricity." },
+      { value: "curved_lightweight", label: "Curved or weight-limited surface", description: "A lightweight roof or curved surface may need flexible or lightweight panels." },
+      { value: "mobile", label: "Vehicle, boat or movable structure", description: "A caravan, boat, trailer or other mobile surface may need a specialised mounting method." },
+      { value: "none", label: "No solar panels — storage only", description: "Use batteries charged from an available source without adding panels here." },
     ],
   },
   {
-    id: "usable_solar_space", stage: "site", title: "What do you know about the available space?",
-    noviceHelp: "Rough dimensions, a simple description or a roof/site photo are enough for now. Chimneys, vents and edges reduce usable space.",
-    technicalHelp: "Record approximate usable dimensions and any required setbacks or obstructions.", type: "textarea",
+    id: "storage_supply_source_off_grid", stage: "site", title: "Without solar panels, what will supply or charge the batteries?",
+    noviceHelp: "An off-grid battery still needs an energy source. Choose every source that is available or planned; Wattson will not assume a public electricity connection.", type: "multi_choice", options: [
+      { value: "generator", label: "Generator", description: "A generator can run loads and recharge batteries when needed." },
+      { value: "wind_hydro", label: "Wind, hydro or another renewable source", description: "Another local generation source will supply the system." },
+      { value: "existing_local_supply", label: "Existing local supply or charger", description: "There is already another non-grid source available." },
+      { value: "not_decided", label: "Not decided yet", description: "Keep this unresolved until the energy source is chosen." },
+    ], showWhen: (answers) => answers.utility_relationship === "off_grid" && !includesSolarPanels(answers),
   },
   {
-    id: "panel_area_dimensions", stage: "site", title: "Do you know the usable length and width of each possible panel area?",
-    noviceHelp: "Enter rough usable dimensions for each roof face or ground area, such as ‘north roof 8 m × 4 m’. Choose ‘I don’t know’ if measurements or a photo are still needed.",
-    technicalHelp: "Record usable—not total—dimensions for each mounting plane. Keep separate roof faces or orientations separate.", type: "textarea",
+    id: "storage_supply_source_grid", stage: "site", title: "Without solar panels, what will supply or charge the batteries?",
+    noviceHelp: "Choose every source that may charge the batteries. This is a storage-only design, so Wattson needs to know where its energy will come from.", type: "multi_choice", options: [
+      { value: "grid", label: "Public electricity supply", description: "The existing electricity connection can charge the batteries." },
+      { value: "generator", label: "Generator", description: "A generator is available as an additional source." },
+      { value: "other_local_supply", label: "Another local energy source", description: "For example wind, hydro or an existing DC source." },
+      { value: "not_decided", label: "Not decided yet", description: "Keep this unresolved until the energy source is chosen." },
+    ], showWhen: (answers) => answers.utility_relationship === "grid_connected" && !includesSolarPanels(answers),
+  },
+  {
+    id: "panel_construction_interest", stage: "site", title: "Are any panel types worth exploring for these locations?",
+    noviceHelp: "Choose any that may suit the available surfaces. This does not select a product; Wattson and the Design Calculator can compare the practical trade-offs later.", type: "multi_choice", options: [
+      { value: "rigid_framed", label: "Standard rigid panels", description: "Common framed glass panels for roofs, racks and ground mounts." },
+      { value: "bifacial", label: "Bifacial panels", description: "Generate from both faces when the rear has useful light and clearance." },
+      { value: "flexible_lightweight", label: "Flexible or lightweight panels", description: "Useful where weight, curvature or a low profile rules out standard framed panels." },
+      { value: "building_integrated", label: "Building-integrated solar", description: "Solar tiles, glazing, façades or canopies that also form part of the building." },
+      { value: "none", label: "No preference yet", description: "Keep every suitable option open until the site and design are better understood." },
+    ], showWhen: includesSolarPanels,
+  },
+  {
+    id: "panel_area_dimensions", stage: "site", title: "How much usable space is available for panels?",
+    noviceHelp: "Enter the usable length and width of each separate roof face, fence, wall or ground area. Measure only the clear area where panels could actually fit.",
+    technicalHelp: "Record usable—not total—dimensions for each mounting plane. Keep separate faces, orientations or mounting areas on separate rows.", type: "textarea", showWhen: includesSolarPanels,
   },
   {
     id: "panel_area_constraints", stage: "site", title: "What takes up space or limits panel placement?",
-    noviceHelp: "List chimneys, vents, skylights, ridges, roof edges, shaded sections, access paths or anything else panels must avoid. A clear photo is useful if you are unsure.",
-    technicalHelp: "Record known obstructions, access zones and unverified setbacks or clearances without assuming a regulation value.", type: "textarea",
+    noviceHelp: "Add known chimneys, skylights, vents or access areas and their approximate length and width. Wattson subtracts only the space you record; it will not invent a regulatory clearance.",
+    technicalHelp: "Record known obstructions and access zones by mounting area. Enter only measured or estimated exclusion areas; regulatory setbacks remain unverified until separately confirmed.", type: "textarea", showWhen: includesSolarPanels,
   },
   {
-    id: "orientation_and_pitch", stage: "site", title: "Which way do the possible areas face, and how steep are they?",
-    noviceHelp: "A compass direction such as north-east and a rough slope—flat, low, medium or steep—is enough for now. Exact azimuth and tilt can be added in the Design Calculator later.", type: "textarea",
+    id: "orientation_and_pitch", stage: "site", title: "Which way do the possible mounting areas face, and how steep are the surfaces?",
+    noviceHelp: "Choose the closest compass direction and surface slope for each possible area. This describes the roof, ground, wall or fence—not panels that have not been selected yet.",
+    technicalHelp: "Record each existing mounting surface separately. Its direction and approximate slope are enough for discovery; panel angle is decided later during design.", type: "textarea", showWhen: includesSolarPanels,
   },
   {
     id: "shading", stage: "site", title: "How much shade reaches the possible panel area?",
@@ -102,11 +144,12 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "little", label: "Little or no shade", description: "The area appears open for most of the day." },
       { value: "some", label: "Some shade", description: "Shade crosses part of the area during the day." },
       { value: "significant", label: "Significant shade", description: "Large areas are shaded for long periods." },
-    ],
+    ], showWhen: includesSolarPanels,
   },
   {
     id: "structure_condition", stage: "site", title: "What do you know about the roof or supporting structure?",
-    noviceHelp: "Include the roof material, approximate age and whether repairs may be needed. Choose “I don’t know” if it needs inspection.", type: "textarea",
+    noviceHelp: "Choose the surface or support type, approximate age and current condition for each possible panel area. Select ‘I don’t know’ where an inspection is needed.",
+    technicalHelp: "Record each possible mounting structure separately. These selections identify where structural condition or mounting compatibility still needs verification.", type: "textarea", showWhen: includesSolarPanels,
   },
   {
     id: "current_energy_use", stage: "needs", title: "How much electricity does the property currently use?",
@@ -123,7 +166,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "lpg_gas", label: "LPG or gas", description: "Cooking heat mainly comes from fuel rather than the electrical system." },
       { value: "wood", label: "Wood-fired cooking", description: "Cooking heat mainly comes from a wood stove or range." },
       { value: "other", label: "Another method", description: "Wattson will ask for the details during review." },
-    ],
+      { value: "none", label: "No cooking here", description: "This building does not need cooking included in its power plan." },
+    ], showWhen: hasResidentialUse,
   },
   {
     id: "water_heating_energy", stage: "needs", title: "How is water heated?",
@@ -135,7 +179,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "solar_thermal", label: "Solar hot water", description: "Roof collectors heat water directly rather than generating electricity." },
       { value: "wood_wetback", label: "Wood fire or wetback", description: "A fire contributes heat to the hot-water system." },
       { value: "other", label: "Another method", description: "Wattson will ask for the details during review." },
-    ],
+      { value: "none", label: "No hot water here", description: "This building does not need hot water included in its power plan." },
+    ], showWhen: hasResidentialUse,
   },
   {
     id: "space_heating_energy", stage: "needs", title: "How is the home or building heated?",
@@ -150,8 +195,21 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ],
   },
   {
-    id: "everyday_needs", stage: "needs", title: "What else must the property power day-to-day?",
-    noviceHelp: "List items such as refrigeration, lighting, internet, water or sewage pumps, cooling, medical equipment and work equipment. Exact ratings can come later.", type: "textarea",
+    id: "everyday_needs", stage: "needs", title: "What does this property need to power day-to-day?",
+    noviceHelp: "Choose every regular load. Ratings and hours of use can be added later; this gives Wattson a proper starting load list.", type: "multi_choice", options: [
+      { value: "lighting", label: "Lighting", description: "Indoor, outdoor or security lights." },
+      { value: "general_outlets", label: "General outlets and chargers", description: "Phones, small appliances and ordinary plug-in use." },
+      { value: "fridge_freezer", label: "Fridge or freezer", description: "Includes chest freezers and refrigeration." },
+      { value: "internet_computers", label: "Internet, computers or TV", description: "Routers, work devices and entertainment." },
+      { value: "water_pump", label: "Water, bore or pressure pump", description: "Pumps often have a high starting surge." },
+      { value: "septic_pump", label: "Sewage or septic pump", description: "Include any wastewater or effluent pumping." },
+      { value: "tools", label: "Workshop tools", description: "Hand tools, bench tools or battery chargers." },
+      { value: "compressor", label: "Compressor, motor or welder", description: "Motors/welders can have a large startup and running needs." },
+      { value: "security", label: "Security, cameras or gate", description: "Cameras, alarms, gates and communications." },
+      { value: "medical", label: "Medical equipment", description: "Any essential health-related electrical equipment." },
+      { value: "cooling", label: "Cooling or ventilation", description: "Fans, air conditioning or extraction." },
+      { value: "none", label: "No regular loads yet", description: "The building is not yet in use or its loads are not defined." },
+    ],
   },
   {
     id: "backup_preference", stage: "needs", title: "What should happen during a public power outage?",
@@ -167,8 +225,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     showWhen: (answers) => answers.backup_preference === "essentials",
   },
   {
-    id: "backup_duration", stage: "needs", title: "How long should backup power last?",
-    noviceHelp: "A few hours covers short cuts; overnight needs more battery; one or more days needs substantially more storage.", type: "choice", options: [
+    id: "backup_duration", stage: "needs", title: "How much stored-energy reserve do you want?",
+    noviceHelp: "A few hours covers short gaps; overnight needs more battery; one or more days needs substantially more storage. For an off-grid system, this is your reserve when solar or a generator is unavailable.", type: "choice", options: [
       { value: "few_hours", label: "A few hours", description: "Short local outages." },
       { value: "overnight", label: "Overnight", description: "A longer outage through the night." },
       { value: "one_day", label: "About one day", description: "Essential use for roughly 24 hours." },
@@ -176,19 +234,33 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: (answers) => answers.utility_relationship === "off_grid" || (answers.backup_preference !== undefined && answers.backup_preference !== "none"),
   },
   {
-    id: "heavy_loads", stage: "needs", title: "Which large appliances or tools might run at the same time?",
-    noviceHelp: "Examples include an oven, electric water heater, heat pump, water pump, welder, large tools or EV charger. These affect inverter size.", type: "textarea",
+    id: "heavy_loads", stage: "needs", title: "Which larger loads may run at the same time?",
+    noviceHelp: "Choose every likely larger load. These choices help Wattson estimate inverter size and startup surge without guessing.", type: "multi_choice", options: [
+      { value: "water_pump", label: "Water or bore pump", description: "Includes pressure and irrigation pumps." },
+      { value: "compressor", label: "Air compressor", description: "A motor load with a startup surge." },
+      { value: "welder", label: "Welder", description: "A high-demand workshop load." },
+      { value: "saw_tools", label: "Large saws or workshop tools", description: "Bench saws, planers, grinders and similar tools." },
+      { value: "refrigeration", label: "Large refrigeration", description: "Chest freezer, cool room or commercial fridge." },
+      { value: "heat_pump", label: "Heat pump or air conditioning", description: "Heating/cooling compressor load." },
+      { value: "electric_water", label: "Electric water heating", description: "Cylinder, instant heater or heat-pump water heater." },
+      { value: "ev", label: "EV charging", description: "Vehicle charging now or later." },
+      { value: "none", label: "None of these", description: "No known large or high-surge loads." },
+    ],
   },
   {
     id: "future_changes", stage: "design", title: "What might be added in the future?",
-    noviceHelp: "Consider an EV, extra dwelling, workshop equipment, electric water heating, more batteries or changing from gas to electricity.", type: "textarea",
+    noviceHelp: "Choose every realistic future addition. This keeps the proposed system expandable without pretending those loads exist today.", type: "multi_choice", options: [
+      { value: "ev", label: "EV charging", description: "A vehicle charger at this Site." }, { value: "workshop", label: "More workshop tools", description: "Larger tools, motors or machinery." },
+      { value: "water_pump", label: "Water or irrigation pump", description: "A future pump or water system." }, { value: "extra_dwelling", label: "Another dwelling or building", description: "A cabin, studio, shed or additional home." },
+      { value: "electric_hot_water", label: "Electric hot water", description: "Changing or adding water heating." }, { value: "more_storage", label: "More battery storage", description: "Increasing reserve or self-use later." },
+      { value: "more_pv", label: "More solar panels", description: "Expanding the array later." }, { value: "none", label: "Nothing planned yet", description: "Keep the design focused on current needs." },
+    ],
   },
   {
     id: "delivery_approach", stage: "design", title: "How do you want to approach the build?",
-    noviceHelp: "This changes how Wattson separates DIY tasks, equipment costs, and work that local law reserves for licensed people, inspectors or network providers.", type: "choice", options: [
-      { value: "diy_led", label: "DIY-led", description: "I want to do everything I can legally and safely do, using licensed people only where required." },
-      { value: "shared", label: "Shared DIY and trades", description: "I will handle practical or mechanical work and engage trades for defined specialist work." },
-      { value: "turnkey", label: "Fully supplied and installed", description: "I want a contractor to manage the complete installation." },
+    noviceHelp: "This changes how Wattson explains each task and highlights checks or specialist help you choose.", type: "choice", options: [
+      { value: "diy_led", label: "DIY-led", description: "I want to understand and complete as much of the project as I can, getting help where I decide it is needed." },
+      { value: "shared", label: "Shared DIY and trades", description: "I will handle practical or mechanical work and choose help for defined specialist work." },
     ],
   },
   {
@@ -203,7 +275,24 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
 ];
 
 export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
-  return newSystemQuestions.filter((question) => !question.showWhen || question.showWhen(answers));
+  return newSystemQuestions
+    .filter((question) => !question.showWhen || question.showWhen(answers))
+    .map((question) => {
+      // A public-grid option makes no sense once the user has told us this is
+      // an off-grid Site. Keep the legitimate generator/other-source path,
+      // but say exactly what it means in that context.
+      if (question.id !== "panel_location" || answers.utility_relationship !== "off_grid") return question;
+      return {
+        ...question,
+        options: question.options?.map((option) => option.value === "none"
+          ? {
+              value: "none",
+              label: "No solar panels — generator or other source",
+              description: "Use battery storage supplied by a generator or another local energy source. Grid charging is not available at this Site.",
+            }
+          : option),
+      };
+    });
 }
 
 export function helpForExperience(question: DiscoveryQuestion, profile: OnboardingAnswers) {

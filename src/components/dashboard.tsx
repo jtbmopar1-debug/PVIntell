@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpen, Bot, Calculator, CircleGauge, ClipboardCheck, CloudRain, CloudSun, Home, ImagePlus, LayoutDashboard, MapPin, Menu, Package, Plus, RotateCcw, Send, Settings2, Sparkles, Sun, Waypoints, Wrench, X, Zap } from "lucide-react";
+import { ArrowRight, BookOpen, Bot, Calculator, CircleGauge, ClipboardCheck, CloudRain, CloudSun, Home, ImagePlus, LayoutDashboard, MapPin, Menu, Package, RotateCcw, Send, Settings2, Sparkles, Sun, Waypoints, Wrench, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -13,23 +13,22 @@ type Profile = { displayName: string; location: string; timezone: string; assess
 const dashboardSystemNavigation = [
   ["equipment", "Site equipment", Package],
   ["weather", "Solar weather", CloudSun],
-  ["design", "Design calculator", Calculator],
-  ["system", "System overview", LayoutDashboard],
-  ["schematic", "System schematic", Waypoints],
+  ["design", "Proposed design", Calculator],
+  ["system", "As-built overview", LayoutDashboard],
+  ["schematic", "As-built schematic", Waypoints],
   ["build", "Build", Wrench],
   ["commission", "Commission", ClipboardCheck],
   ["monitor", "Monitor", CircleGauge],
 ] as const;
 
-export function Dashboard({ profile, sites, systems, solarBySite, initialMessages, email }: { profile: Profile; sites: Site[]; systems: SystemSummary[]; solarBySite: Record<string, number>; initialMessages: ChatMessage[]; email: string }) {
+export function Dashboard({ profile, sites, systems, solarBySite, initialMessages, conversationId, initialSiteId, email }: { profile: Profile; sites: Site[]; systems: SystemSummary[]; solarBySite: Record<string, number>; initialMessages: ChatMessage[]; conversationId?: string; initialSiteId?: string; email: string }) {
   const router = useRouter();
   const [menu, setMenu] = useState(false);
-  const [siteId, setSiteId] = useState(sites[0]?.id ?? "");
+  const [siteId, setSiteId] = useState(initialSiteId && sites.some((site) => site.id === initialSiteId) ? initialSiteId : sites[0]?.id ?? "");
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [attachment, setAttachment] = useState<File>();
   const [sending, setSending] = useState(false);
-  const [addingSite, setAddingSite] = useState(false);
   const [choosingView, setChoosingView] = useState<string>();
   const selectedSite = sites.find((site) => site.id === siteId);
   const siteSystems = systems.filter((system) => system.siteId === siteId);
@@ -46,7 +45,7 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
   const nextSteps = useMemo(() => {
     const goals = profile.assessment.goals ?? [];
     const steps: Array<{ title: string; detail: string; href: string }> = [];
-    if (!systems.length) steps.push({ title: "Start guided system discovery", detail: "Work through Discovery, Site, Needs and Design at your own pace. Wattson will review anything you are unsure about.", href: "/discovery/new-system" });
+    steps.push({ title: "Start here", detail: "Set up a new Site or power system through the guided Discovery, Site, Needs and Design sequence.", href: "/discovery/new-system" });
     if (goals.includes("Record an as-built system") && systems[0]) steps.push({ title: "Record installed equipment", detail: "Add each inverter, battery, PV string and connection as it is actually installed.", href: `/sites/${systems[0].siteId}/systems/${systems[0].id}` });
     if (goals.includes("Understand what I already have") && systems[0]) steps.push({ title: "Build the system schematic", detail: "Map the equipment and connections so Wattson can understand the whole system.", href: `/sites/${systems[0].siteId}/systems/${systems[0].id}/schematic` });
     if (!steps.length && systems[0]) steps.push({ title: `Continue ${systems[0].name}`, detail: "Open its overview, records, schematic and Wattson context.", href: `/sites/${systems[0].siteId}/systems/${systems[0].id}` });
@@ -65,22 +64,18 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
       bodyData.set("message", message);
       if (attachment) bodyData.set("file", attachment);
       if (targetProjectId) bodyData.set("projectId", targetProjectId);
+      if (siteId) bodyData.set("siteId", siteId);
+      if (conversationId) bodyData.set("conversationId", conversationId);
       const response = await fetch("/api/wattson/dashboard", { method: "POST", body: bodyData });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
-      setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: body.message, citations: body.citations, createdAt: new Date().toISOString() }]);
+      setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: body.message, citations: body.citations, actionUrl: body.actionUrl, actionLabel: body.actionLabel, createdAt: new Date().toISOString() }]);
       setAttachment(undefined);
-      if (body.actions?.length) router.refresh();
+      if (body.actionUrl) router.push(body.actionUrl);
+      else if (body.actions?.length) router.refresh();
     } catch (problem) {
       setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: problem instanceof Error ? problem.message : "Wattson is unavailable.", createdAt: new Date().toISOString() }]);
     } finally { setSending(false); }
-  }
-
-  async function createSite(formData: FormData) {
-    const response = await fetch("/api/sites", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: formData.get("name"), timezone: profile.timezone }) });
-    const body = await response.json();
-    if (!response.ok) { window.alert(body.error ?? "Could not create site"); return; }
-    setAddingSite(false); router.push(`/sites/${body.id}`); router.refresh();
   }
 
   async function startAgain() {
@@ -101,7 +96,7 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
   }
 
   function openSystemView(view: string) {
-    if (!selectedSite) { setAddingSite(true); return; }
+    if (!selectedSite) { router.push("/discovery/new-system"); return; }
     if (view === "weather") { router.push(`/sites/${selectedSite.id}/weather`); return; }
     if (!siteSystems.length) { router.push(`/sites/${selectedSite.id}`); return; }
     if (siteSystems.length === 1) { router.push(systemHref(siteSystems[0], view)); return; }
@@ -111,16 +106,17 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
   return <div className="min-h-screen lg:grid lg:grid-cols-[226px_1fr]">
     <aside className={`fixed inset-y-0 left-0 z-40 flex w-[226px] flex-col overflow-y-auto border-r border-line bg-[#f8fafc] p-4 transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${menu ? "translate-x-0" : "-translate-x-full"}`}>
       <div className="flex h-12 items-center justify-between px-2"><Logo/><button className="lg:hidden" onClick={() => setMenu(false)}><X size={18}/></button></div>
-      <a href="#wattson" className="mt-5 flex items-center gap-3 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white"><Sparkles size={16}/> Ask Wattson<ArrowRight className="ml-auto" size={14}/></a>
-      <div className="mt-5 rounded-2xl border border-line bg-white p-2"><div className="flex items-center justify-between px-2 py-1"><div className="eyebrow text-[#7b8a9c]">My sites</div><button onClick={() => setAddingSite(true)} className="grid size-7 place-items-center rounded-lg bg-[#eaf2fb] text-brand" aria-label="Add site manually"><Plus size={14}/></button></div><div className="mt-2 space-y-1">{sites.length ? sites.map((site) => <Link key={site.id} href={`/sites/${site.id}`} className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]"><MapPin size={12}/><span className="truncate">{site.name}</span></Link>) : <Link href="/discovery/new-system" className="block w-full rounded-xl bg-[#fff6cf] px-3 py-3 text-left text-[11px] font-bold text-brand">Start guided discovery →</Link>}</div></div>
+      <Link href="/discovery/new-system" className="mt-5 flex items-center gap-3 rounded-xl bg-[#f6c945] px-3 py-3 text-xs font-extrabold text-[#143c63]"><Sparkles size={16}/> Start here<ArrowRight className="ml-auto" size={14}/></Link>
+      <a href="#wattson" className="mt-2 flex items-center gap-3 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white"><Bot size={16}/> Ask Wattson<ArrowRight className="ml-auto" size={14}/></a>
+      <div className="mt-5 rounded-2xl border border-line bg-white p-2"><div className="px-2 py-1"><div className="eyebrow text-[#7b8a9c]">My sites</div></div><div className="mt-2 space-y-1">{sites.length ? sites.map((site) => <Link key={site.id} href={`/sites/${site.id}`} className="flex items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]"><MapPin size={12}/><span className="truncate">{site.name}</span></Link>) : <Link href="/discovery/new-system" className="block w-full rounded-xl bg-[#fff6cf] px-3 py-3 text-left text-[11px] font-bold text-brand">Start here →</Link>}</div></div>
       <nav className="mt-5 space-y-1">
         <Link href="/dashboard" className="flex items-center gap-3 rounded-xl border-l-4 border-[#f6c945] bg-[#fff6cf] px-3 py-2.5 text-sm font-semibold text-[#143c63]"><LayoutDashboard size={17}/> Dashboard</Link>
-        <Link href="/discovery/new-system" className="flex items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"><Sparkles size={17}/> Guided discovery</Link>
-        <button onClick={() => selectedSite ? router.push(`/sites/${selectedSite.id}`) : setAddingSite(true)} className="flex w-full items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-left text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"><Home size={17}/> Site overview</button>
+        <Link href="/discovery/new-system" className="flex items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"><Sparkles size={17}/> Start here</Link>
+        <button onClick={() => selectedSite ? router.push(`/sites/${selectedSite.id}`) : router.push("/discovery/new-system")} className="flex w-full items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-left text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"><Home size={17}/> Site overview</button>
         {dashboardSystemNavigation.map(([view, label, Icon]) => <button key={view} onClick={() => openSystemView(view)} className="flex w-full items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-left text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"><Icon size={17}/>{label}</button>)}
         <Link href="/glossary" className="flex items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"><BookOpen size={17}/>Glossary</Link>
       </nav>
-      <div className="mt-5"><div className="eyebrow px-3 text-[#7b8a9c]">Your path</div><div className="mt-2 space-y-1">{nextSteps.map((step, index) => <Link key={step.title} href={step.href} onClick={step.href === "#add-site" ? (event) => { event.preventDefault(); setAddingSite(true); } : undefined} className="flex gap-3 rounded-xl px-3 py-2.5 text-[11px] font-semibold text-[#66758a] hover:bg-[#eef3f8]"><span className="grid size-5 shrink-0 place-items-center rounded-full bg-[#eaf2fb] text-[9px] text-brand">{index + 1}</span>{step.title}</Link>)}</div></div>
+      <div className="mt-5"><div className="eyebrow px-3 text-[#7b8a9c]">Your path</div><div className="mt-2 space-y-1">{nextSteps.map((step, index) => <Link key={step.title} href={step.href} className="flex gap-3 rounded-xl px-3 py-2.5 text-[11px] font-semibold text-[#66758a] hover:bg-[#eef3f8]"><span className="grid size-5 shrink-0 place-items-center rounded-full bg-[#eaf2fb] text-[9px] text-brand">{index + 1}</span>{step.title}</Link>)}</div></div>
       <div className="mt-auto rounded-2xl border border-line bg-white p-3.5"><Link href="/account" className="flex items-center gap-2 text-xs font-bold"><Settings2 size={14}/> Account</Link><p className="mt-2 truncate text-[10px] text-muted">{email}</p><form action="/auth/signout" method="post"><button className="mt-3 text-[10px] font-bold text-brand">Sign out</button></form></div>
     </aside>
     {menu && <button className="fixed inset-0 z-30 bg-black/20 lg:hidden" onClick={() => setMenu(false)}/>} 
@@ -130,12 +126,11 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric icon={Sun} label="Expected solar today" value={selectedSite ? today ? `${today.expected.toFixed(1)} kWh` : weather.loading ? "Loading…" : "—" : "No site"} detail={selectedSite ? `${(solarBySite[selectedSite.id] ?? 0).toFixed(1)} kW recorded PV at ${selectedSite.name}` : "Add a site to begin"}/><Metric icon={CloudSun} label="Best solar hour" value={today?.peak ? new Intl.DateTimeFormat(undefined, { hour: "numeric", timeZone: selectedSite?.timezone }).format(new Date(today.peak.time)) : "—"} detail={today?.peak ? `${Math.round(today.peak.irradiance ?? 0)} W/m² forecast` : "Waiting for site weather"}/><Metric icon={CloudRain} label="Rain today" value={today ? `${today.rain.toFixed(1)} mm` : "—"} detail={selectedSite?.timezone ? `Times shown in ${selectedSite.timezone}` : "Site timezone required"}/><Metric icon={Waypoints} label="Systems" value={`${siteSystems.length || systems.length}`} detail={selectedSite ? `At ${selectedSite.name}` : "Across all sites"}/></div>
         <div className="grid gap-6 xl:grid-cols-[1.35fr_.65fr]">
           <section id="wattson" className="card overflow-hidden"><div className="flex items-center gap-4 border-b border-line bg-[linear-gradient(100deg,#eef5fc,#fff9df)] p-5 md:p-6"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-brand text-white"><Bot size={20}/></span><div><div className="eyebrow">Wattson · dashboard guide</div><h2 className="mt-2 font-display text-xl font-extrabold">What are we working on today?</h2><p className="mt-1 text-[11px] text-muted">I learn from your answers and keep confirmed details with the relevant system.</p></div><button type="button" onClick={() => void startAgain()} disabled={sending} className="ml-auto flex h-9 shrink-0 items-center gap-2 rounded-xl border border-line bg-white px-3 text-[10px] font-bold text-brand disabled:opacity-40"><RotateCcw size={13}/><span className="hidden sm:inline">New chat</span></button></div><div className="thin-scrollbar h-[340px] space-y-4 overflow-y-auto p-5">{messages.length ? messages.map((message) => <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-xs leading-5 ${message.role === "user" ? "bg-brand text-white" : "bg-[#edf2f7] text-ink"}`}>{message.content}</div></div>) : <div className="rounded-2xl bg-[#edf2f7] p-4 text-xs leading-5">Hi{profile.displayName ? ` ${profile.displayName}` : ""}. I’ve used your assessment to shape the starting path on this dashboard. Tell me what you want to tackle, or choose a next step on the right.</div>}{sending && <div className="text-xs text-muted">Wattson is thinking…</div>}</div><form onSubmit={(event) => { event.preventDefault(); void send(); }} className="border-t border-line p-4">{attachment && <div className="mb-2 flex items-center gap-2 rounded-xl bg-[#edf2f7] px-3 py-2 text-[10px] font-semibold text-muted"><ImagePlus size={14}/><span className="min-w-0 flex-1 truncate">{attachment.name}</span><button type="button" onClick={() => setAttachment(undefined)} aria-label="Remove attached image"><X size={13}/></button></div>}<div className="flex items-end gap-2"><label className="grid size-12 shrink-0 cursor-pointer place-items-center rounded-xl border border-line bg-white text-brand" title="Add a bill, label, site or roof photo"><ImagePlus size={18}/><input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" disabled={sending} onChange={(event) => setAttachment(event.target.files?.[0])}/></label><textarea rows={2} value={input} onChange={(event) => setInput(event.target.value)} className="field mt-0 min-h-[48px] flex-1 py-3" placeholder="Ask a question or attach a bill, label or site photo…"/><button disabled={(!input.trim() && !attachment) || sending} className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40"><Send size={17}/></button></div></form></section>
-          <aside className="space-y-5"><section className="card p-5"><div className="eyebrow">Recommended next</div><div className="mt-4 space-y-3">{nextSteps.map((step) => <Link key={step.title} href={step.href} onClick={step.href === "#add-site" ? (event) => { event.preventDefault(); setAddingSite(true); } : undefined} className="block rounded-2xl border border-line bg-white p-4 hover:border-[#8ab0d2]"><div className="flex items-center justify-between gap-3"><strong className="text-sm">{step.title}</strong><ArrowRight className="shrink-0 text-brand" size={15}/></div><p className="mt-2 text-[11px] leading-5 text-muted">{step.detail}</p></Link>)}</div></section><section className="card p-5"><div className="eyebrow">Selected site</div>{selectedSite ? <><h3 className="mt-3 text-lg font-extrabold">{selectedSite.name}</h3><p className="mt-1 text-xs text-muted">{selectedSite.location}</p><p className="mt-4 text-[10px] text-muted">Weather updated {today?.fetchedAt ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: selectedSite.timezone, timeZoneName: "short" }).format(new Date(today.fetchedAt)) : "—"}</p><Link href={`/sites/${selectedSite.id}`} className="mt-4 flex h-10 items-center justify-center rounded-xl border border-line text-xs font-bold text-brand">Open site</Link></> : <p className="mt-3 text-xs leading-5 text-muted">Add a site to enable local solar weather and begin recording systems.</p>}</section></aside>
+          <aside className="space-y-5"><section className="card p-5"><div className="eyebrow">Recommended next</div><div className="mt-4 space-y-3">{nextSteps.map((step) => <Link key={step.title} href={step.href} className="block rounded-2xl border border-line bg-white p-4 hover:border-[#8ab0d2]"><div className="flex items-center justify-between gap-3"><strong className="text-sm">{step.title}</strong><ArrowRight className="shrink-0 text-brand" size={15}/></div><p className="mt-2 text-[11px] leading-5 text-muted">{step.detail}</p></Link>)}</div></section><section className="card p-5"><div className="eyebrow">Selected site</div>{selectedSite ? <><h3 className="mt-3 text-lg font-extrabold">{selectedSite.name}</h3><p className="mt-1 text-xs text-muted">{selectedSite.location}</p><p className="mt-4 text-[10px] text-muted">Weather updated {today?.fetchedAt ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: selectedSite.timezone, timeZoneName: "short" }).format(new Date(today.fetchedAt)) : "—"}</p><Link href={`/sites/${selectedSite.id}`} className="mt-4 flex h-10 items-center justify-center rounded-xl border border-line text-xs font-bold text-brand">Open site</Link></> : <><p className="mt-3 text-xs leading-5 text-muted">Start the guided setup to create the Site and its first power system together.</p><Link href="/discovery/new-system" className="mt-4 flex h-10 items-center justify-center rounded-xl bg-brand text-xs font-bold text-white">Start here</Link></>}</section></aside>
         </div>
       </div>
     </main>
     {choosingView && <div className="fixed inset-0 z-50 grid place-items-center bg-[#0b2740]/45 p-5 backdrop-blur-sm"><div className="card w-full max-w-md bg-white p-6 shadow-2xl"><div className="flex justify-between"><div><div className="eyebrow">Choose a system</div><h2 className="mt-2 text-xl font-extrabold">Where are you working?</h2></div><button onClick={() => setChoosingView(undefined)} aria-label="Close system picker"><X size={18}/></button></div><div className="mt-5 space-y-2">{siteSystems.map((system) => <Link key={system.id} href={systemHref(system, choosingView)} className="flex items-center gap-3 rounded-xl border border-line p-4 text-sm font-bold hover:border-[#7aa6d1] hover:bg-[#eff5fa]"><span className="grid size-9 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Zap size={16}/></span>{system.name}<span className="ml-auto text-brand">›</span></Link>)}</div></div></div>}
-    {addingSite && <div className="fixed inset-0 z-50 grid place-items-center bg-[#0b2740]/45 p-5 backdrop-blur-sm"><form action={createSite} className="card w-full max-w-md bg-white p-6 shadow-2xl"><div className="flex justify-between"><div><div className="eyebrow">Wattson setup</div><h2 className="mt-2 text-xl font-extrabold">What should we call this place?</h2></div><button type="button" onClick={() => setAddingSite(false)}><X size={18}/></button></div><p className="mt-3 text-xs leading-5 text-muted">This means the property or physical location—such as your home, farm or cabin. It can contain more than one separate power setup.</p><label className="mt-5 block text-xs font-bold">Place or property name<input name="name" required autoFocus className="field" placeholder="e.g. Home, River Views or Workshop property"/></label><p className="mt-3 text-[10px] leading-4 text-muted">I’ll use the location and timezone you gave during onboarding. You can confirm them later.</p><button className="mt-5 h-11 w-full rounded-xl bg-brand text-xs font-bold text-white">Continue with Wattson</button></form></div>}
   </div>;
 }
 

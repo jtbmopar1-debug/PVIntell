@@ -762,17 +762,6 @@ export function SystemSchematic({
           editHref: componentHref(base, acLinks[0]),
         });
     }
-    for (const inverterNode of inverterNodes) {
-      connections.push({
-        id: `ac-link:${inverterNode.id}`,
-        label: "AC output",
-        sourceId: inverterNode.id,
-        targetId: outputNode.id,
-        values: componentDetails(acLinks),
-        editHref: componentHref(base, acLinks[0]),
-        unconfirmed: !acLinks.length,
-      });
-    }
     const explicitConnections: ConnectionDetail[] = project.connections.map(
       (connection) => {
         const endpointNames = [connection.sourceRef, connection.targetRef]

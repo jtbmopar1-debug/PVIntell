@@ -12,7 +12,6 @@ import {
   Menu,
   MoreHorizontal,
   Package,
-  Plus,
   Settings2,
   Trash2,
   Waypoints,
@@ -47,9 +46,9 @@ function Logo() {
 const systemNavigation = [
   ["equipment", "Site equipment", Package],
   ["weather", "Solar weather", CloudSun],
-  ["design", "Design calculator", Calculator],
-  ["system", "System overview", LayoutDashboard],
-  ["schematic", "System schematic", Waypoints],
+  ["design", "Proposed design", Calculator],
+  ["system", "As-built overview", LayoutDashboard],
+  ["schematic", "As-built schematic", Waypoints],
   ["build", "Build", Wrench],
   ["commission", "Commission", ClipboardCheck],
   ["monitor", "Monitor", CircleGauge],
@@ -142,25 +141,6 @@ export function SiteInventoryPage({
     router.refresh();
   }
 
-  async function addSite() {
-    const name = window.prompt("Name this site or property", "My site")?.trim();
-    if (!name) return;
-    const response = await fetch("/api/sites", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }),
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      window.alert(body.error ?? "Could not create site");
-      return;
-    }
-    router.push(`/sites/${body.id}`);
-  }
-
   function openSystemView(view: string) {
     if (!systems.length) {
       router.push("/dashboard#wattson");
@@ -184,31 +164,34 @@ export function SiteInventoryPage({
             <X size={18} />
           </button>
         </div>
+        <Link
+          href="/discovery/new-system"
+          className="mt-5 flex items-center gap-3 rounded-xl bg-[#f6c945] px-3 py-3 text-xs font-extrabold text-[#143c63]"
+        >
+          <Zap size={16} />
+          Start here<span className="ml-auto">›</span>
+        </Link>
         <button
-          onClick={() => openSystemView("wattson")}
-          className="mt-5 flex items-center gap-3 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white"
+          onClick={() => router.push(`/sites/${site.id}/wattson`)}
+          className="mt-2 flex items-center gap-3 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white"
         >
           <Zap size={16} />
           Ask Wattson<span className="ml-auto">›</span>
         </button>
         <div className="mt-5 rounded-2xl border border-line bg-white p-2">
-          <div className="flex items-center justify-between px-2 py-1">
+          <div className="px-2 py-1">
             <div className="eyebrow text-[#7b8a9c]">My sites</div>
-            <button
-              onClick={() => void addSite()}
-              aria-label="Add site"
-              className="grid size-7 place-items-center rounded-lg bg-[#eaf2fb] text-brand"
-            >
-              <Plus size={14} />
-            </button>
           </div>
           <div className="mt-2 space-y-1">
             {sites.map((item) => {
               const className = `flex items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`;
               const content = <><MapPin size={12} /><span className="truncate">{item.name}</span></>;
-              return weatherMode && item.id === site.id
-                ? <div key={item.id} className={className}>{content}</div>
-                : <Link key={item.id} prefetch={false} href={weatherMode ? `/sites/${item.id}/weather` : `/sites/${item.id}`} className={className}>{content}</Link>;
+              return <div key={item.id} className="space-y-0.5">
+                {weatherMode && item.id === site.id
+                  ? <div className={className}>{content}</div>
+                  : <Link prefetch={false} href={weatherMode ? `/sites/${item.id}/weather` : `/sites/${item.id}`} className={className}>{content}</Link>}
+                <Link href={`/sites/${item.id}/discovery`} className="ml-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold text-muted hover:bg-[#eaf2fb] hover:text-brand"><ClipboardCheck size={13}/>Review discovery</Link>
+              </div>;
             })}
           </div>
         </div>
@@ -297,14 +280,14 @@ export function SiteInventoryPage({
                     equipment installed in that system.
                   </p>
                 </div>
-                <button
-                  onClick={() => setEditing("new")}
-                  className="flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white"
-                >
-                  <Plus size={15} />
-                  Add power system
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <Link href="/discovery/new-system" className="flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white">
+                    <Zap size={15} />
+                    Start here · new system
+                  </Link>
+                </div>
               </div>
+              {site.discoveryNeedsReview && <div className="rounded-2xl border border-[#f1ce71] bg-[#fff9df] p-4 text-sm leading-6 text-[#725800]">Site discovery has changed. Review this Site’s proposed system designs, requirements and schematic before continuing.</div>}
               {systems.length ? (
                 <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
                   {systems.map((system) => (
@@ -435,10 +418,10 @@ export function SiteInventoryPage({
         </div>
       )}
       {editing && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-[#0b2740]/45 p-5 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 grid items-start justify-items-center overflow-y-auto overscroll-contain bg-[#0b2740]/45 p-3 backdrop-blur-sm sm:p-5">
           <form
             action={saveSystem}
-            className={`card my-6 w-full bg-white p-6 shadow-2xl ${editing === "new" ? "max-w-2xl" : "max-w-md"}`}
+            className={`card my-2 max-h-[calc(100dvh-1rem)] w-full overflow-y-auto overscroll-contain bg-white p-5 shadow-2xl sm:my-4 sm:max-h-[calc(100dvh-2rem)] sm:p-6 ${editing === "new" ? "max-w-2xl" : "max-w-md"}`}
           >
             <div className="flex justify-between">
               <div>

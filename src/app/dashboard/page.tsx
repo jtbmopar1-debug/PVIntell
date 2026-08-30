@@ -4,7 +4,7 @@ import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { createClient } from "@/lib/supabase/server";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ site?: string; conversation?: string }> }) {
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
@@ -12,10 +12,13 @@ export default async function DashboardPage() {
   const profile = await supabase.from("profiles").select("display_name,home_location,timezone,onboarding_status,onboarding_assessment").eq("id", userId).single();
   if (profile.error) throw profile.error;
   if (profile.data.onboarding_status !== "completed") redirect("/onboarding");
+  const { site: requestedSiteId, conversation: requestedConversationId } = await searchParams;
   const [siteRows, systemRows, conversation] = await Promise.all([
     supabase.from("sites").select("id,name,location,latitude,longitude,timezone,location_source,location_confirmed").eq("owner_id", userId).order("created_at"),
     supabase.from("projects").select("id,site_id,name,mode,phase").eq("owner_id", userId).order("created_at"),
-    supabase.from("user_conversations").select("id").eq("owner_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+    requestedConversationId
+      ? supabase.from("user_conversations").select("id,site_id,project_id").eq("id", requestedConversationId).eq("owner_id", userId).maybeSingle()
+      : supabase.from("user_conversations").select("id,site_id,project_id").eq("owner_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
   if (siteRows.error) throw siteRows.error;
   if (systemRows.error) throw systemRows.error;
@@ -39,7 +42,7 @@ export default async function DashboardPage() {
   if (conversation.data?.id) {
     const rows = await supabase.from("user_chat_messages").select("id,role,content,created_at,structured_context").eq("conversation_id", conversation.data.id).order("created_at").limit(30);
     if (rows.error) throw rows.error;
-    messages = (rows.data ?? []).filter((message) => String(message.content).trim()).map((message) => ({ id: message.id, role: message.role as ChatMessage["role"], content: message.content, createdAt: message.created_at, citations: Array.isArray(message.structured_context?.citations) ? message.structured_context.citations : undefined }));
+    messages = (rows.data ?? []).filter((message) => String(message.content).trim()).map((message) => ({ id: message.id, role: message.role as ChatMessage["role"], content: message.content, createdAt: message.created_at, citations: Array.isArray(message.structured_context?.citations) ? message.structured_context.citations : undefined, actionUrl: typeof message.structured_context?.actionUrl === "string" ? message.structured_context.actionUrl : undefined, actionLabel: typeof message.structured_context?.actionLabel === "string" ? message.structured_context.actionLabel : undefined }));
   }
-  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} solarBySite={solarBySite} initialMessages={messages} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
+  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} solarBySite={solarBySite} initialMessages={messages} conversationId={conversation.data?.id} initialSiteId={requestedSiteId ?? conversation.data?.site_id ?? undefined} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
 }

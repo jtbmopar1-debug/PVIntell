@@ -12,16 +12,16 @@ import type {
 
 const defaultSteps: Omit<InstallationStep, "id">[] = [
   [
-    "Planning & approvals",
-    "Confirm locations, cable routes, access, and local approvals.",
+    "Planning & site preparation",
+    "Confirm locations, cable routes, access, manuals and site-specific considerations.",
     "user",
-    "A documented layout reviewed by the installer.",
+    "A documented layout ready for the next build stage.",
   ],
   [
     "Battery installation",
     "Mount batteries as specified and verify isolation before interconnection.",
     "high-current-dc",
-    "A secure, isolated bank ready for inspection.",
+    "A secure, isolated bank ready for connection checks.",
   ],
   [
     "DC protection",
@@ -33,19 +33,19 @@ const defaultSteps: Omit<InstallationStep, "id">[] = [
     "Inverter installation",
     "Mount the inverter with required clearances and segregated cabling.",
     "licensed",
-    "Equipment ready for connection and inspection.",
+    "Equipment mounted and ready for connection checks.",
   ],
   [
     "PV installation",
-    "Install array, earthing, DC cabling, labels, and isolation to the approved design.",
+    "Install the array, earthing, DC cabling, labels and isolation shown in the recorded design.",
     "licensed",
     "Array isolated and ready for pre-power tests.",
   ],
   [
     "AC wiring",
-    "Complete regulated AC connections and protection.",
+    "Complete and verify the planned AC connections and protection.",
     "licensed",
-    "Certificate and test results recorded.",
+    "Connection details and test results recorded.",
   ],
   [
     "Communications",
@@ -63,11 +63,11 @@ const defaultSteps: Omit<InstallationStep, "id">[] = [
     "Pre-power checks",
     "Verify polarity, torque, insulation tests, and protective devices.",
     "licensed",
-    "Signed pre-energisation checklist.",
+    "Completed pre-energisation checklist.",
   ],
   [
     "Commissioning",
-    "Energise in the approved sequence and record measurements.",
+    "Energise in the manufacturer-defined sequence and record measurements.",
     "licensed",
     "System operating normally with baseline readings.",
   ],
@@ -100,6 +100,7 @@ function mapSite(row: Record<string, unknown>): Site {
     timezone: typeof row.timezone === "string" ? row.timezone : "UTC",
     locationSource: (row.location_source as Site["locationSource"]) ?? "manual",
     locationConfirmed: Boolean(row.location_confirmed),
+    discoveryNeedsReview: Boolean(row.discovery_needs_review),
   };
 }
 
@@ -206,12 +207,14 @@ export async function createSystem(
 }
 
 async function ensureWorkspace(supabase: SupabaseClient) {
-  const siteResult = await supabase
-    .from("sites")
-    .select("*")
-    .order("created_at");
+  const [siteResult, discoveryResult] = await Promise.all([
+    supabase.from("sites").select("*").order("created_at"),
+    supabase.from("site_discoveries").select("site_id,impact_pending"),
+  ]);
   if (siteResult.error) throw siteResult.error;
-  const sites = siteResult.data ?? [];
+  if (discoveryResult.error) throw discoveryResult.error;
+  const reviewNeeded = new Set((discoveryResult.data ?? []).filter((item) => item.impact_pending).map((item) => item.site_id));
+  const sites = (siteResult.data ?? []).map((site) => ({ ...site, discovery_needs_review: reviewNeeded.has(site.id) }));
 
   const systemsResult = await supabase
     .from("projects")
@@ -366,6 +369,8 @@ export async function loadWorkspace(
         const context = (message.structured_context ?? {}) as {
           citations?: Array<{ title: string; url: string }>;
           imagePath?: string;
+          actionUrl?: string;
+          actionLabel?: string;
         };
         let imageUrl: string | undefined;
         if (context.imagePath) {
@@ -385,6 +390,8 @@ export async function loadWorkspace(
           citations: context.citations,
           imagePath: context.imagePath,
           imageUrl,
+          actionUrl: context.actionUrl,
+          actionLabel: context.actionLabel,
         };
       }),
     );

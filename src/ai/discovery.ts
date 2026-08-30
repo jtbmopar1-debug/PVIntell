@@ -75,7 +75,7 @@ export function userIsAskingDiscoveryQuestion(message: string) {
 
 export function discoveryGuidance(key: string) {
   const guidance: Record<string, string> = {
-    current_energy_use: "Your electricity bill normally shows energy in kWh. A monthly or annual total gives us a reliable starting point for panel and battery sizing. You can type that number, attach a clear bill photo, or say you do not have a bill and we’ll build an appliance list instead.",
+    current_energy_use: "If this is an existing powered building, a bill or monitoring total in kWh gives us a useful starting point. If it is new or has no usage history, say so and we’ll design from the lights, outlets, tools, pumps and other equipment you intend to use.",
     backup_preference: "Outage backup means a battery powers chosen parts of the home when public electricity fails. Essentials-only usually covers things such as the fridge, a few lights, internet and perhaps a water pump; most-of-home backup is larger and more expensive. Which sounds closer: no backup, essentials only, or most of the home?",
     outage_essential_loads: "An essential load is simply something you do not want to lose during a blackout. Common examples are refrigeration, basic lighting, internet, a water or sewage pump, medical equipment and selected outlets. Which of those matter at your home?",
     backup_duration: "Backup duration is how long the battery should carry those items before the grid returns or solar recharges it. A few hours covers short cuts, overnight covers a longer outage, and one or more days needs substantially more storage. What duration would make sense for you?",
@@ -91,7 +91,7 @@ export function discoveryGuidance(key: string) {
     panel_area_constraints: "Chimneys, vents, skylights, shaded sections, roof edges and access paths reduce the area panels can actually use. A photo is fine if you cannot list or measure these yet.",
     shading: "Shade from trees, nearby buildings or hills can reduce output, especially when it crosses panels for long periods. Tell me whether the proposed area is mostly open, partly shaded, or unknown; photos can be assessed later.",
     structure_condition: "The roof material, age and condition affect mounting and whether roofing work should happen before solar installation. If you do not know, a photo and approximate building age are useful, and structural suitability can remain unconfirmed pending inspection.",
-    delivery_approach: "A DIY-led build means you do the work your skills and local law allow, while reserving regulated inspection, certification, connection or other restricted work for the appropriate licensed person. Would you prefer DIY-led, shared DIY and trades, or fully supplied and installed?",
+    delivery_approach: "A DIY-led build means you do the work you are comfortable with and arrange checks or specialist help where you choose. Would you prefer DIY-led, or shared DIY and selected trades?",
   };
   return guidance[key] ?? "No problem—I won’t save that as an answer. I’ll explain the current discovery question another way.";
 }
@@ -105,12 +105,18 @@ export function nextRequiredDiscoveryQuestion(
     ? root.designDiscovery as Record<string, unknown>
     : {};
   const recorded = new Set(Object.keys(discovery));
+  const pendingValues = new Map<string, string>();
   for (const action of pendingActions) {
     if (action.name !== "record_design_discovery" || !action.arguments || typeof action.arguments !== "object") continue;
     const key = (action.arguments as Record<string, unknown>).key;
-    if (typeof key === "string") recorded.add(key);
+    const value = (action.arguments as Record<string, unknown>).value;
+    if (typeof key === "string") {
+      recorded.add(key);
+      if (typeof value === "string") pendingValues.set(key, value);
+    }
   }
   const valueOf = (key: string) => {
+    if (pendingValues.has(key)) return pendingValues.get(key) ?? "";
     const entry = discovery[key];
     return entry && typeof entry === "object" && "value" in entry
       ? String((entry as Record<string, unknown>).value ?? "")
@@ -118,32 +124,43 @@ export function nextRequiredDiscoveryQuestion(
   };
   const utility = valueOf("utility_relationship");
   const outcome = valueOf("primary_outcome");
-  const needsBackup = /no public|outage|resilience|independent/i.test(`${utility} ${outcome}`);
+  const isOffGrid = /no public/i.test(utility);
+  const needsGridBackup = !isOffGrid && /outage|resilience|independent/i.test(`${utility} ${outcome}`);
   const backupPreference = valueOf("backup_preference");
+  const currentEnergyUse = valueOf("current_energy_use");
+  const buildingType = valueOf("building_type");
+  const isNewUnmeteredProject = /\b(?:no existing|no history|new|unpowered|not yet powered|planned loads?)\b/i.test(currentEnergyUse)
+    || /\bnew\b.{0,24}\b(?:shed|workshop|garage|building|cabin|house|home)\b/i.test(buildingType);
+  const isShedOrWorkshop = /\b(?:shed|workshop|garage)\b/i.test(buildingType);
   const wantsNoBackup = /\b(?:no|none|do not want|don'?t want)\b/i.test(backupPreference);
   const wantsWholeHomeBackup = /\b(?:whole|entire|all)\b/i.test(backupPreference);
   const steps = [
-    ["current_energy_use", "What is the home’s current energy use? A recent bill or monitoring total is best; otherwise we can build it from appliances one at a time."],
-    ...(needsBackup ? [
+    ["current_energy_use", "Does this project have existing electricity use to measure? A recent bill or monitoring total is useful; if it is a new or unpowered building, tell me that instead."],
+    ...(isNewUnmeteredProject ? [["everyday_needs", "Because this is a new project with no usage history, what should it power day to day—for example lights, outlets, tools, pumps, refrigeration or other equipment?"]] : []),
+    ...(needsGridBackup ? [
       ["backup_preference", "Because you chose outage backup, a battery could keep either a few essentials running—such as the fridge, lights and internet—or supply most of the home, which costs more. Would you want no outage backup, essentials only, or most of the home?"],
-      ...(!wantsNoBackup && !wantsWholeHomeBackup ? [["outage_essential_loads", "Which essentials should stay on in a blackout? Common examples are the fridge/freezer, a few lights, internet, water pump or medical equipment."]] : []),
+      ...(!wantsNoBackup && !wantsWholeHomeBackup ? [["outage_essential_loads", "Which essentials should stay on in a blackout? Common examples are refrigeration, a few lights, internet, a water pump or medical equipment."]] : []),
       ...(!wantsNoBackup ? [["backup_duration", "Roughly how long should the chosen backup loads run without public electricity—a few hours, overnight, or longer?"]] : []),
-    ] : []),
-    ["cooking_energy", "How is cooking done at this property—electric oven or cooktop, induction, LPG/gas, wood, or a combination?"],
-    ["water_heating_energy", "How is water heated—an electric cylinder, heat pump, instant electric, LPG/gas, solar hot water, wood wetback, or a combination?"],
-    ["space_heating_energy", "How is the home or building heated—heat pump, direct electric heating, wood, LPG/gas, a boiler, or another method?"],
-    ["heavy_or_surge_loads", "What are the largest appliances or tools that may run at the same time, such as an oven, water heater, pump, welder or EV charger?"],
+    ] : isOffGrid ? [["backup_duration", "When solar or a generator is not available, how much stored-energy reserve would you like—a few hours, overnight, about a day or several days?"]] : []),
+    ...(isShedOrWorkshop ? [
+      ["heavy_or_surge_loads", "Which larger tools, motors or appliances might run at the same time in the shed—for example a compressor, saw, welder, pump, heater or chest freezer?"],
+      ["space_heating_energy", "Will the shed have any heating, such as an electric heater, heat pump, wood fire or none?"],
+    ] : [
+      ["cooking_energy", "How is cooking done at this property—electric oven or cooktop, induction, LPG/gas, wood, or a combination?"],
+      ["water_heating_energy", "How is water heated—an electric cylinder, heat pump, instant electric, LPG/gas, solar hot water, wood wetback, or a combination?"],
+      ["space_heating_energy", "How is the building heated—heat pump, direct electric heating, wood, LPG/gas, a boiler, no heating, or another method?"],
+      ["heavy_or_surge_loads", "What are the largest appliances or tools that may run at the same time, such as an oven, water heater, pump, welder or EV charger?"],
+    ]),
     ["building_type", "What kind of building is this—for example a detached house, townhouse, apartment, shed or farm building?"],
     ["property_authority", "Do you own the property, rent it, or need approval from a landlord, body corporate or another owner?"],
     ["proposed_panel_location", "Where might panels fit: the main roof, another roof, a ground-mounted area, or are you unsure?"],
-    ["usable_solar_space", "Roughly how much usable space is available there? Measurements, a plan or a clear photo can help."],
     ["panel_area_dimensions", "What are the rough usable length and width of each possible panel area? If you cannot measure it yet, a clear photo or plan can be reviewed first."],
     ["panel_area_constraints", "What must the panels avoid there—for example chimneys, vents, skylights, roof edges, shaded sections or an access path?"],
     ["orientation_and_pitch", "Which way does each possible panel area face, and is it roughly flat, gently sloped or steep?"],
     ["shading", "Does that area get significant shade from trees, buildings or hills during the day?"],
     ["structure_condition", "What condition is the roof or supporting structure in, and do you know its material and approximate age?"],
     ["expected_expansion", "What might be added later, such as an EV, workshop equipment, another dwelling, electric water heating, more panels or more battery storage?"],
-    ["delivery_approach", "Should I plan this as DIY-led, shared between you and selected trades, or fully supplied and installed? I’ll separate tasks according to your skills and the rules at the site location."],
+    ["delivery_approach", "Should I plan this as DIY-led, or shared between you and selected trades? I’ll separate tasks according to your skills and the checks you choose."],
   ] as const;
   return steps.find(([key]) => !recorded.has(key)) ?? null;
 }

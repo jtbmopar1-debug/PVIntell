@@ -38,7 +38,8 @@ export const systemDiscoveryQuestionnaire: QuestionnaireTemplate = {
       questions: [
         { id: "scenario", label: "What best describes this system?", type: "select", required: true, options: [
           { value: "off_grid_home", label: "Off-grid home" }, { value: "grid_backup", label: "Grid-connected battery backup" },
-          { value: "cabin", label: "Cabin or tiny home" }, { value: "mobile", label: "Boat or caravan" },
+          { value: "cabin", label: "Cabin or tiny home" }, { value: "shed_workshop", label: "Shed or workshop" },
+          { value: "mobile", label: "Boat or caravan" },
           { value: "upgrade", label: "Existing system upgrade" }, { value: "diagnostics", label: "Existing system with a problem" },
         ] },
         { id: "use_pattern", label: "How will the property be used?", help: "For example: full-time home, weekends, seasonal, workshop or rental.", type: "textarea", required: true },
@@ -88,6 +89,5 @@ export const systemDiscoveryQuestionnaire: QuestionnaireTemplate = {
 export const questionnaireTemplates = [systemDiscoveryQuestionnaire];
 
 export function scenarioForStart(title: string) {
-  return ({ "Off-grid home": "off_grid_home", "Battery backup": "grid_backup", "Cabin or tiny home": "cabin", "Boat or caravan": "mobile", "Upgrade a system": "upgrade", "Diagnose a problem": "diagnostics" } as Record<string, string>)[title];
+  return ({ "Off-grid home": "off_grid_home", "Battery backup": "grid_backup", "Cabin or tiny home": "cabin", "Shed or workshop": "shed_workshop", "Boat or caravan": "mobile", "Upgrade a system": "upgrade", "Diagnose a problem": "diagnostics" } as Record<string, string>)[title];
 }
-

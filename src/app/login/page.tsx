@@ -128,7 +128,7 @@ export default async function LoginPage({
           {creating ? <SignupForm /> : <LoginForm />}
           <p className="mt-6 text-center text-[10px] leading-4 text-muted">
             {creating
-              ? "By creating an account, you agree to use PVIntell as guidance—not as a substitute for required licensed electrical work."
+              ? "By creating an account, you agree to use PVIntell as guidance and to make your own informed decisions about the work you undertake."
               : "If you joined with Google, continue with Google. A Google account does not automatically create a PVIntell password."}
           </p>
         </div>

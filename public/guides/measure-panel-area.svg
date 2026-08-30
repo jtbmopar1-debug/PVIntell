@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" role="img" aria-labelledby="title desc">
+  <title id="title">How to measure a usable solar panel area</title>
+  <desc id="desc">A roof plane with length and width measurement arrows, a chimney excluded from the usable rectangle, and a separate roof face shown as another area.</desc>
+  <defs>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#1768a6"/></marker>
+    <pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse"><path d="M34 0H0V34" fill="none" stroke="#dce8f3" stroke-width="1"/></pattern>
+  </defs>
+  <rect width="900" height="500" rx="28" fill="#f5f9fd"/>
+  <rect x="25" y="25" width="850" height="450" rx="22" fill="url(#grid)"/>
+  <text x="52" y="68" font-family="Arial, sans-serif" font-size="23" font-weight="700" fill="#10233a">Measure each clear mounting area separately</text>
+  <polygon points="135,160 570,115 700,335 260,382" fill="#dfe9f2" stroke="#45657e" stroke-width="4"/>
+  <polygon points="205,187 529,153 625,312 297,347" fill="#fff4bb" stroke="#d99b00" stroke-width="4" stroke-dasharray="10 8"/>
+  <text x="335" y="255" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#725800">USABLE AREA</text>
+  <rect x="440" y="177" width="72" height="68" rx="7" fill="#ffffff" stroke="#d45b45" stroke-width="4"/>
+  <path d="M449 177l12-30h40l11 30" fill="#bcc8d2" stroke="#d45b45" stroke-width="4"/>
+  <text x="472" y="275" text-anchor="middle" font-family="Arial, sans-serif" font-size="17" font-weight="700" fill="#a33e2d">Chimney</text>
+  <text x="472" y="296" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#a33e2d">exclude this space</text>
+  <line x1="205" y1="405" x2="625" y2="360" stroke="#1768a6" stroke-width="4" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <text x="418" y="426" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#1768a6">USABLE LENGTH (m)</text>
+  <line x1="170" y1="190" x2="265" y2="345" stroke="#1768a6" stroke-width="4" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/>
+  <text x="123" y="286" transform="rotate(-58 123 286)" text-anchor="middle" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#1768a6">USABLE WIDTH (m)</text>
+  <path d="M715 135h112v95H715z" fill="#fff" stroke="#45657e" stroke-width="3"/>
+  <path d="M715 135l56-45 56 45" fill="#dfe9f2" stroke="#45657e" stroke-width="3"/>
+  <text x="771" y="178" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" font-weight="700" fill="#10233a">Different face?</text>
+  <text x="771" y="201" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#50677c">Add another row</text>
+  <path d="M705 258c55 8 78 35 78 71" fill="none" stroke="#1768a6" stroke-width="4" marker-end="url(#arrow-blue)"/>
+  <rect x="704" y="347" width="145" height="68" rx="14" fill="#e8f2fb" stroke="#1768a6" stroke-width="3"/>
+  <text x="776" y="376" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" font-weight="700" fill="#10233a">Area 2</text>
+  <text x="776" y="398" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#50677c">length × width</text>
+</svg>

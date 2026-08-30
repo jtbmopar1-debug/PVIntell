@@ -4,13 +4,15 @@ import { createSystem } from "@/data/cloud-project";
 import { newSystemQuestions, unknownAnswer, type DiscoveryAnswers } from "@/discovery/new-system";
 import { createClient } from "@/lib/supabase/server";
 
-const answersSchema = z.record(z.string(), z.union([z.string().max(4000), z.number(), z.array(z.string().max(100)).min(1).max(10)]));
+const answersSchema = z.record(z.string(), z.union([z.string().max(4000), z.number(), z.array(z.string().max(100)).min(1).max(20)]));
 const draftSchema = z.object({ answers: answersSchema, questionId: z.string().max(100).optional() });
 const completeSchema = z.object({ answers: answersSchema });
+const editSchema = z.object({ projectId: z.uuid(), answers: answersSchema });
 
 function outcomeText(value: unknown): string {
   if (Array.isArray(value)) return value.map((item) => outcomeText(item)).join("; ");
   return ({
+    off_grid_supply: "Provide all required power where no public electricity supply is available",
     cost: "Reduce imported electricity and power costs",
     backup: "Keep essential loads running during outages",
     independence: "Become less dependent on public electricity",
@@ -22,6 +24,20 @@ function projectType(answers: DiscoveryAnswers) {
   if (answers.utility_relationship === "off_grid") return "off-grid" as const;
   const outcomes = Array.isArray(answers.primary_outcome) ? answers.primary_outcome : [answers.primary_outcome];
   return outcomes.length === 1 && outcomes[0] === "cost" ? "grid-tied" as const : "hybrid" as const;
+}
+
+function structuredPanelAnswer(value: string | number | string[] | undefined, kind: "dimensions" | "orientation" | "structure" | "obstructions") {
+  if (typeof value !== "string" || value === unknownAnswer) return value;
+  try {
+    const rows = JSON.parse(value) as Array<Record<string, unknown>>;
+    if (!Array.isArray(rows)) return value;
+    return rows.map((row) => {
+      if (kind === "dimensions") return `${String(row.name || "Panel area")}: ${String(row.lengthM || "?")} m × ${String(row.widthM || "?")} m`;
+      if (kind === "orientation") return `${String(row.name || "Panel area")}: ${String(row.direction || "unknown direction")}, ${String(row.slope || "unknown surface slope")}`;
+      if (kind === "obstructions") return row.kind === "none" ? "No known obstructions" : `${String(row.kind || "obstruction").replaceAll("_", " ")}: ${String(row.lengthM || "?")} m × ${String(row.widthM || "?")} m`;
+      return `${String(row.name || "Panel area")}: ${String(row.material || "unknown support")}, ${String(row.age || "unknown age")}, ${String(row.condition || "unknown condition")}`;
+    }).join("; ");
+  } catch { return value; }
 }
 
 function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
@@ -40,12 +56,13 @@ function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
     ["building_type", answers.building_type],
     ["property_authority", answers.property_authority],
     ["proposed_panel_location", answers.panel_location],
-    ["usable_solar_space", answers.usable_solar_space],
-    ["panel_area_dimensions", answers.panel_area_dimensions],
-    ["panel_area_constraints", answers.panel_area_constraints],
-    ["orientation_and_pitch", answers.orientation_and_pitch],
+    ["storage_supply_source", answers.storage_supply_source_off_grid ?? answers.storage_supply_source_grid],
+    ["panel_construction_interest", answers.panel_construction_interest],
+    ["panel_area_dimensions", structuredPanelAnswer(answers.panel_area_dimensions, "dimensions")],
+    ["panel_area_constraints", structuredPanelAnswer(answers.panel_area_constraints, "obstructions")],
+    ["orientation_and_pitch", structuredPanelAnswer(answers.orientation_and_pitch, "orientation")],
     ["shading", answers.shading],
-    ["structure_condition", answers.structure_condition],
+    ["structure_condition", structuredPanelAnswer(answers.structure_condition, "structure")],
     ["expected_expansion", answers.future_changes],
     ["delivery_approach", answers.delivery_approach],
   ];
@@ -72,15 +89,14 @@ async function addWattsonHandoff(
   userId: string,
   content: string,
   structuredContext: Record<string, unknown>,
+  title = "Guided system discovery",
+  context?: { siteId?: string; projectId?: string },
 ) {
-  const existing = await supabase.from("user_conversations").select("id").eq("owner_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle();
-  if (existing.error) throw existing.error;
-  let conversationId = existing.data?.id;
-  if (!conversationId) {
-    const created = await supabase.from("user_conversations").insert({ owner_id: userId, title: "Guided system discovery" }).select("id").single();
-    if (created.error) throw created.error;
-    conversationId = created.data.id;
-  }
+  // Discovery starts a new piece of work. Do not append its handoff to a
+  // previous Wattson conversation, even if that is the most recent one.
+  const created = await supabase.from("user_conversations").insert({ owner_id: userId, title, site_id: context?.siteId ?? null, project_id: context?.projectId ?? null }).select("id").single();
+  if (created.error) throw created.error;
+  const conversationId = created.data.id;
   const message = await supabase.from("user_chat_messages").insert({
     conversation_id: conversationId,
     role: "assistant",
@@ -88,6 +104,7 @@ async function addWattsonHandoff(
     structured_context: structuredContext,
   });
   if (message.error) throw message.error;
+  return conversationId;
 }
 
 export async function PUT(request: Request) {
@@ -105,6 +122,27 @@ export async function PUT(request: Request) {
   };
   const saved = await context.supabase.from("profiles").update({ onboarding_assessment: assessment }).eq("id", context.userId);
   if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+  return Response.json({ saved: true });
+}
+
+export async function PATCH(request: Request) {
+  const parsed = editSchema.safeParse(await request.json());
+  if (!parsed.success) return Response.json({ error: "Invalid discovery answers" }, { status: 400 });
+  const context = await accountContext();
+  if ("error" in context) return context.error;
+  const project = await context.supabase.from("projects").select("id,site_id").eq("id", parsed.data.projectId).eq("owner_id", context.userId).maybeSingle();
+  if (project.error || !project.data) return Response.json({ error: "Power system not found." }, { status: 404 });
+  const answers = parsed.data.answers as DiscoveryAnswers;
+  await applyWattsonActions(context.supabase, project.data.id, discoveryActions(answers));
+  const questionnaire = await context.supabase.from("questionnaire_responses").upsert({
+    project_id: project.data.id,
+    template_key: "guided_new_system",
+    template_version: 1,
+    status: "completed",
+    answers,
+    completed_at: new Date().toISOString(),
+  }, { onConflict: "project_id,template_key" });
+  if (questionnaire.error) return Response.json({ error: questionnaire.error.message }, { status: 400 });
   return Response.json({ saved: true });
 }
 
@@ -131,22 +169,33 @@ export async function POST(request: Request) {
     };
     const saved = await context.supabase.from("profiles").update({ onboarding_assessment: assessment }).eq("id", context.userId);
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-    await addWattsonHandoff(
+    const conversationId = await addWattsonHandoff(
       context.supabase,
       context.userId,
       "I’ve saved your discovery answers. Before I create a working system, I need to explain and confirm the unanswered starting details with you. Nothing has been guessed.",
       { kind: "guided_discovery_review", missingFoundation, unknownIds },
+      "Discovery — details to confirm",
     );
-    return Response.json({ needsReview: true, reviewUrl: "/dashboard#wattson" });
+    return Response.json({ needsReview: true, reviewUrl: `/dashboard?conversation=${conversationId}#wattson` });
   }
 
   const existingSites = await context.supabase.from("sites").select("id,name").eq("owner_id", context.userId).order("created_at");
   if (existingSites.error) return Response.json({ error: existingSites.error.message }, { status: 400 });
-  const requestedSiteName = String(answers.site_name || "Home").trim();
-  const matchingSite = existingSites.data.find((site) => site.name.trim().toLocaleLowerCase() === requestedSiteName.toLocaleLowerCase());
+  const requestedSiteId = typeof answers.site_id === "string" ? answers.site_id : "";
+  const requestedSiteName = String(answers.site_name || "").trim();
+  const selectedExistingSite = requestedSiteId && requestedSiteId !== "__new__"
+    ? existingSites.data.find((site) => site.id === requestedSiteId)
+    : undefined;
+  if (requestedSiteId && requestedSiteId !== "__new__" && !selectedExistingSite) {
+    return Response.json({ error: "The selected Site is no longer available. Please choose another Site." }, { status: 400 });
+  }
+  const matchingSite = selectedExistingSite ?? (!requestedSiteId
+    ? existingSites.data.find((site) => site.name.trim().toLocaleLowerCase() === requestedSiteName.toLocaleLowerCase())
+    : undefined);
   let siteId = matchingSite?.id;
   let createdSiteId: string | undefined;
   if (!siteId) {
+    if (!requestedSiteName) return Response.json({ error: "Enter a name for the new Site." }, { status: 400 });
     const created = await context.supabase.from("sites").insert({
       owner_id: context.userId,
       name: requestedSiteName,
@@ -175,6 +224,19 @@ export async function POST(request: Request) {
       completed_at: new Date().toISOString(),
     }, { onConflict: "project_id,template_key" });
     if (questionnaire.error) throw questionnaire.error;
+    // The one guided questionnaire is also the Site's brief. A Site can share
+    // an address with another Site, but it never shares its discovery answers.
+    const siteBrief = await context.supabase.from("site_discoveries").upsert({
+      site_id: siteId,
+      owner_id: context.userId,
+      status: "completed",
+      question_id: null,
+      answers,
+      baseline_answers: answers,
+      impact_pending: false,
+      completed_at: new Date().toISOString(),
+    });
+    if (siteBrief.error) throw siteBrief.error;
     const assessment = (context.profile.onboarding_assessment ?? {}) as Record<string, unknown>;
     delete assessment.guidedNewSystem;
     assessment.lastGuidedDiscovery = {
@@ -189,15 +251,17 @@ export async function POST(request: Request) {
     const cleared = await context.supabase.from("profiles").update({ onboarding_assessment: assessment }).eq("id", context.userId);
     if (cleared.error) throw cleared.error;
     const firstUnknown = newSystemQuestions.find((question) => unknownIds.includes(question.id));
-    await addWattsonHandoff(
+    const conversationId = await addWattsonHandoff(
       context.supabase,
       context.userId,
       firstUnknown
         ? `I’ve saved your discovery brief and opened a working design for ${systemName}. You marked ${unknownIds.length} item${unknownIds.length === 1 ? "" : "s"} as unknown. Let’s start with this one: ${firstUnknown.title}`
         : `I’ve saved your discovery brief and opened a working design for ${systemName}. No equipment has been treated as purchased or installed. Next, I’ll review the answers with you before we select or size anything.`,
       { kind: "guided_discovery_complete", siteId, systemId, unknownIds },
+      `${systemName} — discovery review`,
+      { siteId, projectId: systemId },
     );
-    return Response.json({ siteId, systemId, reviewUrl: "/dashboard#wattson" });
+    return Response.json({ siteId, systemId, reviewUrl: `/dashboard?site=${siteId}&conversation=${conversationId}#wattson` });
   } catch (problem) {
     if (createdSystemId) await context.supabase.from("projects").delete().eq("id", createdSystemId).eq("owner_id", context.userId);
     if (createdSiteId) await context.supabase.from("sites").delete().eq("id", createdSiteId).eq("owner_id", context.userId);

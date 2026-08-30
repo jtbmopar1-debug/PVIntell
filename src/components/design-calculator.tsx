@@ -1,6 +1,7 @@
 "use client";
 
-import { BatteryCharging, Cable, Calculator, Save, Sun } from "lucide-react";
+import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Save, Sun } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { DesignCalculatorState, Project, Site } from "@/domain/models";
 
@@ -43,18 +44,26 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     return { pvKw, rawArea, totalWeight, dailyKwh, orientationFactor, nominalBattery, usableBattery, dropVolts, dropPercent, minimumCable, planningBreaker: n(design.connectionCurrent) * 1.25 };
   }, [design, project.peakSunHours, site.latitude]);
 
-  async function save() {
+  async function save(nextDesign: DesignCalculatorState = design) {
     setStatus("Saving…");
     try {
-      const response = await fetch("/api/design-calculator", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, design }) });
+      const response = await fetch("/api/design-calculator", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, design: nextDesign }) });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not save design");
       setStatus("Working design saved");
     } catch (problem) { setStatus(problem instanceof Error ? problem.message : "Could not save design"); }
   }
 
+  function toggleProposedItem(id: string) {
+    const nextDesign = { ...design, proposedChecklist: { ...(design.proposedChecklist ?? {}), [id]: !(design.proposedChecklist?.[id] ?? false) } };
+    setDesign(nextDesign);
+    void save(nextDesign);
+  }
+
   return <div className="animate-rise space-y-6">
-    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><div className="eyebrow">Proposed design</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} Design Calculator</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Explore a working design without adding anything to the installed overview or schematic. Wattson can fill this in; every value remains proposed until you adopt and record the actual build.</p></div><div className="flex items-center gap-3"><span className="text-[10px] font-bold text-brand">{status}</span><button onClick={() => void save()} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white"><Save size={15}/>Save design</button></div></div>
+    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><div className="eyebrow">Proposed design</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} proposed design</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Explore Wattson’s working plan without adding anything to the as-built overview or schematic. Every value remains proposed until you adopt and record the actual build.</p></div><div className="flex items-center gap-3"><Link href={`/sites/${project.siteId}/systems/${project.id}`} className="flex h-11 items-center rounded-xl border border-line bg-white px-4 text-xs font-bold text-brand">As-built record</Link><span className="text-[10px] font-bold text-brand">{status}</span><button onClick={() => void save()} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white"><Save size={15}/>Save design</button></div></div>
+
+    <ProposedPlan project={project} design={design} onToggle={toggleProposedItem}/>
 
     {(design.startingStage || design.expansionPath || design.nextValidation) && <section className="card p-5"><div className="eyebrow">Wattson’s staged plan</div><div className="mt-4 grid gap-4 md:grid-cols-3"><div><strong className="text-sm">Start useful</strong><p className="mt-1 text-xs leading-5 text-muted">{design.startingStage || "Not proposed yet"}</p></div><div><strong className="text-sm">Expand cleanly</strong><p className="mt-1 text-xs leading-5 text-muted">{design.expansionPath || "Not proposed yet"}</p></div><div><strong className="text-sm">Validate next</strong><p className="mt-1 text-xs leading-5 text-muted">{design.nextValidation || "Not proposed yet"}</p></div></div></section>}
 
@@ -66,4 +75,36 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
 
     <div className="rounded-2xl border border-[#f0d57c] bg-[#fff8d8] p-4 text-xs leading-5"><Calculator className="mr-2 inline text-[#b77d00]" size={16}/><strong>Working design only.</strong> Exact PV string voltage/current limits, cable installation method, ambient temperature, fault current, breaker curves, manufacturer instructions and local electrical requirements still have to be checked before build values are accepted.</div>
   </div>;
+}
+
+function ProposedPlan({ project, design, onToggle }: { project: Project; design: DesignCalculatorState; onToggle: (id: string) => void }) {
+  const base = `/sites/${project.siteId}/systems/${project.id}`;
+  const items = [
+    {
+      id: "solar-array",
+      title: "Solar array and mounting",
+      detail: design.panelCount ? `${design.panelCount} panels are in the working design. Confirm fit, structure, access and mounting before buying.` : "No panel count is proposed yet. Wattson needs physical-fit evidence before an array can be confirmed.",
+      help: "Measure the usable rectangle, subtract obstructions, then compare it with a real panel and mounting layout.",
+    },
+    {
+      id: "inverter",
+      title: "Inverter arrangement",
+      detail: design.architecture === "separate_solar_controller_and_inverter" ? "Separate charge controller and inverter are proposed." : design.architecture === "combined_hybrid_inverter" ? "A combined hybrid inverter is proposed." : design.architecture === "ac_coupled" ? "An AC-coupled arrangement is proposed." : "The inverter arrangement is still to be chosen.",
+      help: "Check a dry location, manufacturer clearances, ventilation and a practical cable route before selecting a model.",
+    },
+    {
+      id: "battery",
+      title: "Battery storage",
+      detail: design.batteryUsableKwh ? `${design.batteryUsableKwh} kWh usable storage is a planning estimate.` : "Battery capacity is not sized yet.",
+      help: "Plan a protected, accessible location and confirm the battery’s voltage, chemistry and BMS limits before purchase.",
+    },
+    {
+      id: "protection",
+      title: "Cables, isolation and protection",
+      detail: "This stays proposed until the actual equipment, cable route and manufacturer requirements are known.",
+      help: "Do not choose final cable or fuse sizes from this card. Wattson will help gather the equipment ratings and route details first.",
+    },
+  ];
+
+  return <section className="card overflow-hidden"><div className="border-b border-line bg-[#fff1ee] p-5"><div className="eyebrow text-[#b9412b]">Proposed system outline</div><h2 className="mt-2 text-xl font-extrabold">What Wattson is planning</h2><p className="mt-2 max-w-3xl text-xs leading-5 text-muted">These are not installed components. A green tick means you have reviewed the planning requirements for that item — not that it has been purchased, wired or approved.</p></div><div className="grid gap-4 p-5 md:grid-cols-2">{items.map((item) => { const complete = design.proposedChecklist?.[item.id] ?? false; return <article key={item.id} className={`rounded-2xl border p-4 ${complete ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-[#ecaaa0] bg-[#fff7f5]"}`}><div className="flex items-start justify-between gap-3"><div><div className={`text-[10px] font-bold uppercase tracking-[.12em] ${complete ? "text-[#17603b]" : "text-[#b9412b]"}`}>{complete ? "Planning reviewed" : "Needs planning"}</div><h3 className="mt-2 text-sm font-extrabold">{item.title}</h3></div><button type="button" onClick={() => onToggle(item.id)} className={`grid size-9 shrink-0 place-items-center rounded-xl border ${complete ? "border-[#74bd8d] bg-white text-[#17603b]" : "border-[#e79b91] bg-white text-[#b9412b]"}`} title={complete ? "Mark planning as needing review" : "Mark planning requirements reviewed"}>{complete ? <CheckCircle2 size={18}/> : <Circle size={18}/>}</button></div><p className="mt-3 text-[11px] leading-5 text-muted">{item.detail}</p><details className="mt-3 rounded-xl bg-white/70 p-3 text-[11px] leading-5 text-muted"><summary className="cursor-pointer font-bold text-brand">What do I need to check?</summary><p className="mt-2">{item.help}</p></details><Link href={`${base}?view=wattson`} className="mt-4 inline-flex text-[11px] font-bold text-brand">Ask Wattson about this component →</Link></article>; })}</div></section>;
 }

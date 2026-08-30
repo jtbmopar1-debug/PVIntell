@@ -5,6 +5,7 @@ import { discoveryGuidance, nextRequiredDiscoveryQuestion, userExpressesUncertai
 import { MockAIProvider } from "@/ai/provider";
 import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
+import { isNewSystemSetupIntent, startHereLabel, startHereMessage, startHereUrl } from "@/ai/new-system-intent";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -170,6 +171,17 @@ export async function POST(request: Request) {
     history.at(-1)?.content === parsed.data.message
       ? history.slice(0, -1)
       : history;
+  if (isNewSystemSetupIntent(parsed.data.message)) {
+    const message = startHereMessage();
+    const saved = await supabase.from("chat_messages").insert({
+      conversation_id: conversationId,
+      role: "assistant",
+      content: message,
+      structured_context: { kind: "start_here_handoff", actionUrl: startHereUrl, actionLabel: startHereLabel },
+    });
+    if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+    return Response.json({ message, actionUrl: startHereUrl, actionLabel: startHereLabel, actions: [] });
+  }
   const questionnaireResult = await supabase
     .from("questionnaire_responses")
     .select("template_key,status,answers")

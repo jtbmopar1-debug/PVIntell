@@ -20,6 +20,7 @@ export interface Site {
   timezone: string;
   locationSource: "manual" | "device" | "search" | "imported";
   locationConfirmed: boolean;
+  discoveryNeedsReview?: boolean;
 }
 
 export interface SystemSummary {
@@ -114,6 +115,8 @@ export interface OverviewCardOrder {
 }
 
 export interface DesignCalculatorState {
+  /** Planning readiness only; never indicates that an item is installed. */
+  proposedChecklist?: Record<string, boolean>;
   architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
   designBasis?: string;
   startingStage?: string;
@@ -236,4 +239,6 @@ export interface ChatMessage {
   imageUrl?: string;
   imagePath?: string;
   citations?: Array<{ title: string; url: string }>;
+  actionUrl?: string;
+  actionLabel?: string;
 }
