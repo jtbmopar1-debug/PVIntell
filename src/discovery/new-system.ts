@@ -309,6 +309,22 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ],
   },
   {
+    id: "dc_system_voltage", stage: "design", title: "What battery or DC voltage should Wattson work with?",
+    noviceHelp: "If you already have a battery, simply choose that option here. Its label, model and condition are captured later in Site Inventory. If you do not have one, you do not need to know the voltage yet. Higher voltage usually means less current for the same power, but it changes which batteries, inverters, controllers, fuses, switches and safety rules apply.",
+    technicalHelp: "Record both nominal voltage and the real maximum charge/operating voltage. Compare load current, voltage drop, conductor/protection duty, BMS topology, inverter/controller ecosystem, series/parallel battery rules and local voltage-class boundaries. Do not assume 48 V.",
+    type: "choice", options: [
+      { value: "existing", label: "I already have a battery", description: "Continue now; its photos and technical details will be captured in Site Inventory." },
+      { value: "recommend", label: "Explain and recommend", description: "Compare suitable voltages after the loads, cable runs, equipment and expansion needs are known." },
+      { value: "12", label: "12 V nominal", description: "Common for smaller vehicle, marine and compact systems; high-power loads draw high current." },
+      { value: "24", label: "24 V nominal", description: "Reduces current compared with 12 V and is common in larger mobile or modest off-grid systems." },
+      { value: "36", label: "36 V nominal", description: "A specialist option used by some battery and mobility equipment ecosystems." },
+      { value: "48", label: "48 V nominal", description: "Common for larger stationary/off-grid systems, but not automatically the right choice." },
+      { value: "60", label: "60 V nominal", description: "Used by some specialist systems; component availability and local voltage boundaries need checking." },
+      { value: "high_voltage", label: "Manufacturer high-voltage battery", description: "An integrated battery/inverter platform operating above common 12–60 V nominal systems." },
+      { value: "no_battery_bus", label: "No battery DC bus planned", description: "For a design such as grid-only PV; the PV string still has its own separately calculated DC voltage." },
+    ],
+  },
+  {
     id: "module_level_electronics", stage: "design", title: "Should Wattson consider panel-level optimisers or microinverters?",
     noviceHelp: "These devices sit at or behind individual panels. They can help with some shaded or multi-direction roofs and panel-level monitoring, but add rooftop equipment, connectors, compatibility rules and replacement considerations.", type: "multi_choice", options: [
       { value: "recommend", label: "Recommend after reviewing the Site", description: "Compare shading, roof directions, string limits, monitoring, local rules and service access first." },

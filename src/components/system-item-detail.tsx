@@ -861,7 +861,7 @@ export function ComponentDetail({
                 .map(([key, value]) => `${key}: ${value}`)
                 .join("\n")}
               className="field py-3 font-mono"
-              placeholder="Rated voltage: 48 V&#10;Breaker rating: 32 A&#10;Cable size: 16 mm²"
+              placeholder="Rated voltage: from equipment label&#10;Breaker rating: from design&#10;Cable size: from design"
             />
           </Field>
           <Field label="Installation and identification notes" wide>

@@ -34,7 +34,8 @@ export class MockAIProvider implements AIProvider {
     return `I’m keeping this tied to ${context.project.name}. Tell me what you want the system to do in everyday language—what you want to power, where it is, and what matters most to you.`;
   }
   async analyzeSystem(context: WattsonContext) {
-    return `${context.project.name} is configured as a ${context.project.systemVoltage} V ${context.project.projectType} system. The current design has ${context.project.loads.length} tracked loads and ${context.project.assumptions.length} visible assumptions.`;
+    const voltage = context.project.systemVoltage > 0 ? `${context.project.systemVoltage} V` : "voltage not yet confirmed";
+    return `${context.project.name} is configured as a ${voltage} ${context.project.projectType} system. The current design has ${context.project.loads.length} tracked loads and ${context.project.assumptions.length} visible assumptions.`;
   }
   async diagnoseFault(context: WattsonContext) {
     const finding = context.findings?.[0];

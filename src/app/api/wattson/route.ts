@@ -6,6 +6,7 @@ import { MockAIProvider } from "@/ai/provider";
 import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 import { isNewSystemSetupIntent, startHereLabel, startHereMessage, startHereUrl } from "@/ai/new-system-intent";
+import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -80,10 +81,12 @@ export async function POST(request: Request) {
   if (owned.error || !owned.data)
     return Response.json({ error: "Project not found" }, { status: 404 });
   let image: { data: string; mimeType: string } | undefined;
+  let imageBytes: Uint8Array | undefined;
   let imagePath: string | undefined;
   let imageUrl: string | undefined;
   if (imageFile) {
     const bytes = new Uint8Array(await imageFile.arrayBuffer());
+    imageBytes = bytes;
     image = {
       data: Buffer.from(bytes).toString("base64"),
       mimeType: imageFile.type,
@@ -112,6 +115,16 @@ export async function POST(request: Request) {
       .from("project-photos")
       .createSignedUrl(imagePath, 3600);
     imageUrl = signed.data?.signedUrl;
+  }
+  let inventoryCapture: InventoryPhotoCapture | undefined;
+  if (imagePath && imageBytes && imageFile) {
+    inventoryCapture = await captureSiteInventoryFromLabel({
+      supabase,
+      siteId: owned.data.site_id,
+      imagePath,
+      imageBytes,
+      mimeType: imageFile.type,
+    });
   }
 
   let conversation = await supabase
@@ -297,6 +310,7 @@ export async function POST(request: Request) {
           userAssessment: profileResult.data.onboarding_assessment ?? {},
           responses: questionnaireResult.data ?? [],
           siteEquipment: equipmentResult.data ?? [],
+          inventoryLabelCapture: inventoryCapture,
           connectedSiteSystems,
         },
         image,
@@ -354,6 +368,7 @@ export async function POST(request: Request) {
         usage: result.usage,
         actions: appliedActions,
         imagePath,
+        inventoryCapture,
       };
     } catch (error) {
       const detail =
@@ -369,6 +384,8 @@ export async function POST(request: Request) {
     });
     structuredContext = { provider: "mock", projectId: parsed.data.projectId };
   }
+  if (inventoryCapture?.saved)
+    message = `${message}\n\nI added ${inventoryCapture.equipmentName ?? "this equipment"} to this Site’s inventory from the label photo. I saved only visible label details and marked its physical condition as needing testing; you can review or correct the inventory record at any time.`;
 
   const assistantInsert = await supabase
     .from("chat_messages")
@@ -390,5 +407,6 @@ export async function POST(request: Request) {
     actions: appliedActions,
     imageUrl,
     imagePath,
+    inventoryEquipmentId: inventoryCapture?.equipmentId,
   });
 }

@@ -671,7 +671,7 @@ export function PVIntellWorkspace({
             {cloud && <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{initialSite.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div><div className="space-y-1">{sites.map((site) => <Link key={site.id} href={`/sites/${site.id}`} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === initialSite.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}><MapPin size={12}/><span className="truncate">{site.name}</span></Link>)}</div><Link href="/discovery/new-system" className="mt-3 flex items-center gap-2 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]"><Sparkles size={13}/>New independent Site</Link></div></details>}
             <div className="min-w-0 flex-1 border-l border-line pl-4">
               <div className="eyebrow text-[8px]">{currentViewLabel}</div>
-              <div className="mt-1 truncate text-xs font-extrabold">{project.name} <span className="font-medium text-muted">· {project.location} · {project.systemVoltage} V {project.projectType}</span></div>
+              <div className="mt-1 truncate text-xs font-extrabold">{project.name} <span className="font-medium text-muted">· {project.location} · {project.systemVoltage > 0 ? `${project.systemVoltage} V` : "voltage to confirm"} · {project.projectType}</span></div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <button type="button" onClick={() => setView("wattson")} className="hidden h-9 items-center gap-2 rounded-xl bg-brand px-4 text-[11px] font-bold text-white sm:flex"><Sparkles size={14}/>Ask Wattson</button>
@@ -1299,6 +1299,7 @@ export type NoviceHowToGuide = {
   types?: readonly {
     name: string;
     description: string;
+    image?: string;
     bestFor?: string;
     watchFor?: string;
   }[];
@@ -1383,7 +1384,8 @@ const compatibilityHowToGuides: readonly NoviceHowToGuide[] = [
 ];
 
 const componentPlanningHowToGuides = planningHowToGuides.filter((guide) => guide.group !== "Start here: system choices");
-const rawHowToGuides: readonly NoviceHowToGuide[] = [...noviceHowToGuides, ...additionalHowToGuides, ...compatibilityHowToGuides, ...componentPlanningHowToGuides, ...expandedHowToGuides, ...componentHowToGuides];
+const supersededHowToGuideIds = new Set(["protection", "protection-types"]);
+const rawHowToGuides: readonly NoviceHowToGuide[] = [...noviceHowToGuides, ...additionalHowToGuides, ...compatibilityHowToGuides, ...componentPlanningHowToGuides, ...expandedHowToGuides, ...componentHowToGuides].filter((guide) => !supersededHowToGuideIds.has(guide.id));
 const allHowToGuides: readonly NoviceHowToGuide[] = rawHowToGuides.map((guide) => {
   const detail = howToGuideDetails[guide.id as keyof typeof howToGuideDetails];
   const enriched: NoviceHowToGuide = detail ? { ...guide, ...detail } : guide;
@@ -1435,7 +1437,7 @@ function HowToTypes({ guide }: { guide: NoviceHowToGuide }) {
   return <>
     {guide.aliases?.length ? <p className="mt-3 text-[10px] text-muted"><strong>Also known as:</strong> {guide.aliases.join(" · ")}</p> : null}
     {guide.usedFor?.length ? <div className="mt-4 rounded-xl border border-line bg-white p-4"><h3 className="text-[11px] font-extrabold text-brand">Where is it used?</h3><div className="mt-3 flex flex-wrap gap-2">{guide.usedFor.map((use) => <span key={use} className="rounded-full bg-[#eef3f8] px-3 py-1 text-[10px] font-bold text-[#52657a]">{use}</span>)}</div></div> : null}
-    {guide.types?.length ? <div className="mt-5"><h3 className="text-sm font-extrabold">Common types — and why they differ</h3><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{guide.types.map((type) => <article key={type.name} className="rounded-xl border border-line bg-white p-4"><h4 className="text-[11px] font-extrabold text-brand">{type.name}</h4><p className="mt-2 text-[10px] leading-5 text-muted">{type.description}</p>{type.bestFor ? <p className="mt-3 text-[9px] leading-4"><strong>Usually used for:</strong> {type.bestFor}</p> : null}{type.watchFor ? <p className="mt-2 text-[9px] leading-4 text-[#8a5e12]"><strong>Check:</strong> {type.watchFor}</p> : null}</article>)}</div></div> : null}
+    {guide.types?.length ? <div className="mt-5"><h3 className="text-sm font-extrabold">Common types — and why they differ</h3><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{guide.types.map((type) => <article key={type.name} className="overflow-hidden rounded-xl border border-line bg-white"><div className="p-4">{type.image ? <div className="relative mb-3 h-28 overflow-hidden rounded-lg bg-[#f4f7fa]"><Image src={type.image} alt={type.name} fill sizes="280px" className="object-contain"/></div> : null}<h4 className="text-[11px] font-extrabold text-brand">{type.name}</h4><p className="mt-2 text-[10px] leading-5 text-muted">{type.description}</p>{type.bestFor ? <p className="mt-3 text-[9px] leading-4"><strong>Usually used for:</strong> {type.bestFor}</p> : null}{type.watchFor ? <p className="mt-2 text-[9px] leading-4 text-[#8a5e12]"><strong>Check:</strong> {type.watchFor}</p> : null}</div></article>)}</div></div> : null}
     {guide.questions?.length ? <div className="mt-5"><h3 className="text-sm font-extrabold">Questions you are probably asking</h3><div className="mt-3 space-y-2">{guide.questions.map((item) => <details key={item.question} className="rounded-xl border border-line bg-[#f8fafc] p-4"><summary className="cursor-pointer text-[11px] font-extrabold text-brand">{item.question}</summary><p className="mt-3 text-[10px] leading-5 text-muted">{item.answer}</p></details>)}</div></div> : null}
   </>;
 }

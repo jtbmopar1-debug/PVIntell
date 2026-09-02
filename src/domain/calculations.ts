@@ -83,7 +83,7 @@ export function sizeBattery(input: BatterySizingInput) {
     usableKWh: Number((usableWh / 1000).toFixed(1)),
     nominalWh: Math.round(nominalWh),
     nominalKWh: Number((nominalWh / 1000).toFixed(1)),
-    ampHours: Math.ceil(nominalWh / input.systemVoltage),
+    ampHours: input.systemVoltage > 0 ? Math.ceil(nominalWh / input.systemVoltage) : 0,
     depthOfDischarge,
   };
 }

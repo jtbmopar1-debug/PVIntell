@@ -181,6 +181,7 @@ export async function createSystem(
   name: string,
   type: ProjectType = "off-grid",
   startingGoal?: string,
+  systemVoltage?: number,
 ) {
   const created = await supabase
     .from("projects")
@@ -196,7 +197,7 @@ export async function createSystem(
             ? "hybrid"
             : "off_grid",
       phase: "discover",
-      system_voltage: 48,
+      system_voltage: systemVoltage ?? null,
       settings: { autonomyDays: 2, peakSunHours: 4.2, priorities: [], startingGoal: startingGoal || null },
     })
     .select("id")
@@ -411,7 +412,7 @@ export async function loadWorkspace(
     priorities: Array.isArray(settings.priorities)
       ? settings.priorities.map(String)
       : [],
-    systemVoltage: row.system_voltage ?? 48,
+    systemVoltage: row.system_voltage ?? 0,
     autonomyDays: Number(settings.autonomyDays ?? 2),
     peakSunHours: Number(settings.peakSunHours ?? 4.2),
     designCalculator: settings.designCalculator && typeof settings.designCalculator === "object"

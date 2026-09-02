@@ -26,6 +26,11 @@ function projectType(answers: DiscoveryAnswers) {
   return outcomes.length === 1 && outcomes[0] === "cost" ? "grid-tied" as const : "hybrid" as const;
 }
 
+function proposedSystemVoltage(answers: DiscoveryAnswers) {
+  const value = Number(answers.dc_system_voltage);
+  return [12, 24, 36, 48, 60].includes(value) ? value : undefined;
+}
+
 function structuredPanelAnswer(value: string | number | string[] | undefined, kind: "dimensions" | "orientation" | "structure" | "obstructions") {
   if (typeof value !== "string" || value === unknownAnswer) return value;
   try {
@@ -68,6 +73,7 @@ function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
     ["structure_condition", structuredPanelAnswer(answers.structure_condition, "structure")],
     ["expected_expansion", answers.future_changes],
     ["delivery_approach", answers.delivery_approach],
+    ["dc_system_voltage", answers.dc_system_voltage],
     ["module_level_electronics", answers.module_level_electronics],
     ["module_electronics_compatibility", answers.module_electronics_compatibility],
   ];
@@ -217,7 +223,7 @@ export async function POST(request: Request) {
   let createdSystemId: string | undefined;
   try {
     const systemName = String(answers.system_name || "Home solar");
-    const systemId = await createSystem(context.supabase, context.userId, siteId, systemName, projectType(answers), outcomeText(answers.primary_outcome));
+    const systemId = await createSystem(context.supabase, context.userId, siteId, systemName, projectType(answers), outcomeText(answers.primary_outcome), proposedSystemVoltage(answers));
     createdSystemId = systemId;
     await applyWattsonActions(context.supabase, systemId, discoveryActions(answers));
     const questionnaire = await context.supabase.from("questionnaire_responses").upsert({

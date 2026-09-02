@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createSystem } from "@/data/cloud-project";
 import { newSystemQuestions } from "@/discovery/new-system";
 import { isNewSystemSetupIntent, startHereLabel, startHereMessage, startHereUrl } from "@/ai/new-system-intent";
+import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -112,7 +113,7 @@ function dashboardProject(location: string): Project {
     location: location || "Location not set",
     goal: "Run the next incomplete discovery step without assuming a system type or equipment.",
     priorities: [],
-    systemVoltage: 48,
+    systemVoltage: 0,
     autonomyDays: 2,
     peakSunHours: 4,
     loads: [], assumptions: [], components: [], connections: [], schematicPositions: [], overviewCardOrder: [], pvArrays: [], installationSteps: [], commissioning: [],
@@ -173,17 +174,30 @@ export async function POST(request: Request) {
   const conversationSiteId = parsed.data.siteId ?? selectedConversation.data?.site_id;
   const selectedSiteBrief = (siteDiscoveries.data ?? []).find((item) => item.site_id === conversationSiteId && item.status === "completed");
   let image: { data: string; mimeType: string } | undefined;
+  let imageBytes: Uint8Array | undefined;
   let imagePath: string | undefined;
   if (imageFile) {
     if (parsed.data.projectId && !systemIds.includes(parsed.data.projectId))
       return Response.json({ error: "Power system not found." }, { status: 404 });
     const bytes = new Uint8Array(await imageFile.arrayBuffer());
+    imageBytes = bytes;
     image = { data: Buffer.from(bytes).toString("base64"), mimeType: imageFile.type };
     const extension = imageFile.type === "image/png" ? "png" : imageFile.type === "image/webp" ? "webp" : "jpg";
     const imageScope = parsed.data.projectId ?? "dashboard";
     imagePath = `${userId}/${imageScope}/wattson/${crypto.randomUUID()}.${extension}`;
     const uploaded = await supabase.storage.from("project-photos").upload(imagePath, imageFile, { contentType: imageFile.type, upsert: false });
     if (uploaded.error) return Response.json({ error: `Wattson could not store the image: ${uploaded.error.message}` }, { status: 400 });
+  }
+  const inventorySiteId = conversationSiteId ?? (systems.data ?? []).find((system) => system.id === parsed.data.projectId)?.site_id;
+  let inventoryCapture: InventoryPhotoCapture | undefined;
+  if (inventorySiteId && imagePath && imageBytes && imageFile) {
+    inventoryCapture = await captureSiteInventoryFromLabel({
+      supabase,
+      siteId: inventorySiteId,
+      imagePath,
+      imageBytes,
+      mimeType: imageFile.type,
+    });
   }
   let conversation = parsed.data.conversationId
     ? await supabase.from("user_conversations").select("id").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle()
@@ -224,6 +238,7 @@ export async function POST(request: Request) {
         userAssessment: profile.data.onboarding_assessment ?? {},
         userTimezone: profile.data.timezone,
         selectedSiteDiscovery: selectedSiteBrief ?? undefined,
+        inventoryLabelCapture: inventoryCapture,
         sites: (sites.data ?? []).map((site) => ({ ...site, unassignedEquipment: (siteEquipment.data ?? []).filter((item) => item.site_id === site.id && !item.assigned_project_id) })),
         connectedSiteSystems: connectedSystems,
         scope: "This dashboard context contains the user's complete recorded component, PV string, load, assumption and connection records across their systems. Use those records when answering. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update a structured record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If the system or target is unclear, ask one focused question instead of taking an action.",
@@ -488,6 +503,8 @@ export async function POST(request: Request) {
       message = result.actions.length
         ? "I couldn’t safely attach that change to a specific system. Tell me which system it belongs to."
         : "I didn’t produce a useful reply. Please send that once more.";
+    if (inventoryCapture?.saved)
+      message = `${message}\n\nI added ${inventoryCapture.equipmentName ?? "this equipment"} to this Site’s inventory from the label photo. I saved only visible label details and marked its physical condition as needing testing; you can review or correct the inventory record at any time.`;
     const existingProposedDesign = Boolean(
       activeSystem?.settings && typeof activeSystem.settings === "object" &&
       (activeSystem.settings as Record<string, unknown>).designCalculator,
@@ -499,7 +516,7 @@ export async function POST(request: Request) {
     const proposedDesignLink = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
       : undefined;
-    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, actionUrl: proposedDesignLink, actionLabel: proposedDesignLink ? "Open proposed design" : undefined } });
+    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, actionUrl: proposedDesignLink, actionLabel: proposedDesignLink ? "Open proposed design" : undefined } });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
     const proposedDesignUrl = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
@@ -510,6 +527,7 @@ export async function POST(request: Request) {
       actions: appliedActions,
       actionUrl: proposedDesignUrl,
       actionLabel: proposedDesignUrl ? "Open proposed design" : undefined,
+      inventoryEquipmentId: inventoryCapture?.equipmentId,
     });
   } catch (problem) {
     return Response.json({ error: problem instanceof Error ? problem.message : "Wattson is unavailable." }, { status: 502 });
