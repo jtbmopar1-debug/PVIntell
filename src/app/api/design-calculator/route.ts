@@ -6,6 +6,15 @@ const calculatorSchema = z.object({
   projectId: z.uuid(),
   design: z.object({
     proposedChecklist: z.record(z.string(), z.boolean()).optional(),
+    proposedAsBuiltDraft: z.object({
+      createdAt: z.string().datetime(),
+      architecture: z.enum(["combined_hybrid_inverter", "separate_solar_controller_and_inverter", "ac_coupled", "not_decided"]).optional(),
+      flow: z.array(z.string().max(100)).min(2).max(8),
+      nodes: z.array(z.object({ id: z.string().max(50), label: z.string().max(100), detail: z.string().max(200), image: z.string().max(200), x: finite, y: finite })).max(12).optional(),
+      connections: z.array(z.object({ from: z.string().max(50), to: z.string().max(50), label: z.string().max(100), kind: z.enum(["solar-dc", "battery-dc", "ac", "earth"]) })).max(20).optional(),
+      panelCount: finite.optional(), panelWatts: finite.optional(), batteryVoltage: finite.optional(),
+      batteryAh: finite.optional(), batteryQuantity: finite.optional(), inverterKw: finite.optional(),
+    }).optional(),
     architecture: z.enum(["combined_hybrid_inverter", "separate_solar_controller_and_inverter", "ac_coupled", "not_decided"]).optional(),
     designBasis: z.string().max(2000).optional(),
     startingStage: z.string().max(2000).optional(),

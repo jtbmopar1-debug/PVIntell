@@ -1133,6 +1133,7 @@ export function SystemSchematic({
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
             Select equipment to open its technical card. Select a connection label to inspect its cable, protection, isolation and routing record.
           </p>
+          {project.designCalculator?.proposedAsBuiltDraft && <p className="mt-3 max-w-3xl rounded-xl border border-[#8ab0d2] bg-[#f2f8fe] px-3 py-2 text-xs leading-5 text-[#143c63]"><strong>Planning draft available:</strong> the reviewed proposed schematic is saved as a reference. This as-built map still shows only equipment and connections you have confirmed.</p>}
           <p className="mt-2 text-xs font-semibold text-brand">
             Drag a card to arrange the system; it snaps to the grid when dropped. Drag its blue + handle onto another item to create a saved connection.
           </p>

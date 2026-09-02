@@ -2,11 +2,11 @@
 
 import {
   BookOpen,
-  Calculator,
+  ChevronDown,
+  ChevronRight,
   CircleGauge,
   ClipboardCheck,
   CloudSun,
-  Home,
   LayoutDashboard,
   MapPin,
   Menu,
@@ -14,8 +14,6 @@ import {
   Package,
   Settings2,
   Trash2,
-  Waypoints,
-  Wrench,
   X,
   Zap,
 } from "lucide-react";
@@ -23,6 +21,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { SolarWeather } from "@/components/solar-weather";
+import { UniversalHowToMenu } from "@/components/pvintell-workspace";
 import type { Site, SiteEquipment, SystemSummary } from "@/domain/models";
 
 function Logo() {
@@ -46,12 +45,7 @@ function Logo() {
 const systemNavigation = [
   ["equipment", "Site equipment", Package],
   ["weather", "Solar weather", CloudSun],
-  ["design", "Proposed design", Calculator],
-  ["system", "As-built overview", LayoutDashboard],
-  ["schematic", "As-built schematic", Waypoints],
-  ["build", "Build", Wrench],
-  ["commission", "Commission", ClipboardCheck],
-  ["monitor", "Monitor", CircleGauge],
+  ["system", "As-built record", LayoutDashboard],
 ] as const;
 
 export function SiteInventoryPage({
@@ -78,6 +72,7 @@ export function SiteInventoryPage({
   const [error, setError] = useState("");
   const [menu, setMenu] = useState(false);
   const [choosingView, setChoosingView] = useState<string>();
+  const [expandedSiteId, setExpandedSiteId] = useState(site.id);
   const available = equipment.filter((item) => !item.assignedProjectId);
   const assigned = equipment.length - available.length;
   const systemHref = (systemId: string, view: string) =>
@@ -154,9 +149,9 @@ export function SiteInventoryPage({
   }
 
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[226px_1fr]">
+    <div className="min-h-screen">
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[226px] flex-col overflow-y-auto border-r border-line bg-[#f8fafc] p-4 transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${menu ? "translate-x-0" : "-translate-x-full"}`}
+        className="hidden"
       >
         <div className="flex h-12 items-center justify-between px-2">
           <Logo />
@@ -169,14 +164,14 @@ export function SiteInventoryPage({
           className="mt-5 flex items-center gap-3 rounded-xl bg-[#f6c945] px-3 py-3 text-xs font-extrabold text-[#143c63]"
         >
           <Zap size={16} />
-          Start here<span className="ml-auto">›</span>
+          New independent Site<span className="ml-auto">›</span>
         </Link>
         <button
           onClick={() => router.push(`/sites/${site.id}/wattson`)}
           className="mt-2 flex items-center gap-3 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white"
         >
           <Zap size={16} />
-          Ask Wattson<span className="ml-auto">›</span>
+          Continue project<span className="ml-auto">›</span>
         </button>
         <div className="mt-5 rounded-2xl border border-line bg-white p-2">
           <div className="px-2 py-1">
@@ -184,13 +179,12 @@ export function SiteInventoryPage({
           </div>
           <div className="mt-2 space-y-1">
             {sites.map((item) => {
-              const className = `flex items-center gap-2 rounded-xl px-2.5 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`;
-              const content = <><MapPin size={12} /><span className="truncate">{item.name}</span></>;
+              const active = item.id === site.id;
+              const expanded = expandedSiteId === item.id;
+              const className = `flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[11px] font-bold ${active ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`;
               return <div key={item.id} className="space-y-0.5">
-                {weatherMode && item.id === site.id
-                  ? <div className={className}>{content}</div>
-                  : <Link prefetch={false} href={weatherMode ? `/sites/${item.id}/weather` : `/sites/${item.id}`} className={className}>{content}</Link>}
-                <Link href={`/sites/${item.id}/discovery`} className="ml-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold text-muted hover:bg-[#eaf2fb] hover:text-brand"><ClipboardCheck size={13}/>Review discovery</Link>
+                <button type="button" onClick={() => active ? setExpandedSiteId(expanded ? "" : item.id) : router.push(`/sites/${item.id}`)} className={className}><MapPin size={12}/><span className="min-w-0 flex-1 truncate">{item.name}</span>{expanded ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}</button>
+                {expanded && <div className="ml-4 space-y-0.5 border-l border-[#dbe5ef] pl-2"><Link href={`/sites/${item.id}`} className="flex rounded-lg px-2 py-1.5 text-[10px] font-bold text-muted hover:bg-[#eaf2fb] hover:text-brand">Project home</Link><Link href={`/sites/${item.id}/discovery`} className="flex rounded-lg px-2 py-1.5 text-[10px] font-bold text-muted hover:bg-[#eaf2fb] hover:text-brand">Discovery brief</Link>{active && <><Link href={`/sites/${item.id}/wattson`} className="flex rounded-lg px-2 py-1.5 text-[10px] font-bold text-muted hover:bg-[#eaf2fb] hover:text-brand">Continue with Wattson</Link>{systems.length === 1 ? <Link href={systemHref(systems[0].id, "design")} className="flex rounded-lg px-2 py-1.5 text-[10px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed design</Link> : <button onClick={() => openSystemView("design")} className="flex w-full rounded-lg px-2 py-1.5 text-left text-[10px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed design</button>}{systems.length === 1 ? <Link href={systemHref(systems[0].id, "build")} className="flex rounded-lg px-2 py-1.5 text-[10px] font-bold text-muted hover:bg-[#eaf2fb] hover:text-brand">Build record</Link> : <button onClick={() => openSystemView("build")} className="flex w-full rounded-lg px-2 py-1.5 text-left text-[10px] font-bold text-muted hover:bg-[#eaf2fb] hover:text-brand">Build record</button>}</>}</div>}
               </div>;
             })}
           </div>
@@ -201,15 +195,9 @@ export function SiteInventoryPage({
             className="flex items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"
           >
             <LayoutDashboard size={17} />
-            Dashboard
+            All sites
           </Link>
-          <Link
-            href={`/sites/${site.id}`}
-            className={`flex items-center gap-3 rounded-xl border-l-4 px-3 py-2.5 text-sm font-semibold ${weatherMode ? "border-transparent text-[#66758a] hover:bg-[#eef3f8]" : "border-[#f6c945] bg-[#fff6cf] text-[#143c63]"}`}
-          >
-            <Home size={17} />
-            Site overview
-          </Link>
+          <div className="px-3 pt-3 text-[10px] font-bold uppercase tracking-[.12em] text-[#7b8a9c]">Site tools</div>
           {systemNavigation.map(([view, label, Icon]) =>
             view === "weather" ? (
               weatherMode ? <div key={view} className="flex w-full items-center gap-3 rounded-xl border-l-4 border-[#f6c945] bg-[#fff6cf] px-3 py-2.5 text-left text-sm font-semibold text-[#143c63]"><Icon size={17}/>{label}</div> : <Link
@@ -241,27 +229,10 @@ export function SiteInventoryPage({
           </form>
         </div>
       </aside>
-      {menu && (
-        <button
-          className="fixed inset-0 z-30 bg-black/20 lg:hidden"
-          onClick={() => setMenu(false)}
-        />
-      )}
       <main className="min-w-0">
-        <header className="sticky top-0 z-20 flex h-[68px] items-center border-b border-line bg-[rgba(245,247,250,.9)] px-5 backdrop-blur-xl md:px-8">
-          <button className="mr-3 lg:hidden" onClick={() => setMenu(true)}>
-            <Menu size={21} />
-          </button>
-          <div>
-            <div className="font-display text-sm font-bold">{site.name}</div>
-            <div className="mt-0.5 text-[10px] text-muted">{site.location}</div>
-          </div>
-          <Link
-            href="/account"
-            className="ml-auto grid size-9 place-items-center rounded-xl border border-line bg-white text-muted"
-          >
-            <Settings2 size={16} />
-          </Link>
+        <header className="sticky top-0 z-50 border-b border-line bg-[rgba(248,250,252,.96)] backdrop-blur-xl">
+          <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-4 px-4 md:px-6"><Link href="/dashboard" className="shrink-0"><Logo/></Link><details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-36 truncate">{site.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div>{sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{item.name}</Link>)}<Link href="/discovery/new-system" className="mt-3 block rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]">New independent Site</Link></div></details><div className="min-w-0 flex-1"><div className="eyebrow text-[8px]">Site workspace</div><div className="mt-1 truncate text-xs font-extrabold">{site.name} <span className="font-medium text-muted">· {site.location}</span></div></div><Link href={`/sites/${site.id}/wattson`} className="hidden h-9 items-center gap-2 rounded-xl bg-brand px-4 text-[11px] font-bold text-white sm:flex"><Zap size={14}/>Ask Wattson</Link><UniversalHowToMenu location={site.location} onAsk={(guide) => { sessionStorage.setItem("pvintell:wattson-prompt", `Show me how to work with ${guide.title}. Explain what it is, what it does, where it connects, and guide me one simple step at a time.`); router.push(systems.length === 1 ? systemHref(systems[0].id, "wattson") : `/sites/${site.id}/wattson`); }}/><Link href="/account" className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted"><Settings2 size={16}/></Link></div>
+          <nav className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-4 py-2 md:px-6"><Link href="/dashboard" className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">All Sites</Link><Link href={`/sites/${site.id}`} className="rounded-xl bg-[#fff6cf] px-3 py-2 text-[11px] font-bold text-brand">Overview</Link><Link href={`/sites/${site.id}/discovery`} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery</Link><button type="button" onClick={() => openSystemView("design")} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Proposed design</button><button type="button" onClick={() => openSystemView("build")} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build</button><button type="button" onClick={() => openSystemView("system")} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Records</button><Link href={`/sites/${site.id}/weather`} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Solar weather</Link><form action="/auth/signout" method="post" className="ml-auto"><button className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Sign out</button></form></nav>
         </header>
         <div className="mx-auto max-w-[1220px] space-y-8 p-5 md:p-8">
           {weatherMode ? (
@@ -272,21 +243,38 @@ export function SiteInventoryPage({
                 <div>
                   <div className="eyebrow">Site overview</div>
                   <h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">
-                    Power systems at {site.name}
+                    {site.name} project workspace
                   </h1>
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-                    Each building or independent power setup gets its own
-                    system. Open Main House or Studio to see and edit the
-                    equipment installed in that system.
+                    This Site is one independent project. Discovery, the proposed design, Wattson’s guidance and the as-built record all stay together here.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <Link href={`/sites/${site.id}/wattson`} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold text-brand">
+                    <Zap size={15} />
+                    Continue project with Wattson
+                  </Link>
+                  <Link href={`/sites/${site.id}/discovery`} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold text-brand">
+                    <ClipboardCheck size={15} />
+                    Review discovery
+                  </Link>
                   <Link href="/discovery/new-system" className="flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white">
                     <Zap size={15} />
-                    Start here · new system
+                    Start a new independent Site
                   </Link>
                 </div>
               </div>
+              <section className="rounded-2xl border border-line bg-white p-5">
+                <div className="flex flex-col justify-between gap-3 md:flex-row md:items-end">
+                  <div><div className="eyebrow">Your project path</div><h2 className="mt-2 text-lg font-extrabold">Where you are: plan first, then build</h2><p className="mt-1 text-xs leading-5 text-muted">Keep this Site’s discovery, Wattson conversation, proposed design and as-built record together here.</p></div>
+                  <Link href={`/sites/${site.id}/wattson`} className="text-xs font-bold text-brand">Continue with Wattson →</Link>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                  <Link href={`/sites/${site.id}/discovery`} className="rounded-xl border border-line p-4 hover:border-[#7aa6d1]"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-brand">1 · Discovery</div><strong className="mt-2 block text-sm">Review your brief</strong><p className="mt-1 text-[10px] leading-4 text-muted">Confirm what this independent Site needs.</p></Link>
+                  {systems.length === 1 ? <Link href={systemHref(systems[0].id, "design")} className="rounded-xl border border-[#ecaaa0] bg-[#fff7f5] p-4 hover:border-[#d56e61]"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-[#b9412b]">2 · Proposed design</div><strong className="mt-2 block text-sm">See Wattson’s plan</strong><p className="mt-1 text-[10px] leading-4 text-muted">Proposed only — nothing here is installed.</p></Link> : <button onClick={() => openSystemView("design")} className="rounded-xl border border-[#ecaaa0] bg-[#fff7f5] p-4 text-left hover:border-[#d56e61]"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-[#b9412b]">2 · Proposed design</div><strong className="mt-2 block text-sm">See Wattson’s plan</strong><p className="mt-1 text-[10px] leading-4 text-muted">Choose the technical record for this proposal.</p></button>}
+                  {systems.length === 1 ? <Link href={systemHref(systems[0].id, "build")} className="rounded-xl border border-line p-4 hover:border-[#7aa6d1]"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-brand">3 · Build record</div><strong className="mt-2 block text-sm">Record what exists</strong><p className="mt-1 text-[10px] leading-4 text-muted">Only add equipment after it is actually selected or installed.</p></Link> : <button onClick={() => openSystemView("build")} className="rounded-xl border border-line p-4 text-left hover:border-[#7aa6d1]"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-brand">3 · Build record</div><strong className="mt-2 block text-sm">Record what exists</strong><p className="mt-1 text-[10px] leading-4 text-muted">Choose the technical record to open.</p></button>}
+                </div>
+              </section>
               {site.discoveryNeedsReview && <div className="rounded-2xl border border-[#f1ce71] bg-[#fff9df] p-4 text-sm leading-6 text-[#725800]">Site discovery has changed. Review this Site’s proposed system designs, requirements and schematic before continuing.</div>}
               {systems.length ? (
                 <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">

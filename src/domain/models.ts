@@ -117,6 +117,24 @@ export interface OverviewCardOrder {
 export interface DesignCalculatorState {
   /** Planning readiness only; never indicates that an item is installed. */
   proposedChecklist?: Record<string, boolean>;
+  /**
+   * A reviewed proposal retained as the starting point for the future as-built
+   * schematic. It is deliberately separate from installed components and
+   * connections, which must be confirmed by the user during the build.
+   */
+  proposedAsBuiltDraft?: {
+    createdAt: string;
+    architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
+    flow: string[];
+    nodes?: Array<{ id: string; label: string; detail: string; image: string; x: number; y: number }>;
+    connections?: Array<{ from: string; to: string; label: string; kind: "solar-dc" | "battery-dc" | "ac" | "earth" }>;
+    panelCount?: number;
+    panelWatts?: number;
+    batteryVoltage?: number;
+    batteryAh?: number;
+    batteryQuantity?: number;
+    inverterKw?: number;
+  };
   architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
   designBasis?: string;
   startingStage?: string;

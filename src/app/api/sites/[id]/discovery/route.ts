@@ -69,10 +69,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     conversation_id: conversation.data.id,
     role: "assistant",
     content: changed
-      ? "I’ve saved the updated Site discovery brief. The proposed designs at this Site are flagged for review; let’s work through what changed and what that affects."
-      : "I’ve saved this Site discovery brief. Let’s review the answers, fill any gaps, and turn them into the next design steps.",
+      ? "I’ve saved the updated Site discovery brief. I’m now revising the affected proposed design so you can see exactly what changed and what still needs checking."
+      : "Your Site discovery is complete. I’m now turning its confirmed answers into the first proposed system outline; nothing will be treated as purchased or installed.",
     structured_context: { kind: "site_discovery_review", siteId: id, affectedDesigns: changed ? systems.data.length : 0 },
   });
   if (handoff.error) return Response.json({ error: handoff.error.message }, { status: 400 });
-  return Response.json({ saved: true, affectedDesigns: changed ? systems.data.length : 0, reviewUrl: `/dashboard?site=${id}&conversation=${conversation.data.id}#wattson` });
+  return Response.json({ saved: true, affectedDesigns: changed ? systems.data.length : 0, reviewUrl: `/dashboard?site=${id}&conversation=${conversation.data.id}&start=proposal#wattson` });
 }

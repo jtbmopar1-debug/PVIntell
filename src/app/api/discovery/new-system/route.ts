@@ -51,6 +51,9 @@ function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
     ["cooking_energy", answers.cooking_energy],
     ["water_heating_energy", answers.water_heating_energy],
     ["space_heating_energy", answers.space_heating_energy],
+    ["pool_or_spa", answers.pool_or_spa],
+    ["pool_heating_method", answers.pool_heating_method],
+    ["pool_heating_profile", answers.pool_heating_profile],
     ["everyday_needs", answers.everyday_needs],
     ["heavy_or_surge_loads", answers.heavy_loads],
     ["building_type", answers.building_type],
@@ -65,6 +68,8 @@ function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
     ["structure_condition", structuredPanelAnswer(answers.structure_condition, "structure")],
     ["expected_expansion", answers.future_changes],
     ["delivery_approach", answers.delivery_approach],
+    ["module_level_electronics", answers.module_level_electronics],
+    ["module_electronics_compatibility", answers.module_electronics_compatibility],
   ];
   return mapped
     .filter(([, value]) => value !== undefined && value !== "" && value !== unknownAnswer)

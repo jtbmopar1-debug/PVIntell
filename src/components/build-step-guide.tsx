@@ -205,7 +205,7 @@ function RecordList({ project, components, arrays, connections }: { project: Pro
     ...arrays.map((item) => ({ id: item.id, label: item.name, detail: `${item.panelCount ?? "?"} × ${item.panelWatts ?? "?"} W panels`, href: `${base}/pv-strings/${item.id}` })),
     ...connections.map((item) => ({ id: item.id, label: item.name, detail: `${item.connectionType.toUpperCase()} connection`, href: `${base}/schematic` })),
   ];
-  if (!records.length) return <p className="mt-4 rounded-2xl border border-dashed border-line p-4 text-xs text-muted">No matching equipment or connection records yet. Add the actual items in System overview or System schematic first.</p>;
+  if (!records.length) return <p className="mt-4 rounded-2xl border border-dashed border-line p-4 text-xs text-muted">No matching equipment or connection records yet. Add the actual items in As-built overview or As-built schematic first.</p>;
   return <div className="mt-4 grid gap-2 md:grid-cols-2">{records.map((record) => <Link key={`${record.href}:${record.id}`} href={record.href} className="flex items-center gap-3 rounded-xl border border-line bg-white p-3 hover:border-[#79a9d1]"><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-[#eaf2fb] text-brand"><FileText size={14}/></span><span className="min-w-0"><strong className="block truncate text-xs">{record.label}</strong><span className="block truncate text-[10px] text-muted">{record.detail}</span></span><ChevronRight className="ml-auto shrink-0 text-brand" size={14}/></Link>)}</div>;
 }
 

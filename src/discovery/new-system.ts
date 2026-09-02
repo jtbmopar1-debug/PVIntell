@@ -27,6 +27,15 @@ function hasResidentialUse(answers: DiscoveryAnswers) {
   return values.some((value) => ["detached_house", "townhouse", "apartment", "cabin_mobile"].includes(String(value)));
 }
 
+function hasPoolUse(answers: DiscoveryAnswers) {
+  return answers.pool_or_spa === "existing" || answers.pool_or_spa === "planned";
+}
+
+function needsModuleElectronicsCompatibility(answers: DiscoveryAnswers) {
+  const choices = Array.isArray(answers.module_level_electronics) ? answers.module_level_electronics : [answers.module_level_electronics];
+  return choices.some((value) => ["optimisers", "microinverters", "compare", "existing_mixed"].includes(String(value)));
+}
+
 export const discoveryStages: Array<{ id: DiscoveryStage; label: string; description: string }> = [
   { id: "discovery", label: "Discovery", description: "What you want the system to achieve" },
   { id: "site", label: "Site", description: "The property and possible solar locations" },
@@ -195,6 +204,30 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ],
   },
   {
+    id: "pool_or_spa", stage: "needs", title: "Is there a pool or spa to run or heat?",
+    noviceHelp: "Pool circulation and pool heating are separate energy needs. Include an existing pool or one that is genuinely planned so Wattson can allow for pumps, heating and seasonal use.", type: "choice", options: [
+      { value: "existing", label: "Yes — existing pool or spa", description: "Include its current circulation, filtration and heating equipment." },
+      { value: "planned", label: "Planned for the future", description: "Keep capacity and expansion space available without treating it as a current load." },
+      { value: "none", label: "No pool or spa", description: "Do not include pool equipment in this Site's energy plan." },
+    ],
+  },
+  {
+    id: "pool_heating_method", stage: "needs", title: "How is the pool or spa heated?",
+    noviceHelp: "Choose every heat source being considered. Solar pool collectors heat water directly; a heat pump or electric heater becomes an electrical load; gas mainly adds circulation and control power.", type: "multi_choice", options: [
+      { value: "none", label: "No pool heating", description: "Only circulation, filtration, sanitation and controls need power." },
+      { value: "solar_thermal", label: "Solar pool-heating collectors", description: "Roof or ground collectors heat pool water directly through a circulation loop." },
+      { value: "heat_pump", label: "Pool heat pump", description: "Efficient electric heating, but often a substantial seasonal load with compressor startup demand." },
+      { value: "resistive_electric", label: "Electric resistance heater", description: "Direct electric heating with high power demand." },
+      { value: "gas", label: "Gas heater", description: "Heat comes mainly from gas; pumps, ignition and controls still use electricity." },
+      { value: "hybrid", label: "More than one method", description: "For example solar collectors with heat-pump or gas backup." },
+      { value: "undecided", label: "Not decided yet", description: "Wattson can compare the options using the pool, climate and operating season." },
+    ], showWhen: hasPoolUse,
+  },
+  {
+    id: "pool_heating_profile", stage: "needs", title: "What should Wattson know about the pool or spa?",
+    noviceHelp: "Add what you know: pool or spa, approximate volume or dimensions, target temperature, months used, whether it has a cover, circulation-pump details and how many hours it should run. Estimates can be corrected later.", technicalHelp: "Record water volume, exposed surface area, target temperature rise, heating season, cover use, circulation flow/head, pump rating and duty schedule where known.", type: "textarea", showWhen: hasPoolUse,
+  },
+  {
     id: "everyday_needs", stage: "needs", title: "What does this property need to power day-to-day?",
     noviceHelp: "Choose every regular load. Ratings and hours of use can be added later; this gives Wattson a proper starting load list.", type: "multi_choice", options: [
       { value: "lighting", label: "Lighting", description: "Indoor, outdoor or security lights." },
@@ -208,6 +241,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "security", label: "Security, cameras or gate", description: "Cameras, alarms, gates and communications." },
       { value: "medical", label: "Medical equipment", description: "Any essential health-related electrical equipment." },
       { value: "cooling", label: "Cooling or ventilation", description: "Fans, air conditioning or extraction." },
+      { value: "pool_circulation", label: "Pool or spa circulation", description: "Filtration, sanitation, circulation pumps and controls—not the heating energy itself." },
       { value: "none", label: "No regular loads yet", description: "The building is not yet in use or its loads are not defined." },
     ],
   },
@@ -243,6 +277,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "refrigeration", label: "Large refrigeration", description: "Chest freezer, cool room or commercial fridge." },
       { value: "heat_pump", label: "Heat pump or air conditioning", description: "Heating/cooling compressor load." },
       { value: "electric_water", label: "Electric water heating", description: "Cylinder, instant heater or heat-pump water heater." },
+      { value: "pool_heat_pump", label: "Pool or spa heat pump", description: "A seasonal compressor load that may run for many hours." },
       { value: "ev", label: "EV charging", description: "Vehicle charging now or later." },
       { value: "none", label: "None of these", description: "No known large or high-surge loads." },
     ],
@@ -253,6 +288,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "ev", label: "EV charging", description: "A vehicle charger at this Site." }, { value: "workshop", label: "More workshop tools", description: "Larger tools, motors or machinery." },
       { value: "water_pump", label: "Water or irrigation pump", description: "A future pump or water system." }, { value: "extra_dwelling", label: "Another dwelling or building", description: "A cabin, studio, shed or additional home." },
       { value: "electric_hot_water", label: "Electric hot water", description: "Changing or adding water heating." }, { value: "more_storage", label: "More battery storage", description: "Increasing reserve or self-use later." },
+      { value: "heated_pool", label: "Pool, spa or pool heating", description: "Future circulation, solar-thermal collectors, heat pump or another heating method." },
       { value: "more_pv", label: "More solar panels", description: "Expanding the array later." }, { value: "none", label: "Nothing planned yet", description: "Keep the design focused on current needs." },
     ],
   },
@@ -271,6 +307,21 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "modular", label: "Separate modular equipment", description: "Separate charging and inverter equipment that may be easier to expand or replace in parts." },
       { value: "ac_coupled", label: "AC-coupled equipment", description: "Often considered when integrating with an existing grid-connected solar system." },
     ],
+  },
+  {
+    id: "module_level_electronics", stage: "design", title: "Should Wattson consider panel-level optimisers or microinverters?",
+    noviceHelp: "These devices sit at or behind individual panels. They can help with some shaded or multi-direction roofs and panel-level monitoring, but add rooftop equipment, connectors, compatibility rules and replacement considerations.", type: "multi_choice", options: [
+      { value: "recommend", label: "Recommend after reviewing the Site", description: "Compare shading, roof directions, string limits, monitoring, local rules and service access first." },
+      { value: "none", label: "Standard string arrangement", description: "Panels connect in strings without separate electronics on every module." },
+      { value: "optimisers", label: "DC power optimisers", description: "Panel-level DC electronics feeding a compatible central/string inverter." },
+      { value: "microinverters", label: "Microinverters", description: "Panel-level inverters producing AC from each module or small module group." },
+      { value: "compare", label: "Compare all three", description: "Show the practical, electrical, monitoring, maintenance and cost trade-offs." },
+      { value: "existing_mixed", label: "Existing or mixed equipment", description: "Record exact brands/models before assuming anything is compatible." },
+    ], showWhen: includesSolarPanels,
+  },
+  {
+    id: "module_electronics_compatibility", stage: "design", title: "What equipment must the optimisers or microinverters work with?",
+    noviceHelp: "Add any panel, optimiser, microinverter or main-inverter make/model you already own or are considering. A label photo is useful. Wattson must check current, voltage, power, connector and string/branch limits before recommending that combination.", technicalHelp: "Record module Voc, Vmp, Isc and Imp; optimiser or microinverter maximum input voltage/current/Isc/power and output limits; inverter MPPT voltage range, maximum input current and maximum short-circuit current per MPPT; string/branch count and parallel inputs. Attach the manufacturer's compatibility evidence where available.", type: "textarea", showWhen: needsModuleElectronicsCompatibility,
   },
 ];
 
