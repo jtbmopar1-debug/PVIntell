@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" role="img" aria-labelledby="title description">
+  <title id="title">Solar panels connected in series compared with parallel strings</title>
+  <description id="description">The series example shows panel voltage adding while current stays the same. The parallel example shows string current adding while voltage stays the same.</description>
+  <rect width="1200" height="560" rx="30" fill="#f6f9fc"/>
+  <rect x="24" y="24" width="558" height="512" rx="24" fill="#fff" stroke="#bad0e4" stroke-width="3"/>
+  <rect x="618" y="24" width="558" height="512" rx="24" fill="#fff" stroke="#bad0e4" stroke-width="3"/>
+  <text x="54" y="72" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#0f3b66">SERIES — voltage adds</text>
+  <text x="648" y="72" font-family="Arial, sans-serif" font-size="28" font-weight="700" fill="#0f3b66">PARALLEL — current adds</text>
+  <g font-family="Arial, sans-serif" text-anchor="middle">
+    <g transform="translate(66 130)">
+      <g fill="#185f9f" stroke="#0f3b66" stroke-width="3">
+        <rect width="118" height="150" rx="10"/><rect x="166" width="118" height="150" rx="10"/><rect x="332" width="118" height="150" rx="10"/>
+      </g>
+      <g stroke="#dcecff" stroke-width="2">
+        <path d="M30 0v150M59 0v150M89 0v150M196 0v150M225 0v150M255 0v150M362 0v150M391 0v150M421 0v150"/>
+        <path d="M0 38h118M0 75h118M0 112h118M166 38h118M166 75h118M166 112h118M332 38h118M332 75h118M332 112h118"/>
+      </g>
+      <g font-size="18" font-weight="700">
+        <text x="12" y="176" fill="#d94141">+</text><text x="106" y="176" fill="#182733">−</text>
+        <text x="178" y="176" fill="#d94141">+</text><text x="272" y="176" fill="#182733">−</text>
+        <text x="344" y="176" fill="#d94141">+</text><text x="438" y="176" fill="#182733">−</text>
+      </g>
+      <g fill="none" stroke="#182733" stroke-width="6" stroke-linecap="round">
+        <path d="M106 184v28h72v-28M272 184v28h72v-28"/>
+      </g>
+      <path d="M12 184v78h-28" fill="none" stroke="#d94141" stroke-width="6" stroke-linecap="round"/>
+      <path d="M438 184v78h28" fill="none" stroke="#182733" stroke-width="6" stroke-linecap="round"/>
+    </g>
+    <text x="303" y="365" font-size="25" font-weight="700" fill="#173b5f">Panel voltages add together</text>
+    <text x="303" y="405" font-size="21" fill="#52657a">String current stays approximately one panel's current</text>
+    <rect x="91" y="448" width="424" height="52" rx="26" fill="#fff4ca"/>
+    <text x="303" y="482" font-size="19" font-weight="700" fill="#765918">Must fit the inverter or controller voltage window</text>
+
+    <g transform="translate(666 118)">
+      <g fill="#185f9f" stroke="#0f3b66" stroke-width="3">
+        <rect width="108" height="120" rx="9"/><rect y="145" width="108" height="120" rx="9"/><rect y="290" width="108" height="120" rx="9"/>
+      </g>
+      <g stroke="#dcecff" stroke-width="2">
+        <path d="M27 0v120M54 0v120M81 0v120M27 145v120M54 145v120M81 145v120M27 290v120M54 290v120M81 290v120"/>
+        <path d="M0 30h108M0 60h108M0 90h108M0 175h108M0 205h108M0 235h108M0 320h108M0 350h108M0 380h108"/>
+      </g>
+      <g fill="none" stroke-linecap="round" stroke-width="6">
+        <path d="M108 28h122M108 173h122M108 318h122M230 28v290h90" stroke="#d94141"/>
+        <path d="M108 92h82M108 237h82M108 382h82M190 92v290h130" stroke="#182733"/>
+      </g>
+      <g font-size="17" font-weight="700">
+        <text x="120" y="21" fill="#d94141">+</text><text x="120" y="86" fill="#182733">−</text>
+        <text x="120" y="166" fill="#d94141">+</text><text x="120" y="231" fill="#182733">−</text>
+        <text x="120" y="311" fill="#d94141">+</text><text x="120" y="376" fill="#182733">−</text>
+      </g>
+      <rect x="320" y="112" width="170" height="190" rx="18" fill="#eaf2fb" stroke="#8db4d8" stroke-width="3"/>
+      <text x="405" y="185" font-size="22" font-weight="700" fill="#0f3b66">Combiner or</text>
+      <text x="405" y="216" font-size="22" font-weight="700" fill="#0f3b66">multiple MPPT</text>
+      <text x="405" y="255" font-size="18" fill="#52657a">inputs</text>
+    </g>
+    <text x="897" y="365" font-size="25" font-weight="700" fill="#173b5f">String currents add together</text>
+    <text x="897" y="405" font-size="21" fill="#52657a">Each equal string stays at approximately the same voltage</text>
+    <rect x="686" y="448" width="422" height="52" rx="26" fill="#fff4ca"/>
+    <text x="897" y="482" font-size="19" font-weight="700" fill="#765918">May require string fuses and a rated combiner</text>
+  </g>
+</svg>
