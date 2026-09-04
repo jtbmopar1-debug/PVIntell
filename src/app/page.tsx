@@ -4,7 +4,20 @@ import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 
 export default async function Home() {
-  if (!getSupabaseConfig().configured) return <PVIntellWorkspace />;
+  if (!getSupabaseConfig().configured) {
+    if (process.env.NODE_ENV === "development") return <PVIntellWorkspace />;
+    return (
+      <main className="grid min-h-[100dvh] place-items-center bg-[#f3f6fa] p-6">
+        <section className="card max-w-md p-6 text-center">
+          <div className="eyebrow">Service configuration</div>
+          <h1 className="mt-2 font-display text-xl font-extrabold text-ink">PVIntell is not connected</h1>
+          <p className="mt-2 text-xs leading-5 text-muted">
+            The production data service is not configured for this deployment. No demonstration system has been loaded.
+          </p>
+        </section>
+      </main>
+    );
+  }
   const supabase=await createClient();
   const {data,error}=await supabase.auth.getClaims();
   const userId=typeof data?.claims?.sub==="string"?data.claims.sub:null;
