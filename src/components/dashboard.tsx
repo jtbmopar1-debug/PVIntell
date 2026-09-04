@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Bot, Calculator, ChevronDown, CircleGauge, ClipboardCheck, Cloud, CloudRain, CloudSun, Home, ImagePlus, LayoutDashboard, MapPin, Package, RotateCcw, Send, Settings2, Sparkles, Sun, Thermometer, Waypoints, Wind, Wrench, X, Zap } from "lucide-react";
+import { ArrowRight, Bot, Calculator, ChevronDown, CircleGauge, ClipboardCheck, Cloud, CloudRain, CloudSun, Home, ImagePlus, LayoutDashboard, MapPin, Menu as MenuIcon, Package, RotateCcw, Send, Settings2, Sparkles, Sun, Thermometer, Waypoints, Wind, Wrench, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -49,6 +49,7 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
   const [attachment, setAttachment] = useState<File>();
   const [sending, setSending] = useState(false);
   const [wattsonOpen, setWattsonOpen] = useState(autoStartProposal);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [choosingView, setChoosingView] = useState<string>();
   const proposalStarted = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -201,10 +202,13 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
             <div className="mt-0.5 text-[9px] font-semibold text-muted">{localDate}</div>
           </div>
           <button type="button" onClick={() => setWattsonOpen(true)} className="hidden h-9 items-center gap-2 rounded-xl bg-brand px-4 text-[11px] font-bold text-white sm:flex"><Bot size={14} /> Ask Wattson</button>
-          <Link href="/account" className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted" title={`Settings · ${email}`}><Settings2 size={16} /></Link>
+          <Link href="/account" className="hidden size-9 place-items-center rounded-xl border border-line bg-white text-muted md:grid" title={`Settings · ${email}`}><Settings2 size={16} /></Link>
+          <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>
+            {mobileMenuOpen ? <X size={17} /> : <MenuIcon size={18} />}
+          </button>
         </div>
 
-        <nav className="thin-scrollbar mx-auto flex max-w-[1440px] items-center gap-1 overflow-x-auto border-t border-line px-4 py-2 md:overflow-visible md:px-6">
+        <nav className="mx-auto hidden max-w-[1440px] items-center gap-1 border-t border-line px-6 py-2 md:flex">
           <Link href="/dashboard" className="shrink-0 rounded-xl bg-[#fff2b8] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link>
           <NavDropdown label="Plan">
             <MenuLink href="/discovery/new-system" icon={Sparkles} label="Start a new system" />
@@ -227,6 +231,34 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
           <Link href="/account" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Settings</Link>
           <form action="/auth/signout" method="post" className="ml-auto shrink-0"><button className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Sign out</button></form>
         </nav>
+        {mobileMenuOpen ? (
+          <nav className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-line bg-white p-3 md:hidden" aria-label="Mobile navigation">
+            <div className="grid gap-1">
+              <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#fff2b8] px-3 py-2.5 text-xs font-extrabold text-brand">Dashboard</Link>
+              <MobileNavGroup label="Plan">
+                <Link href="/discovery/new-system" className="mobile-nav-item">Start a new system</Link>
+                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); selectedSite ? router.push(`/sites/${selectedSite.id}`) : router.push("/discovery/new-system"); }}>Site overview</button>
+                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("design"); }}>Proposed design</button>
+              </MobileNavGroup>
+              <MobileNavGroup label="Build">
+                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("build"); }}>Build schedule</button>
+                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("commission"); }}>Commissioning</button>
+              </MobileNavGroup>
+              <MobileNavGroup label="Records">
+                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("equipment"); }}>Site equipment</button>
+                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("system"); }}>As-built overview</button>
+                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("schematic"); }}>System schematic</button>
+                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("monitor"); }}>Monitor</button>
+              </MobileNavGroup>
+              <button type="button" className="rounded-lg px-3 py-2.5 text-left text-xs font-bold text-muted" onClick={() => { setMobileMenuOpen(false); openSystemView("weather"); }}>Solar weather</button>
+              <div className="rounded-lg text-xs font-bold text-muted"><UniversalHowToMenu location={selectedSite?.location ?? profile.location} onAsk={askGuide} /></div>
+              <Link href="/glossary" onClick={() => setMobileMenuOpen(false)} className="rounded-lg px-3 py-2.5 text-xs font-bold text-muted">Glossary</Link>
+              <Link href="/account" onClick={() => setMobileMenuOpen(false)} className="rounded-lg px-3 py-2.5 text-xs font-bold text-muted">Settings</Link>
+              <button type="button" onClick={() => { setMobileMenuOpen(false); setWattsonOpen(true); }} className="rounded-lg bg-brand px-3 py-2.5 text-left text-xs font-bold text-white">Ask Wattson</button>
+              <form action="/auth/signout" method="post"><button className="w-full rounded-lg px-3 py-2.5 text-left text-xs font-bold text-muted">Sign out</button></form>
+            </div>
+          </nav>
+        ) : null}
       </header>
 
       <main className="mx-auto max-w-[1320px] space-y-4 p-4 pb-20 md:p-6 md:pb-20">
@@ -356,6 +388,10 @@ function Logo() {
 
 function NavDropdown({ label, children }: { label: string; children: ReactNode }) {
   return <details className="group relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">{label}<ChevronDown size={13} className="transition group-open:rotate-180" /></summary><div className="absolute left-0 top-10 z-50 w-60 rounded-2xl border border-line bg-white p-2 shadow-[0_18px_50px_rgba(9,37,61,.18)]">{children}</div></details>;
+}
+
+function MobileNavGroup({ label, children }: { label: string; children: ReactNode }) {
+  return <details className="group rounded-lg border border-line"><summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-xs font-bold text-muted">{label}<ChevronDown size={14} className="transition group-open:rotate-180" /></summary><div className="grid border-t border-line bg-[#f7f9fb] p-1.5">{children}</div></details>;
 }
 
 function MenuLink({ href, icon: Icon, label }: { href: string; icon: typeof Sun; label: string }) {

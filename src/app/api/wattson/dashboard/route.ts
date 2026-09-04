@@ -1,12 +1,10 @@
 import { z } from "zod";
 import { applyWattsonActions, type AppliedWattsonAction, type WattsonActionRequest } from "@/ai/actions";
 import { askGemini } from "@/ai/gemini";
-import { confirmedPrimaryOutcome, confirmedUtilityRelationship, discoveryGuidance, nextRequiredDiscoveryQuestion, userExpressesUncertainty, workspaceProjectType } from "@/ai/discovery";
+import { discoveryGuidance, nextRequiredDiscoveryQuestion, userExpressesUncertainty } from "@/ai/discovery";
 import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
-import { createSystem } from "@/data/cloud-project";
 import { newSystemQuestions } from "@/discovery/new-system";
-import { isNewSystemSetupIntent, startHereLabel, startHereMessage, startHereUrl } from "@/ai/new-system-intent";
 import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
 
 const schema = z.object({
@@ -15,11 +13,6 @@ const schema = z.object({
   siteId: z.uuid().optional(),
   conversationId: z.uuid().optional(),
 });
-const workspaceActionSchema = z.object({
-  place_name: z.string().trim().min(1).max(120),
-  system_name: z.string().trim().min(1).max(120),
-});
-
 const questionToDiscoveryKey: Record<string, string> = {
   panel_location: "proposed_panel_location",
   heavy_loads: "heavy_or_surge_loads",
@@ -118,7 +111,7 @@ function dashboardProject(location: string): Project {
     projectType: "off-grid",
     phase: "discover",
     location: location || "Location not set",
-    goal: "Run the next incomplete discovery step without assuming a system type or equipment.",
+    goal: "Answer the user's general question, using the selected Site and its recorded systems when that context is relevant.",
     priorities: [],
     systemVoltage: 0,
     autonomyDays: 2,
@@ -225,17 +218,6 @@ export async function POST(request: Request) {
   const recent = await supabase.from("user_chat_messages").select("role,content").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(12);
   const history = (recent.data ?? []).reverse();
   const prior = history.at(-1)?.content === userContent ? history.slice(0, -1) : history;
-  if (isNewSystemSetupIntent(parsed.data.message)) {
-    const message = startHereMessage();
-    const saved = await supabase.from("user_chat_messages").insert({
-      conversation_id: conversationId,
-      role: "assistant",
-      content: message,
-      structured_context: { kind: "start_here_handoff", actionUrl: startHereUrl, actionLabel: startHereLabel },
-    });
-    if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-    return Response.json({ message, actionUrl: startHereUrl, actionLabel: startHereLabel, actions: [] });
-  }
   try {
     const result = await askGemini({
       message: parsed.data.message,
@@ -248,58 +230,13 @@ export async function POST(request: Request) {
         inventoryLabelCapture: inventoryCapture,
         sites: (sites.data ?? []).map((site) => ({ ...site, unassignedEquipment: (siteEquipment.data ?? []).filter((item) => item.site_id === site.id && !item.assigned_project_id) })),
         connectedSiteSystems: connectedSystems,
-        scope: "This dashboard context contains the user's complete recorded component, PV string, load, assumption and connection records across their systems. Use those records when answering. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update a structured record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If the system or target is unclear, ask one focused question instead of taking an action.",
+        scope: "Dashboard Wattson is a general solar and electrical assistant with selected-Site awareness. Answer the user's actual question directly first, whether it is general, educational, comparative, diagnostic or specific to a recorded Site/system. Use the selected Site and its complete component, PV string, load, assumption and connection records when relevant, but do not force an unrelated Site context onto a general question. A hypothetical design question is not a request to create a system. Never start system discovery, create a workspace, or redirect to Start here from dashboard chat; the dedicated Start a new system flow owns that job. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update an existing system record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If a requested Site-specific action has an unclear target, ask one focused question instead of taking an action.",
       },
       image,
       allowActions: true,
     });
     const ownedSystemIds = new Set(systemIds);
     const appliedActions: AppliedWattsonAction[] = [];
-    const workspaceAction = result.actions.find((action) => action.name === "create_power_system_workspace");
-    const utilityRelationship = confirmedUtilityRelationship(prior, parsed.data.message);
-    const primaryOutcome = confirmedPrimaryOutcome(prior, parsed.data.message);
-    const workspaceReady = utilityRelationship === "off_grid" || (utilityRelationship === "grid_connected" && Boolean(primaryOutcome));
-    const prematureWorkspace = !systemIds.length && Boolean(workspaceAction) && !workspaceReady;
-    if (!systemIds.length && workspaceReady && utilityRelationship) {
-      const workspace = workspaceActionSchema.safeParse(workspaceAction?.arguments);
-      const placeName = workspace.success ? workspace.data.place_name : "Home";
-      const systemName = workspace.success ? workspace.data.system_name : "Home solar";
-      const existingSite = (sites.data ?? [])[0];
-      let siteId = existingSite?.id;
-      let createdSiteId: string | undefined;
-      if (!siteId) {
-        const createdSite = await supabase.from("sites").insert({
-          owner_id: userId,
-          name: placeName,
-          location: profile.data.home_location || null,
-          timezone: profile.data.timezone || "UTC",
-          location_source: "imported",
-          location_confirmed: false,
-        }).select("id").single();
-        if (createdSite.error) throw createdSite.error;
-        siteId = createdSite.data.id;
-        createdSiteId = siteId;
-      }
-      try {
-        const projectId = await createSystem(
-          supabase,
-          userId,
-          siteId,
-          systemName,
-          workspaceProjectType(utilityRelationship, primaryOutcome),
-          primaryOutcome ?? "Design a self-sufficient solar power system",
-        );
-        ownedSystemIds.add(projectId);
-        appliedActions.push({ type: "workspace_created", summary: `Created ${systemName} at ${placeName}` });
-        appliedActions.push(...(await applyWattsonActions(supabase, projectId, [
-          { name: "record_design_discovery", arguments: { key: "utility_relationship", value: utilityRelationship === "off_grid" ? "No public electricity supply" : "Connected to public electricity", confidence: "user_confirmed" } },
-          ...(primaryOutcome ? [{ name: "record_design_discovery", arguments: { key: "primary_outcome", value: primaryOutcome, confidence: "user_confirmed" } }] : []),
-        ])));
-      } catch (problem) {
-        if (createdSiteId) await supabase.from("sites").delete().eq("id", createdSiteId).eq("owner_id", userId);
-        throw problem;
-      }
-    }
     const actionsBySystem = new Map<string, WattsonActionRequest[]>();
     for (const action of result.actions) {
       const projectId = actionProjectId(action);
@@ -470,15 +407,6 @@ export async function POST(request: Request) {
       autonomousContinuation = continuation.message.trim() || undefined;
     }
     let message = autonomousContinuation ?? result.message.trim();
-    if (!systemIds.length && !utilityRelationship)
-      message = "Before I create the working design, is this house already connected to public electricity, or would solar need to supply all of its power without the grid?";
-    else if (!systemIds.length && utilityRelationship === "grid_connected" && !primaryOutcome)
-      message = "What matters most for this house: lowering electricity bills, keeping essential items running during outages, becoming less dependent on the grid, or a combination?";
-    if (prematureWorkspace)
-      message = utilityRelationship === "grid_connected"
-        ? "What matters most for this house: lowering electricity bills, keeping essential items running during outages, becoming less dependent on the grid, or a combination?"
-        : "Before I create the working design, is this house already connected to public electricity, or would solar need to supply all of its power without the grid?";
-    const createdWorkspace = appliedActions.find((action) => action.type === "workspace_created");
     const architectureReply = appliedActions.some((action) => action.type === "design_preference_updated")
       ? proposedArchitectureReply(result.actions)
       : null;
@@ -487,10 +415,6 @@ export async function POST(request: Request) {
         ? `I’ve added that to the design discovery notes. ${discoveryFollowup}`
         : "I’ve added that to the design discovery notes. The basic energy and site discovery is now complete."
       : null;
-    if (createdWorkspace)
-      message = utilityRelationship === "off_grid"
-        ? "I’ve opened a working design for this system, but I haven’t selected any equipment. What appliances, lights, pumps or tools must it be able to run?"
-        : "I’ve opened a working design for this system, but I haven’t selected any equipment. Do you have a recent electricity bill showing your monthly or annual kWh use? You can type the figure or attach a clear photo.";
     if (blockedArchitectureQuestion)
       message = `We’re still in discovery, so I haven’t added an inverter arrangement yet. ${blockedArchitectureQuestion}`;
     if (userUncertain && activeDiscovery)
@@ -513,7 +437,7 @@ export async function POST(request: Request) {
     );
     if (proposedDesignUpdated && (!message || /^done\s*[—-]/i.test(message)))
       message = "I’ve updated the proposed design only; nothing has been marked purchased or installed. I’m taking you to the Design Calculator now, where you can see the proposed arrangement, the evidence behind it, and the next item Wattson needs to validate.";
-    if (updateSummary && !createdWorkspace && !inferredNewBuilding && message !== architectureReply && message !== discoveryReply)
+    if (updateSummary && !inferredNewBuilding && message !== architectureReply && message !== discoveryReply)
       message = message
         ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`
         : `Done — ${updateSummary}.`;
