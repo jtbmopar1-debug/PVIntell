@@ -1,4 +1,4 @@
-const STATIC_CACHE = "pvintell-static-v1";
+const STATIC_CACHE = "pvintell-static-v2";
 
 self.addEventListener("install", () => self.skipWaiting());
 

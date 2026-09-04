@@ -38,10 +38,9 @@ export async function loginWithGoogle(formData:FormData) {
   const host=requestHeaders.get("x-forwarded-host")??requestHeaders.get("host")??"localhost:3000";
   const protocol=requestHeaders.get("x-forwarded-proto")??(host.startsWith("localhost")?"http":"https");
   const requestOrigin=`${protocol}://${host}`;
-  const origin=process.env.NODE_ENV==="development"?requestOrigin:(process.env.NEXT_PUBLIC_APP_URL??requestOrigin);
   const requestedNext=formData.get("next");
   const next=typeof requestedNext==="string"&&requestedNext.startsWith("/")&&!requestedNext.startsWith("//")?requestedNext:"/dashboard";
-  const callback=new URL("/auth/callback",origin);callback.searchParams.set("next",next);
+  const callback=new URL("/auth/callback",requestOrigin);callback.searchParams.set("next",next);
   const {data,error}=await supabase.auth.signInWithOAuth({provider:"google",options:{redirectTo:callback.toString()}});
   if(error)redirect(`/login?error=${encodeURIComponent(error.message)}`);
   if(data.url)redirect(data.url);

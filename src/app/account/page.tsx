@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { setPassword } from "./actions";
 import { PasswordField } from "@/components/password-field";
 import { MeasurementUnitsSettings } from "@/components/measurement-units-settings";
+import { PwaInstallCard } from "@/components/pwa-install-card";
 
 export default async function AccountPage({
   searchParams,
@@ -93,6 +94,7 @@ export default async function AccountPage({
             </div>
           </div>
         </section>
+        <PwaInstallCard />
         <MeasurementUnitsSettings />
       </div>
     </main>

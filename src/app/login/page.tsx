@@ -16,8 +16,8 @@ export default async function LoginPage({
   const notice = await searchParams;
   const creating = notice.mode === "signup";
   return (
-    <main className="grid min-h-screen bg-[#f5f7fa] lg:grid-cols-[1.05fr_.95fr]">
-      <section className="relative hidden overflow-hidden bg-[#0f3b66] p-14 text-white lg:flex lg:flex-col">
+    <main className="grid min-h-[100dvh] bg-[#f5f7fa] lg:grid-cols-[1.05fr_.95fr]">
+      <section className="relative hidden overflow-hidden bg-[#0f3b66] p-10 text-white lg:flex lg:flex-col">
         <div className="absolute -right-28 -top-28 size-[420px] rounded-full bg-[#f6c945]/15 blur-2xl" />
         <div className="relative flex items-center gap-3">
           <span className="grid size-10 place-items-center rounded-xl bg-[#f6c945] text-[#143c63]">
@@ -34,16 +34,16 @@ export default async function LoginPage({
           <div className="text-xs font-bold uppercase tracking-[.16em] text-[#f6c945]">
             Meet Wattson
           </div>
-          <h1 className="mt-5 font-display text-5xl font-extrabold leading-[1.08] tracking-[-.055em]">
+          <h1 className="mt-4 font-display text-4xl font-extrabold leading-[1.08] tracking-[-.05em]">
             Describe the life you want.
             <br />
             We’ll design the power.
           </h1>
-          <p className="mt-6 max-w-lg text-base leading-7 text-white/65">
+          <p className="mt-4 max-w-lg text-sm leading-6 text-white/65">
             From first idea to commissioning and daily diagnostics, Wattson
             keeps your system knowledge in one secure place.
           </p>
-          <div className="mt-10 grid grid-cols-2 gap-4">
+          <div className="mt-6 grid grid-cols-2 gap-3">
             <Feature
               icon={Sparkles}
               title="Beginner first"
@@ -61,9 +61,9 @@ export default async function LoginPage({
           Your projects are private by default.
         </div>
       </section>
-      <section className="flex items-center justify-center p-6 md:p-12">
-        <div className="w-full max-w-[430px]">
-          <div className="mb-9 lg:hidden">
+      <section className="flex items-center justify-center p-4 sm:p-6 md:p-8">
+        <div className="w-full max-w-[380px]">
+          <div className="mb-5 lg:hidden">
             <div className="flex items-center gap-3">
             <span className="grid size-10 place-items-center rounded-xl bg-[#f6c945] text-[#143c63]">
                 <Zap size={20} fill="currentColor" />
@@ -74,15 +74,15 @@ export default async function LoginPage({
           <div className="eyebrow">
             {creating ? "Create account" : "Welcome back"}
           </div>
-          <h2 className="mt-3 font-display text-3xl font-extrabold tracking-[-.045em]">
+          <h2 className="mt-2 font-display text-2xl font-extrabold tracking-[-.04em]">
             {creating ? "Start your power system" : "Sign in to PVIntell"}
           </h2>
-          <p className="mt-3 text-sm leading-6 text-muted">
+          <p className="mt-2 text-xs leading-5 text-muted">
             {creating
               ? "Create your account, then tell Wattson what you want to power."
               : "Continue designing, building, and monitoring your system."}
           </p>
-          <div className="mt-6 grid grid-cols-2 rounded-xl bg-[#e9eff5] p-1">
+          <div className="mt-4 grid grid-cols-2 rounded-lg bg-[#e9eff5] p-1">
             <Link
               href="/login"
               className={`rounded-lg py-2.5 text-center text-xs font-bold ${!creating ? "bg-white text-ink shadow-sm" : "text-muted"}`}
@@ -111,7 +111,7 @@ export default async function LoginPage({
                 notice.setup === "password" ? "/account?setup=password" : "/"
               }
             />
-            <button className="mt-5 flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[#ccd8e4] bg-white text-sm font-bold text-[#364a60] hover:border-[#9db4c9] hover:bg-[#fafcfe]">
+            <button className="mt-4 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#ccd8e4] bg-white text-xs font-bold text-[#364a60] hover:border-[#9db4c9] hover:bg-[#fafcfe]">
               <span className="grid size-6 place-items-center rounded-full border border-[#d8e0e8] font-bold text-[#4285f4]">
                 G
               </span>
@@ -120,13 +120,13 @@ export default async function LoginPage({
                 : "Continue with Google"}
             </button>
           </form>
-          <div className="my-5 flex items-center gap-3 text-[10px] uppercase tracking-wider text-muted">
+          <div className="my-4 flex items-center gap-3 text-[9px] uppercase tracking-wider text-muted">
             <span className="h-px flex-1 bg-line" />
             or use email
             <span className="h-px flex-1 bg-line" />
           </div>
           {creating ? <SignupForm /> : <LoginForm />}
-          <p className="mt-6 text-center text-[10px] leading-4 text-muted">
+          <p className="mt-4 text-center text-[9px] leading-4 text-muted">
             {creating
               ? "By creating an account, you agree to use PVIntell as guidance and to make your own informed decisions about the work you undertake."
               : "If you joined with Google, continue with Google. A Google account does not automatically create a PVIntell password."}
@@ -146,7 +146,7 @@ function LoginForm() {
         name="password"
         placeholder="Your password"
       />
-      <button className="h-12 w-full rounded-xl bg-brand text-sm font-bold text-white hover:bg-[#0f4c81]">
+      <button className="h-10 w-full rounded-lg bg-brand text-xs font-bold text-white hover:bg-[#0f4c81]">
         Sign in
       </button>
       <div className="text-center text-xs text-muted">
@@ -184,7 +184,7 @@ function SignupForm() {
         autoComplete="new-password"
         placeholder="Type your password again"
       />
-      <button className="h-12 w-full rounded-xl bg-brand text-sm font-bold text-white hover:bg-[#0f4c81]">
+      <button className="h-10 w-full rounded-lg bg-brand text-xs font-bold text-white hover:bg-[#0f4c81]">
         Create account
       </button>
       <div className="text-center text-xs text-muted">
@@ -213,7 +213,7 @@ function EmailField({
         type="email"
         autoComplete="email"
         required
-        className="mt-2 h-12 w-full rounded-xl border border-line bg-white px-4 font-normal outline-none focus:border-brand"
+        className="mt-1 h-10 w-full rounded-lg border border-line bg-white px-3 text-[11px] font-normal outline-none focus:border-brand"
         placeholder={placeholder}
       />
     </label>

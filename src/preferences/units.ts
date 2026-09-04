@@ -35,6 +35,18 @@ export const usUnitPreferences: UnitPreferences = {
 const storageKey = "pvintell:unit-preferences:v1";
 const changeEvent = "pvintell:unit-preferences-changed";
 
+function isUnitPreferences(value: unknown): value is UnitPreferences {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<UnitPreferences>;
+  return ["c", "f"].includes(candidate.temperature ?? "")
+    && ["ms", "kmh", "mph", "kn"].includes(candidate.windSpeed ?? "")
+    && ["mm", "in"].includes(candidate.rainfall ?? "")
+    && ["km", "mi"].includes(candidate.distance ?? "")
+    && ["metric", "us"].includes(candidate.dimensions ?? "")
+    && ["kg", "lb"].includes(candidate.weight ?? "")
+    && ["hpa", "inhg"].includes(candidate.pressure ?? "");
+}
+
 function readPreferences(): UnitPreferences {
   if (typeof window === "undefined") return metricUnitPreferences;
   try {
@@ -49,9 +61,20 @@ export function useUnitPreferences() {
   useEffect(() => {
     const sync = () => setPreferencesState(readPreferences());
     sync();
+    const controller = new AbortController();
+    void fetch("/api/account/preferences", { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : null)
+      .then((body) => {
+        if (!isUnitPreferences(body?.preferences)) return;
+        window.localStorage.setItem(storageKey, JSON.stringify(body.preferences));
+        setPreferencesState(body.preferences);
+        window.dispatchEvent(new Event(changeEvent));
+      })
+      .catch(() => undefined);
     window.addEventListener("storage", sync);
     window.addEventListener(changeEvent, sync);
     return () => {
+      controller.abort();
       window.removeEventListener("storage", sync);
       window.removeEventListener(changeEvent, sync);
     };
@@ -60,6 +83,11 @@ export function useUnitPreferences() {
     window.localStorage.setItem(storageKey, JSON.stringify(next));
     setPreferencesState(next);
     window.dispatchEvent(new Event(changeEvent));
+    void fetch("/api/account/preferences", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(next),
+    }).catch(() => undefined);
   }, []);
   const setUnit = useCallback(<Key extends keyof UnitPreferences>(key: Key, value: UnitPreferences[Key]) => {
     setPreferences({ ...readPreferences(), [key]: value });
