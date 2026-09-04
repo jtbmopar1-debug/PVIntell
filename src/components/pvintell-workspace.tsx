@@ -82,6 +82,7 @@ import { SolarWeather } from "@/components/solar-weather";
 import { SiteOverview } from "@/components/site-overview";
 import { SystemEquipmentOverview } from "@/components/system-equipment-overview";
 import { DesignCalculator, ProposedBuildSchematic } from "@/components/design-calculator";
+import type { SolarArrayForecastInput } from "@/weather/forecast";
 
 export type WorkspaceView =
   | "site"
@@ -107,6 +108,32 @@ type QuestionnaireDrafts = Record<
 >;
 const ai = new MockAIProvider();
 const store = new BrowserProjectStore();
+
+function useCloseFloatingMenus() {
+  useEffect(() => {
+    function closeOutside(event: PointerEvent) {
+      const target = event.target instanceof Element ? event.target : null;
+      document.querySelectorAll<HTMLDetailsElement>("header details").forEach((details) => {
+        if (!target || !details.contains(target)) details.open = false;
+      });
+    }
+    function closeAfterChoice(event: MouseEvent) {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target?.closest("header details") || target.closest("summary")) return;
+      if (target.closest("details")?.querySelector("#global-how-to-search")) return;
+      document.querySelectorAll<HTMLDetailsElement>("header details").forEach((details) => {
+        details.open = false;
+      });
+    }
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("click", closeAfterChoice);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("click", closeAfterChoice);
+    };
+  }, []);
+}
+
 const starts = [
   ["Off-grid home", "Power a home without relying on the grid", Home],
   [
@@ -190,10 +217,10 @@ function Heading({
   return (
     <div>
       <div className="eyebrow">{eyebrow}</div>
-      <h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">
+      <h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">
         {title}
       </h1>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
+      <p className="mt-1.5 max-w-2xl text-xs leading-5 text-muted">
         {description}
       </p>
     </div>
@@ -297,10 +324,11 @@ export function PVIntellWorkspace({
   email?: string;
   showGoogleWelcome?: boolean;
 }) {
+  useCloseFloatingMenus();
   const router = useRouter();
   const [project, setProject] = useState(initialProject);
   const [view, setView] = useState<View>(
-    initialView ?? (systemPage ? "system" : sitePage ? "site" : "wattson"),
+    initialView ?? (systemPage ? (initialProject.phase === "monitor" ? "monitor" : "system") : sitePage ? "site" : "wattson"),
   );
   const [messages, setMessages] = useState(initialMessages);
   const [input, setInput] = useState("");
@@ -327,6 +355,18 @@ export function PVIntellWorkspace({
       ) / 1000,
     [project.pvArrays],
   );
+  const installedSolarArrays = useMemo<SolarArrayForecastInput[]>(
+    () => project.pvArrays.flatMap((array) => {
+      const capacityKw = (array.panelWatts ?? 0) * (array.panelCount ?? 0) / 1000;
+      if (capacityKw <= 0) return [];
+      return [{
+        capacityKw,
+        azimuthDegrees: array.orientationDegrees ?? null,
+        tiltDegrees: array.tiltDegrees ?? null,
+      }];
+    }),
+    [project.pvArrays],
+  );
   const battery = useMemo(
     () =>
       sizeBattery({
@@ -347,6 +387,10 @@ export function PVIntellWorkspace({
       }),
     [],
   );
+  const monitorOnly = project.phase === "monitor";
+  useEffect(() => {
+    if (monitorOnly && ["setup", "design", "proposed-schematic", "build", "commission"].includes(view)) setView("monitor");
+  }, [monitorOnly, view]);
   function persist(p: Project) {
     setProject(p);
     if (cloud) {
@@ -693,8 +737,8 @@ export function PVIntellWorkspace({
           <nav className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-4 py-2 md:px-6">
             {cloud && <Link href="/dashboard" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Dashboard</Link>}
             <button type="button" onClick={() => setView("site")} className={`shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold ${view === "site" ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>Overview</button>
-            <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Plan ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery brief</Link><button type="button" onClick={() => setView("wattson")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Continue planning with Wattson</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed system outline</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed build schematic</Link> : <span className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#9aa8b6]">Proposed schematic · locked</span>}</div></details>
-            <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" disabled={!proposedSchematicReviewed} onClick={() => setView("build")} className={`block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold ${proposedSchematicReviewed ? "text-muted hover:bg-[#eef3f8]" : "cursor-not-allowed text-[#9aa8b6]"}`}>{proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning</button></div></details>
+            {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Plan ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery brief</Link><button type="button" onClick={() => setView("wattson")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Continue planning with Wattson</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed system outline</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed build schematic</Link> : <span className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#9aa8b6]">Proposed schematic · locked</span>}</div></details>}
+            {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" disabled={!proposedSchematicReviewed} onClick={() => setView("build")} className={`block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold ${proposedSchematicReviewed ? "text-muted hover:bg-[#eef3f8]" : "cursor-not-allowed text-[#9aa8b6]"}`}>{proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning</button></div></details>}
             <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Records ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" onClick={() => setView("system")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built overview</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built schematic</Link><button type="button" onClick={() => setView("equipment")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Site equipment</button></div></details>
             <button type="button" onClick={() => router.push(`/sites/${initialSite.id}/weather`)} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Solar weather</button>
             <button type="button" onClick={() => setView("monitor")} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Monitor</button>
@@ -722,7 +766,7 @@ export function PVIntellWorkspace({
             {cloud && <form action="/auth/signout" method="post" className="ml-auto"><button className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Sign out</button></form>}
           </nav>
         </header>
-        <div className="mx-auto max-w-[1320px] p-5 md:p-8">
+        <div className="mx-auto max-w-[1320px] p-4 md:p-6">
           {view === "site" && (
             <SiteOverview
               site={initialSite}
@@ -731,6 +775,7 @@ export function PVIntellWorkspace({
               components={project.components}
               equipment={initialSiteEquipment}
               solarArrayKw={installedSolarKw}
+              solarArrays={installedSolarArrays}
               onAddSystem={() => router.push("/discovery/new-system")}
               onOpenSystem={() => setView("system")}
               onOpenWeather={() =>
@@ -776,7 +821,7 @@ export function PVIntellWorkspace({
             />
           )}{" "}
           {view === "weather" && (
-            <SolarWeather site={initialSite} solarArrayKw={installedSolarKw} />
+            <SolarWeather site={initialSite} solarArrayKw={installedSolarKw} solarArrays={installedSolarArrays} />
           )}{" "}
           {view === "design" && <DesignCalculator project={project} site={initialSite} />}{" "}
           {view === "proposed-schematic" && <ProposedBuildSchematic project={project} />}{" "}
@@ -880,16 +925,16 @@ function Wattson({
   }, [messages.length, sending]);
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
       <section className="card overflow-hidden">
-        <div className="border-b border-line bg-[linear-gradient(125deg,#fafcfe_10%,#fff7d6)] px-6 py-7 md:px-8">
+        <div className="border-b border-line bg-[linear-gradient(125deg,#fafcfe_10%,#fff7d6)] px-5 py-5 md:px-6">
           <div className="flex gap-4">
             <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-brand text-white">
               <Bot size={23} />
             </span>
             <div>
               <div className="eyebrow">Wattson • your power guide</div>
-              <h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">
+              <h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">
                 What do you want to do?
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
@@ -924,7 +969,7 @@ function Wattson({
             </button>
           ))}
         </div>
-        <div ref={conversationRef} className="wattson-conversation thin-scrollbar space-y-5 overflow-y-auto p-6">
+        <div ref={conversationRef} className="wattson-conversation thin-scrollbar space-y-3 overflow-y-auto p-4 md:p-5">
           {messages.map((m: ChatMessage) => (
             <div
               key={m.id}
@@ -1582,11 +1627,11 @@ export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceH
     <details className="relative" onToggle={(event) => { if (!event.currentTarget.open) { setQuery(""); setSelectedSection(""); setSelectedId(""); setChatGuide(null); } }}>
       <summary className="cursor-pointer list-none rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]">How to ▾</summary>
       {selected ? <button type="button" aria-label="Close the open How-to guide" onClick={() => setSelectedId("")} className="fixed inset-0 z-[80] cursor-default bg-[#0d2238]/45 backdrop-blur-sm"/> : null}
-      <div className={selected ? "fixed left-1/2 top-1/2 z-[90] max-h-[82vh] w-[min(60rem,92vw)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-[0_30px_100px_rgba(9,37,61,.4)]" : `fixed left-1/2 top-28 z-50 max-h-[calc(100vh-8rem)] -translate-x-1/2 overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-2xl ${selectedSection ? "w-[min(42rem,92vw)]" : "w-[min(22rem,92vw)]"}`}>
-        <div className="sticky top-0 z-10 -mx-1 bg-white px-1 pb-4">
-          <label htmlFor="global-how-to-search" className="text-[10px] font-extrabold uppercase tracking-[.12em] text-[#52657a]">Search the complete How-to library</label>
-          <input id="global-how-to-search" type="search" value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value) setSelectedSection(""); }} placeholder="Panel mounts, MC4, battery, inverter..." className="mt-2 h-11 w-full rounded-xl border border-line bg-[#f8fafc] px-4 text-xs outline-none focus:border-brand" />
-          <p className="mt-2 text-[10px] text-muted">Choose a section, then choose the component or job you need.</p>
+      <div className={selected ? "fixed left-1/2 top-1/2 z-[90] max-h-[82vh] w-[min(60rem,92vw)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-[0_30px_100px_rgba(9,37,61,.4)]" : `fixed left-1/2 top-20 z-50 max-h-[min(34rem,calc(100vh-6rem))] -translate-x-1/2 overflow-y-auto rounded-xl border border-line bg-white p-2 shadow-2xl ${selectedSection ? "w-[min(24rem,calc(100vw-1rem))]" : "w-[min(15rem,calc(100vw-1rem))]"}`}>
+        <div className="sticky top-0 z-10 -mx-0.5 bg-white px-0.5 pb-2">
+          <label htmlFor="global-how-to-search" className="text-[9px] font-extrabold uppercase tracking-[.12em] text-[#52657a]">Search the How-to library</label>
+          <input id="global-how-to-search" type="search" value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value) setSelectedSection(""); }} placeholder="Panel mounts, MC4, battery..." className="mt-1.5 h-8 w-full rounded-lg border border-line bg-[#f8fafc] px-2.5 text-[10px] outline-none focus:border-brand" />
+          <p className="mt-1.5 text-[8px] text-muted">Hover or choose a section, then pick a guide.</p>
         </div>
         {selected ? (
           <section className="relative">
@@ -1599,20 +1644,20 @@ export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceH
             <div className="mt-5"><div className="eyebrow">{selected.group}</div><h2 className="mt-2 text-xl font-extrabold">{selected.title}</h2><p className="mt-2 text-xs leading-5 text-muted">{selected.summary}</p>{(selected.whatItIs || selected.whatItDoes) && <div className="mt-4 grid gap-3 sm:grid-cols-2">{selected.whatItIs && <div className="rounded-xl bg-[#eef5fc] p-4"><strong className="text-[11px]">What is this?</strong><p className="mt-2 text-[10px] leading-5 text-muted">{selected.whatItIs}</p></div>}{selected.whatItDoes && <div className="rounded-xl bg-[#fff8df] p-4"><strong className="text-[11px]">What does it do?</strong><p className="mt-2 text-[10px] leading-5 text-muted">{selected.whatItDoes}</p></div>}</div>}<HowToTypes guide={selected}/><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><HowToList title="What to buy" items={selected.buy}/><HowToList title="Tools" items={selected.tools}/><HowToList title="Before you start" items={selected.before}/></div><div className="mt-5"><h3 className="text-sm font-extrabold">Put it together</h3><ol className="mt-3 grid gap-2 sm:grid-cols-2">{selected.steps.map((step, index) => <li key={step} className="flex gap-3 rounded-xl bg-[#f4f7fa] p-3 text-[10px] leading-5"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-[9px] font-bold text-white">{index + 1}</span>{step}</li>)}</ol></div><div className="mt-4 grid gap-3 md:grid-cols-2"><HowToList title="Final checks" items={selected.checks}/><div className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3"><strong className="text-[11px] text-[#765918]">{localAuthority.label}</strong><p className="mt-2 text-[10px] leading-4 text-[#765918]">{localAuthority.note}</p>{localAuthority.url && <a href={localAuthority.url} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-[10px] font-bold underline">Open local authority guidance</a>}</div></div><div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-xl bg-brand px-4 text-[11px] font-bold text-white">Open the detailed manufacturer guide →</a> : <p className="text-[10px] font-bold text-[#765918]">{selected.source}</p>}<button type="button" onClick={() => setChatGuide(selected)} className="inline-flex h-10 items-center rounded-xl border border-line px-4 text-[11px] font-bold text-brand">Stuck? Ask Wattson about this guide</button></div>{selected.sourceUrl && <p className="mt-2 text-[9px] leading-4 text-muted">Source example: {selected.source}</p>}<div className="mt-6 border-t border-line pt-4"><button type="button" onClick={() => setSelectedId("")} className="inline-flex h-10 items-center gap-2 rounded-xl border border-line bg-white px-4 text-[11px] font-bold text-brand">← Back to {selectedSection || "How-to guides"}</button></div></div>
           </section>
         ) : search && visible.length ? (
-          <div><div className="mb-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">Matching sections</div><div className="space-y-1">{groups.map((group) => <button key={group} type="button" onClick={() => { setQuery(""); setSelectedSection(group); }} className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-3 text-left text-[11px] font-extrabold hover:bg-[#eef3f8]"><span>{group}</span><ChevronRight size={14} className="shrink-0 text-brand"/></button>)}</div></div>
+          <div><div className="mb-2 text-[9px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">Matching sections</div><div className="space-y-0.5">{groups.map((group) => <button key={group} type="button" onMouseEnter={() => setSelectedSection(group)} onFocus={() => setSelectedSection(group)} onClick={() => { setQuery(""); setSelectedSection(group); }} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[11px] font-extrabold hover:bg-[#eef3f8]"><span>{group}</span><ChevronRight size={13} className="shrink-0 text-brand"/></button>)}</div></div>
         ) : selectedSection ? (
-          <div className="grid gap-3 sm:grid-cols-[15rem_minmax(0,1fr)]">
-            <section className="sm:border-r sm:border-line sm:pr-4">
-              <div className="mb-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">How-to sections</div>
-              <div className="space-y-1">{groups.map((group) => <button key={group} type="button" onClick={() => { setSelectedSection(group); setSelectedId(""); }} className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-[11px] font-extrabold ${selectedSection === group ? "bg-[#fff4c5] text-brand" : "hover:bg-[#eef3f8]"}`}><span>{group}</span><ChevronRight size={14} className="shrink-0 text-brand"/></button>)}</div>
+          <div className="grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)]">
+            <section className="hidden sm:block sm:border-r sm:border-line sm:pr-2">
+              <div className="mb-1 text-[8px] font-extrabold uppercase tracking-[.1em] text-[#7b8a9c]">How-to sections</div>
+              <div>{groups.map((group) => <button key={group} type="button" onMouseEnter={() => { setSelectedSection(group); setSelectedId(""); }} onFocus={() => { setSelectedSection(group); setSelectedId(""); }} onClick={() => { setSelectedSection(group); setSelectedId(""); }} className={`flex w-full items-center justify-between gap-1 rounded-md px-1.5 py-1 text-left text-[8px] font-extrabold leading-3 ${selectedSection === group ? "bg-[#fff4c5] text-brand" : "hover:bg-[#eef3f8]"}`}><span>{group}</span><ChevronRight size={10} className="shrink-0 text-brand"/></button>)}</div>
             </section>
             <section>
-              <div className="mb-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">{selectedSection}</div>
-              <div className="space-y-1">{allHowToGuides.filter((guide) => howToSection(guide) === selectedSection).sort((left, right) => left.title.localeCompare(right.title)).map((guide) => <button key={guide.id} type="button" onClick={() => setSelectedId(guide.id)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-transparent px-3 py-3 text-left text-[11px] font-bold hover:border-line hover:bg-[#eef3f8]">{guide.title}<ChevronRight size={14} className="shrink-0 text-brand"/></button>)}</div>
+              <button type="button" onClick={() => setSelectedSection("")} className="mb-1 text-left text-[8px] font-extrabold uppercase tracking-[.1em] text-[#7b8a9c] sm:pointer-events-none">← {selectedSection}</button>
+              <div>{allHowToGuides.filter((guide) => howToSection(guide) === selectedSection).sort((left, right) => left.title.localeCompare(right.title)).map((guide) => <button key={guide.id} type="button" onClick={() => setSelectedId(guide.id)} className="flex w-full items-center justify-between gap-1 rounded-md border border-transparent px-1.5 py-1.5 text-left text-[8px] font-bold leading-3 hover:border-line hover:bg-[#eef3f8]">{guide.title}<ChevronRight size={10} className="shrink-0 text-brand"/></button>)}</div>
             </section>
           </div>
         ) : visible.length ? (
-          <div><div className="mb-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">How-to sections</div><div className="space-y-1">{groups.map((group) => <button key={group} type="button" onClick={() => setSelectedSection(group)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-transparent px-3 py-3 text-left text-[11px] font-extrabold hover:border-line hover:bg-[#eef3f8]"><span>{group}</span><span className="flex items-center gap-2 text-[9px] font-bold text-muted">{visible.filter((guide) => howToSection(guide) === group).length}<ChevronRight size={14} className="text-brand"/></span></button>)}</div></div>
+          <div><div className="mb-2 text-[9px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">How-to sections</div><div className="space-y-0.5">{groups.map((group) => <button key={group} type="button" onMouseEnter={() => setSelectedSection(group)} onFocus={() => setSelectedSection(group)} onClick={() => setSelectedSection(group)} className="flex w-full items-center justify-between gap-2 rounded-lg border border-transparent px-2.5 py-1.5 text-left text-[10px] font-extrabold hover:border-line hover:bg-[#eef3f8]"><span>{group}</span><span className="flex items-center gap-1.5 text-[8px] font-bold text-muted">{visible.filter((guide) => howToSection(guide) === group).length}<ChevronRight size={12} className="text-brand"/></span></button>)}</div></div>
         ) : <div className="rounded-xl bg-[#f4f7fa] p-5 text-center text-xs text-muted">No guide matches that search yet.</div>}
       </div>
       {chatGuide ? <GuideWattsonChat guide={chatGuide} onAsk={onAsk} onClose={() => setChatGuide(null)}/> : null}

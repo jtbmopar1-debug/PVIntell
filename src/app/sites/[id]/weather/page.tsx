@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { SiteInventoryPage } from "@/components/site-inventory-page";
 import { loadSiteInventory } from "@/data/cloud-project";
 import { createClient } from "@/lib/supabase/server";
+import type { SolarArrayForecastInput } from "@/weather/forecast";
 
 export default async function SiteWeatherPage({
   params,
@@ -23,19 +24,23 @@ export default async function SiteWeatherPage({
 
   const systemIds = workspace.systems.map((system) => system.id);
   let solarArrayKw = 0;
+  let solarArrays: SolarArrayForecastInput[] = [];
   if (systemIds.length) {
     const arrays = await supabase
       .from("pv_arrays")
-      .select("panel_watts,panel_count")
+      .select("panel_watts,panel_count,orientation_degrees,tilt_degrees")
       .in("project_id", systemIds);
     if (arrays.error) throw arrays.error;
-    solarArrayKw =
-      (arrays.data ?? []).reduce(
-        (total, array) =>
-          total +
-          Number(array.panel_watts ?? 0) * Number(array.panel_count ?? 0),
-        0,
-      ) / 1000;
+    solarArrays = (arrays.data ?? []).flatMap((array) => {
+      const capacityKw = Number(array.panel_watts ?? 0) * Number(array.panel_count ?? 0) / 1000;
+      if (capacityKw <= 0) return [];
+      return [{
+        capacityKw,
+        azimuthDegrees: array.orientation_degrees == null ? null : Number(array.orientation_degrees),
+        tiltDegrees: array.tilt_degrees == null ? null : Number(array.tilt_degrees),
+      }];
+    });
+    solarArrayKw = solarArrays.reduce((total, array) => total + array.capacityKw, 0);
   }
 
   return (
@@ -51,6 +56,7 @@ export default async function SiteWeatherPage({
       }
       weatherMode
       solarArrayKw={solarArrayKw}
+      solarArrays={solarArrays}
     />
   );
 }

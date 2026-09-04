@@ -9,13 +9,39 @@ import { allHowToGuides, UniversalHowToMenu } from "@/components/pvintell-worksp
 import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { formatRainfall, formatTemperature, formatWindSpeed, useUnitPreferences } from "@/preferences/units";
-import { fiveDaySolarOutlook, latestForecastHour } from "@/weather/forecast";
+import { fiveDaySolarOutlook, latestForecastHour, type SolarArrayForecastInput } from "@/weather/forecast";
 import { useForecastNow, useSolarWeather } from "@/weather/use-solar-weather";
 
 type Profile = { displayName: string; location: string; timezone: string; assessment: OnboardingAnswers };
-type DashboardProps = { profile: Profile; sites: Site[]; systems: SystemSummary[]; solarBySite: Record<string, number>; initialMessages: ChatMessage[]; conversationId?: string; initialSiteId?: string; autoStartProposal?: boolean; email: string };
+type DashboardProps = { profile: Profile; sites: Site[]; systems: SystemSummary[]; solarBySite: Record<string, number>; solarArraysBySite?: Record<string, SolarArrayForecastInput[]>; initialMessages: ChatMessage[]; conversationId?: string; initialSiteId?: string; autoStartProposal?: boolean; email: string };
 
-export function Dashboard({ profile, sites, systems, solarBySite, initialMessages, conversationId, initialSiteId, autoStartProposal = false, email }: DashboardProps) {
+function useCloseFloatingMenus() {
+  useEffect(() => {
+    function closeOutside(event: PointerEvent) {
+      const target = event.target instanceof Element ? event.target : null;
+      document.querySelectorAll<HTMLDetailsElement>("header details").forEach((details) => {
+        if (!target || !details.contains(target)) details.open = false;
+      });
+    }
+    function closeAfterChoice(event: MouseEvent) {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target?.closest("header details") || target.closest("summary")) return;
+      if (target.closest("details")?.querySelector("#global-how-to-search")) return;
+      document.querySelectorAll<HTMLDetailsElement>("header details").forEach((details) => {
+        details.open = false;
+      });
+    }
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("click", closeAfterChoice);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("click", closeAfterChoice);
+    };
+  }, []);
+}
+
+export function Dashboard({ profile, sites, systems, solarBySite, solarArraysBySite = {}, initialMessages, conversationId, initialSiteId, autoStartProposal = false, email }: DashboardProps) {
+  useCloseFloatingMenus();
   const router = useRouter();
   const [siteId, setSiteId] = useState(initialSiteId && sites.some((site) => site.id === initialSiteId) ? initialSiteId : sites[0]?.id ?? "");
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -28,6 +54,8 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const selectedSite = sites.find((site) => site.id === siteId);
   const siteSystems = systems.filter((system) => system.siteId === siteId);
+  const selectedSolarArrays = selectedSite ? solarArraysBySite[selectedSite.id] ?? [] : [];
+  const selectedSolarKw = selectedSite ? solarBySite[selectedSite.id] ?? 0 : 0;
   const weather = useSolarWeather(selectedSite ?? { id: "none", name: "", location: "", timezone: profile.timezone, locationSource: "manual", locationConfirmed: false });
   const forecastNow = useForecastNow();
   const { preferences: units } = useUnitPreferences();
@@ -35,7 +63,13 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
   const today = useMemo(() => {
     if (!selectedSite || !weather.data) return undefined;
     const timezone = weather.data.site.timezone || selectedSite.timezone;
-    const summary = fiveDaySolarOutlook(weather.data.hours, timezone, solarBySite[selectedSite.id] ?? 0, forecastNow)[0];
+    const summary = fiveDaySolarOutlook(
+      weather.data.hours,
+      timezone,
+      selectedSolarArrays.length ? selectedSolarArrays : selectedSolarKw,
+      forecastNow,
+      { latitude: selectedSite.latitude, longitude: selectedSite.longitude, timezone },
+    )[0];
     if (!summary) return undefined;
     return {
       expected: summary.expectedKwh,
@@ -44,9 +78,10 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
       current: latestForecastHour(summary.hours, forecastNow),
       rain: summary.rainMm,
       maxWind: summary.maxWind,
+      forecastBasis: summary.forecastBasis,
       fetchedAt: weather.data.fetchedAt,
     };
-  }, [forecastNow, selectedSite, solarBySite, weather.data]);
+  }, [forecastNow, selectedSite, selectedSolarArrays, selectedSolarKw, weather.data]);
 
   const nextSteps = useMemo(() => {
     const goals = profile.assessment.goals ?? [];
@@ -194,18 +229,18 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
         </nav>
       </header>
 
-      <main className="mx-auto max-w-[1320px] space-y-6 p-4 pb-28 md:p-8 md:pb-28">
+      <main className="mx-auto max-w-[1320px] space-y-4 p-4 pb-20 md:p-6 md:pb-20">
         <section
-          className="relative min-h-[290px] overflow-hidden rounded-[28px] bg-[#174d77] bg-cover bg-center shadow-[0_22px_60px_rgba(16,50,78,.2)]"
+          className="relative min-h-[220px] overflow-hidden rounded-2xl bg-[#174d77] bg-cover bg-center shadow-[0_14px_36px_rgba(16,50,78,.18)]"
           style={{ backgroundImage: "linear-gradient(90deg, rgba(8,39,67,.94) 0%, rgba(10,55,88,.78) 45%, rgba(10,55,88,.08) 100%), url('/backgrounds/haniaipics-ai-generated-8886042_1920.jpg')" }}
         >
-          <div className="relative z-10 flex min-h-[290px] max-w-3xl flex-col justify-between p-6 text-white md:p-9">
+          <div className="relative z-10 flex min-h-[220px] max-w-3xl flex-col justify-between p-5 text-white md:p-6">
             <div>
               <div className="text-[10px] font-extrabold uppercase tracking-[.2em] text-[#ffe07b]">Today at {selectedSite?.name ?? "PVIntell"}</div>
-              <h1 className="mt-3 max-w-xl font-display text-3xl font-extrabold tracking-[-.05em] md:text-[44px]">Good to see you{profile.displayName ? `, ${profile.displayName}` : ""}.</h1>
-              <p className="mt-3 max-w-xl text-sm leading-6 text-white/80">Your weather, solar outlook and next useful actions—without digging through the rest of the system.</p>
+              <h1 className="mt-2 max-w-xl font-display text-2xl font-extrabold tracking-[-.045em] md:text-[34px]">Good to see you{profile.displayName ? `, ${profile.displayName}` : ""}.</h1>
+              <p className="mt-2 max-w-xl text-xs leading-5 text-white/80">Your weather, solar outlook and next useful actions—without digging through the rest of the system.</p>
             </div>
-            <div className="mt-7 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-1.5">
               <WeatherPill icon={Sun} label={today?.current?.irradiance != null ? `${Math.round(today.current.irradiance)} W/m² now` : "Solar data pending"} />
               <WeatherPill icon={Thermometer} label={today?.current?.temperature != null ? `${formatTemperature(today.current.temperature, units)} now` : "Temperature pending"} />
               <WeatherPill icon={Cloud} label={today?.current?.cloudCover != null ? `${Math.round(today.current.cloudCover)}% cloud` : "Cloud data pending"} />
@@ -222,7 +257,7 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
             {selectedSite ? <button onClick={() => openSystemView("weather")} className="shrink-0 text-[11px] font-bold text-brand">Full forecast →</button> : null}
           </div>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-            <Metric icon={Sun} label="Expected solar today" value={selectedSite ? today ? `${today.expected.toFixed(1)} kWh` : weather.loading ? "Loading…" : "—" : "No site"} detail={selectedSite && today ? `${today.remaining.toFixed(1)} kWh forecast still available` : selectedSite ? `${(solarBySite[selectedSite.id] ?? 0).toFixed(1)} kW of recorded panels` : "Add a site to begin"} />
+            <Metric icon={Sun} label="Expected solar today" value={selectedSite ? today ? `${today.expected.toFixed(1)} kWh` : weather.loading ? "Loading…" : "—" : "No site"} detail={selectedSite && today ? `${today.remaining.toFixed(1)} kWh still available · ${today.forecastBasis === "array-geometry" ? "using panel angle" : "basic estimate"}` : selectedSite ? `${selectedSolarKw.toFixed(1)} kW of recorded panels` : "Add a site to begin"} />
             <Metric icon={CloudSun} label="Best solar hour" value={today?.peak ? new Intl.DateTimeFormat(undefined, { hour: "numeric", timeZone: selectedSite?.timezone }).format(new Date(today.peak.time)) : "—"} detail={today?.peak ? `${Math.round(today.peak.irradiance ?? 0)} W/m² forecast` : "Waiting for site weather"} />
             <Metric icon={Thermometer} label="Temperature now" value={today?.current?.temperature != null ? formatTemperature(today.current.temperature, units) : "—"} detail={today?.current?.cloudCover != null ? `${Math.round(today.current.cloudCover)}% cloud cover` : "Current local conditions"} />
             <Metric icon={CloudRain} label="Rain today" value={today ? formatRainfall(today.rain, units) : "—"} detail={today ? `Wind up to ${formatWindSpeed(today.maxWind, units)}` : "Daily forecast total"} />
@@ -230,8 +265,8 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
           </div>
         </section>
 
-        <div className="grid gap-6 lg:grid-cols-[1.2fr_.8fr]">
-          <section className="card p-5 md:p-6">
+        <div className="grid gap-4 lg:grid-cols-[1.2fr_.8fr]">
+          <section className="card p-4 md:p-5">
             <div className="flex items-center justify-between gap-3">
               <div><div className="eyebrow">Continue where it matters</div><h2 className="mt-2 font-display text-xl font-extrabold">Recommended next</h2></div>
               <span className="grid size-10 place-items-center rounded-2xl bg-[#fff2b8] text-brand"><ArrowRight size={17} /></span>
@@ -246,7 +281,7 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
             </div>
           </section>
 
-          <section className="card p-5 md:p-6">
+          <section className="card p-4 md:p-5">
             <div className="eyebrow">Selected site</div>
             {selectedSite ? (
               <>
@@ -255,7 +290,7 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
                   <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-[#eaf2fb] text-brand"><MapPin size={17} /></span>
                 </div>
                 <div className="mt-5 grid grid-cols-2 gap-3 text-[10px]">
-                  <div className="rounded-xl bg-[#f2f6f9] p-3"><span className="text-muted">Recorded PV</span><strong className="mt-1 block text-sm">{(solarBySite[selectedSite.id] ?? 0).toFixed(1)} kW</strong></div>
+                  <div className="rounded-xl bg-[#f2f6f9] p-3"><span className="text-muted">Recorded PV</span><strong className="mt-1 block text-sm">{selectedSolarKw.toFixed(1)} kW</strong></div>
                   <div className="rounded-xl bg-[#f2f6f9] p-3"><span className="text-muted">Systems</span><strong className="mt-1 block text-sm">{siteSystems.length}</strong></div>
                 </div>
                 <p className="mt-4 text-[10px] text-muted">Weather updated {today?.fetchedAt ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: selectedSite.timezone, timeZoneName: "short" }).format(new Date(today.fetchedAt)) : "—"}</p>
@@ -274,7 +309,7 @@ export function Dashboard({ profile, sites, systems, solarBySite, initialMessage
           {messages.length ? <span className="grid size-5 place-items-center rounded-full bg-[#f6c945] text-[9px] text-brand">{messages.length}</span> : null}
         </button>
       ) : (
-        <section id="wattson" className="fixed bottom-4 right-4 z-50 flex h-[min(680px,calc(100vh-2rem))] w-[min(440px,calc(100vw-2rem))] flex-col overflow-hidden rounded-[24px] border border-[#b9cad9] bg-white shadow-[0_26px_80px_rgba(9,37,61,.3)]">
+        <section id="wattson" className="fixed bottom-3 right-3 z-50 flex h-[min(520px,calc(100vh-1.5rem))] w-[min(380px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-[#b9cad9] bg-white shadow-[0_18px_50px_rgba(9,37,61,.26)]">
           <div className="flex items-center gap-3 border-b border-line bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)] p-4">
             <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-brand text-white"><Bot size={19} /></span>
             <div className="min-w-0 flex-1"><div className="eyebrow">Wattson</div><h2 className="mt-1 truncate text-sm font-extrabold">{selectedSite ? selectedSite.name : "Your solar guide"}</h2></div>
@@ -336,5 +371,5 @@ function WeatherPill({ icon: Icon, label }: { icon: typeof Sun; label: string })
 }
 
 function Metric({ icon: Icon, label, value, detail }: { icon: typeof Sun; label: string; value: string; detail: string }) {
-  return <div className="card flex min-h-32 flex-col justify-between p-4"><div className="flex justify-between gap-3"><span className="text-[11px] font-semibold text-muted">{label}</span><span className="grid size-8 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Icon size={16} /></span></div><div className="mt-4"><div className="font-display text-2xl font-extrabold tracking-[-.045em]">{value}</div><div className="mt-1 text-[10px] leading-4 text-muted">{detail}</div></div></div>;
+  return <div className="card flex min-h-24 flex-col justify-between p-3"><div className="flex justify-between gap-2"><span className="text-[10px] font-semibold text-muted">{label}</span><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-[#eaf2fb] text-brand"><Icon size={14} /></span></div><div className="mt-2"><div className="font-display text-xl font-extrabold tracking-[-.04em]">{value}</div><div className="mt-0.5 text-[9px] leading-3 text-muted">{detail}</div></div></div>;
 }

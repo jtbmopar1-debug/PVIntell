@@ -229,7 +229,7 @@ export function BuildStepGuide({ project, site, step, position }: { project: Pro
     finally { setSaving(false); }
   }
 
-  return <main className="min-h-screen bg-[#f4f7fa] text-ink"><div className="mx-auto max-w-6xl space-y-6 p-5 md:p-8">
+  return <main className="min-h-screen bg-[#f4f7fa] text-ink"><div className="mx-auto max-w-6xl space-y-4 p-4 md:p-6">
     <Link href={`${base}?view=build`} className="inline-flex items-center gap-2 text-xs font-bold text-brand"><ArrowLeft size={14}/>Back to Build</Link>
     <section className="card p-6 md:p-8"><div className="flex flex-col justify-between gap-5 md:flex-row md:items-start"><div><div className="eyebrow">Build module {position} of {project.installationSteps.length}</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.045em] md:text-[40px]">{stepTitle(step.title)}</h1><p className="mt-3 max-w-3xl text-sm leading-6 text-muted">{stepDescription(step.title, step.description)}</p><p className="mt-2 text-xs text-muted">Prepared for <strong>{project.name}</strong> at {site.name} · {site.location}</p></div><button onClick={() => void toggleComplete()} disabled={saving} className={`flex h-11 shrink-0 items-center gap-2 rounded-xl px-5 text-xs font-bold ${complete ? "bg-[#dff3e8] text-[#16613a]" : "bg-brand text-white"} disabled:opacity-50`}><Check size={15}/>{complete ? "Completed" : saving ? "Saving…" : "Mark module complete"}</button></div>{message && <p className="mt-3 text-xs font-bold text-brand">{message}</p>}</section>
 

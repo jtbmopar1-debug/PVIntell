@@ -83,8 +83,8 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     void save(nextDesign);
   }
 
-  return <div className="animate-rise space-y-6">
-    <div><div className="eyebrow">Stage 2 · proposed outline</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} proposed system outline</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Review the four main parts Wattson is proposing. Nothing here is purchased or installed.</p>{status && <p className="mt-2 text-[10px] font-bold text-brand">{status}</p>}</div>
+  return <div className="animate-rise space-y-4">
+    <div><div className="eyebrow">Stage 2 · proposed outline</div><h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">{project.name} proposed system outline</h1><p className="mt-1.5 max-w-3xl text-xs leading-5 text-muted">Review the four main parts Wattson is proposing. Nothing here is purchased or installed.</p>{status && <p className="mt-1.5 text-[9px] font-bold text-brand">{status}</p>}</div>
 
     <ProposedPlan project={project} design={design} onToggle={toggleProposedItem}/>
 

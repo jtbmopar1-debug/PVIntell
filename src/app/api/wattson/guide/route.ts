@@ -83,11 +83,14 @@ ${JSON.stringify(guide)}
 Available How-to guides for cross-references only:
 ${JSON.stringify(guideIndex)}
 
-Answer only about this guide's subject and components directly connected to, carried by, protecting, feeding or controlled by it. A related term is in scope when understanding it helps the user understand this guide—for example, a conduit guide may explain a series-connected PV cable routed through that conduit. Explain the related item and its relationship. When the guide index contains a useful deeper guide, name its exact title so the user can search for it; do not invent a guide title. Do not start system discovery, change the design, invoke actions or turn the answer into a full project chat. Use plain language, identify what the item looks like when useful, and keep safety advice specific to the question.
+Answer only about this guide's subject and components directly connected to, carried by, protecting, feeding or controlled by it. A related term is in scope when understanding it helps the user understand this guide—for example, a conduit guide may explain a series-connected PV cable routed through that conduit. Explain the related item and its relationship. Do not append another guide, a different technology, an alternative project or an unsolicited next step. Mention another How-to title only when the user explicitly asks for alternatives, comparisons, related guides or what to do next; use its exact title and never invent one. End immediately once the user's question has been answered. Do not start system discovery, change the design, invoke actions or turn the answer into a full project chat. Use plain language, identify what the item looks like when useful, and keep safety advice specific to the question. Return plain text only: short paragraphs and simple hyphen bullets are allowed, but do not use Markdown emphasis markers such as ** or __.
 
 User question: ${message}`,
   });
 
   // Deliberately no conversation or chat_messages writes: this is an ephemeral help request.
-  return Response.json({ message: result.message, citations: result.citations });
+  const messageWithoutMarkdownEmphasis = result.message
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1");
+  return Response.json({ message: messageWithoutMarkdownEmphasis, citations: result.citations });
 }

@@ -30,6 +30,13 @@ function proposedArchitectureReply(actions: Array<{ name: string; arguments: unk
   return `I’ve added ${equipment} to the working design as a proposed item—it is not marked as purchased or installed. Before I develop the first sizing estimate, is there a firm budget or planned future expansion I need to allow for?`;
 }
 
+function completedSystemIntent(message: string) {
+  return (
+    /\b(?:completed|commissioned|already\s+(?:installed|built|operating|running|working)|in\s+place)\b/i.test(message) &&
+    /\b(?:not\s+looking\s+to\s+(?:build|design)|not\s+(?:building|designing)|working\s+(?:very\s+)?well|monitor|as[- ]built|commissioned)\b/i.test(message)
+  );
+}
+
 export async function POST(request: Request) {
   let candidate: unknown;
   let imageFile: File | undefined;
@@ -293,10 +300,21 @@ export async function POST(request: Request) {
       (connection) => connection.project_id === system.id,
     ),
   }));
+  const selectedSystem = connectedSiteSystems.find((system) => system.id === parsed.data.projectId);
+  const monitoringOnlyIntent = completedSystemIntent(parsed.data.message);
+  let phaseMovedToMonitor = false;
+  if (monitoringOnlyIntent && selectedSystem?.phase !== "monitor") {
+    const phaseUpdated = await supabase.from("projects").update({ phase: "monitor" }).eq("id", parsed.data.projectId).eq("owner_id", userId);
+    if (phaseUpdated.error) return Response.json({ error: phaseUpdated.error.message }, { status: 400 });
+    if (selectedSystem) selectedSystem.phase = "monitor";
+    parsed.data.project.phase = "monitor";
+    phaseMovedToMonitor = true;
+  }
 
   let message: string;
   let citations: Array<{ title: string; url: string }> = [];
   let appliedActions: AppliedWattsonAction[] = [];
+  if (phaseMovedToMonitor) appliedActions.push({ type: "settings_updated", summary: "Set system phase to monitor" });
   let structuredContext: Record<string, unknown>;
   if (process.env.GEMINI_API_KEY) {
     try {
@@ -315,19 +333,23 @@ export async function POST(request: Request) {
         },
         image,
       });
-      const systemSettings = connectedSiteSystems.find((system) => system.id === parsed.data.projectId)?.settings;
-      const currentDiscovery = nextRequiredDiscoveryQuestion(systemSettings);
-      const nextDiscovery = nextRequiredDiscoveryQuestion(systemSettings, result.actions);
+      const systemSettings = selectedSystem?.settings;
+      const monitoringOnlySystem = monitoringOnlyIntent || selectedSystem?.phase === "monitor";
+      const currentDiscovery = monitoringOnlySystem ? undefined : nextRequiredDiscoveryQuestion(systemSettings);
+      const nextDiscovery = monitoringOnlySystem ? undefined : nextRequiredDiscoveryQuestion(systemSettings, result.actions);
       const blockedArchitecture = result.actions.some((action) => action.name === "record_design_preference") && nextDiscovery;
       const uncertainDiscovery = userExpressesUncertainty(parsed.data.message) && Boolean(currentDiscovery);
-      appliedActions = await applyWattsonActions(
+      const toolActions = await applyWattsonActions(
         supabase,
         parsed.data.projectId,
         result.actions.filter((action) =>
+          !(monitoringOnlySystem && ["record_design_discovery", "record_design_preference", "record_preliminary_design", "record_proposed_component"].includes(action.name))
+          &&
           (action.name !== "record_design_preference" || !blockedArchitecture)
           && (action.name !== "record_design_discovery" || !uncertainDiscovery),
         ),
       );
+      appliedActions = [...appliedActions, ...toolActions];
       const updateSummary = appliedActions
         .map((action) => action.summary)
         .join("; ");
@@ -350,6 +372,8 @@ export async function POST(request: Request) {
         message = `We’re still in discovery, so I haven’t added an inverter arrangement yet. ${blockedArchitecture[1]}`;
       if (uncertainDiscovery)
         message = `No problem—I haven’t saved that as an answer. ${currentDiscovery ? discoveryGuidance(currentDiscovery[0]) : "Tell me which part is unclear and I’ll explain it another way."}`;
+      if (monitoringOnlyIntent)
+        message = `Understood - I’ve set ${selectedSystem?.name ?? parsed.data.project.name} to monitor mode. I won’t run design discovery or build prompts for this system; Wattson will treat it as a commissioned as-built installation for monitoring, diagnostics and record-keeping.`;
       if (updateSummary && message !== architectureReply && message !== discoveryReply)
         message = message
           ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`

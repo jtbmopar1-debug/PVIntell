@@ -3,6 +3,7 @@ import { Dashboard } from "@/components/dashboard";
 import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { createClient } from "@/lib/supabase/server";
+import type { SolarArrayForecastInput } from "@/weather/forecast";
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ site?: string; conversation?: string; start?: string }> }) {
   const supabase = await createClient();
@@ -32,17 +33,24 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     projectType: String(system.mode).replace("_", "-") as SystemSummary["projectType"], phase: system.phase as SystemSummary["phase"],
   }));
   const systemIds = systems.map((system) => system.id);
-  const arrays = systemIds.length ? await supabase.from("pv_arrays").select("project_id,panel_watts,panel_count").in("project_id", systemIds) : { data: [], error: null };
+  const arrays = systemIds.length ? await supabase.from("pv_arrays").select("project_id,panel_watts,panel_count,orientation_degrees,tilt_degrees").in("project_id", systemIds) : { data: [], error: null };
   if (arrays.error) throw arrays.error;
-  const solarBySite = Object.fromEntries(sites.map((site) => [site.id, (arrays.data ?? []).reduce((sum, array) => {
+  const solarArraysBySite: Record<string, SolarArrayForecastInput[]> = Object.fromEntries(sites.map((site) => [site.id, (arrays.data ?? []).flatMap((array) => {
     const system = systems.find((item) => item.id === array.project_id);
-    return system?.siteId === site.id ? sum + Number(array.panel_watts ?? 0) * Number(array.panel_count ?? 0) / 1000 : sum;
-  }, 0)]));
+    const capacityKw = Number(array.panel_watts ?? 0) * Number(array.panel_count ?? 0) / 1000;
+    if (system?.siteId !== site.id || capacityKw <= 0) return [];
+    return [{
+      capacityKw,
+      azimuthDegrees: array.orientation_degrees == null ? null : Number(array.orientation_degrees),
+      tiltDegrees: array.tilt_degrees == null ? null : Number(array.tilt_degrees),
+    }];
+  })]));
+  const solarBySite = Object.fromEntries(Object.entries(solarArraysBySite).map(([siteId, siteArrays]) => [siteId, siteArrays.reduce((sum, array) => sum + array.capacityKw, 0)]));
   let messages: ChatMessage[] = [];
   if (conversation.data?.id) {
     const rows = await supabase.from("user_chat_messages").select("id,role,content,created_at,structured_context").eq("conversation_id", conversation.data.id).order("created_at").limit(30);
     if (rows.error) throw rows.error;
     messages = (rows.data ?? []).filter((message) => String(message.content).trim()).map((message) => ({ id: message.id, role: message.role as ChatMessage["role"], content: message.content, createdAt: message.created_at, citations: Array.isArray(message.structured_context?.citations) ? message.structured_context.citations : undefined, actionUrl: typeof message.structured_context?.actionUrl === "string" ? message.structured_context.actionUrl : undefined, actionLabel: typeof message.structured_context?.actionLabel === "string" ? message.structured_context.actionLabel : undefined }));
   }
-  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} solarBySite={solarBySite} initialMessages={messages} conversationId={conversation.data?.id} initialSiteId={requestedSiteId ?? conversation.data?.site_id ?? undefined} autoStartProposal={start === "proposal"} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
+  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} solarBySite={solarBySite} solarArraysBySite={solarArraysBySite} initialMessages={messages} conversationId={conversation.data?.id} initialSiteId={requestedSiteId ?? conversation.data?.site_id ?? undefined} autoStartProposal={start === "proposal"} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
 }

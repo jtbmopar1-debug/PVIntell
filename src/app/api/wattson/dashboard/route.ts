@@ -43,6 +43,13 @@ function newBuildingDescription(message: string) {
   return `New ${label}; no existing electricity-use history`;
 }
 
+function completedSystemIntent(message: string) {
+  return (
+    /\b(?:completed|commissioned|already\s+(?:installed|built|operating|running|working)|in\s+place)\b/i.test(message) &&
+    /\b(?:not\s+looking\s+to\s+(?:build|design)|not\s+(?:building|designing)|working\s+(?:very\s+)?well|monitor|as[- ]built|commissioned)\b/i.test(message)
+  );
+}
+
 function systemNameFromBuilding(description: string) {
   const value = description.split(";")[0].replace(/^New\s+/i, "").trim();
   return value.replace(/\b\w/g, (character) => character.toUpperCase());
@@ -317,7 +324,14 @@ export async function POST(request: Request) {
     const recordedDiscovery = activeSettings.designDiscovery && typeof activeSettings.designDiscovery === "object"
       ? activeSettings.designDiscovery as Record<string, unknown>
       : {};
-    let guidedUnknownIds = selectedSiteBrief ? [] : guidedReview && guidedReview.systemId === activeSystem?.id && Array.isArray(guidedReview.unknownIds)
+    const monitoringOnlyIntent = Boolean(activeSystem && completedSystemIntent(parsed.data.message));
+    if (monitoringOnlyIntent && activeSystem && activeSystem.phase !== "monitor") {
+      const phaseUpdated = await supabase.from("projects").update({ phase: "monitor" }).eq("id", activeSystem.id).eq("owner_id", userId);
+      if (phaseUpdated.error) throw phaseUpdated.error;
+      activeSystem.phase = "monitor";
+      appliedActions.push({ type: "settings_updated", summary: "Set system phase to monitor" });
+    }
+    let guidedUnknownIds = monitoringOnlyIntent || selectedSiteBrief ? [] : guidedReview && guidedReview.systemId === activeSystem?.id && Array.isArray(guidedReview.unknownIds)
       ? guidedReview.unknownIds.filter((value): value is string => typeof value === "string")
         .filter((questionId) => !Object.hasOwn(recordedDiscovery, actionKeyForQuestion(questionId)))
       : [];
@@ -326,12 +340,12 @@ export async function POST(request: Request) {
       : guidedReview?.answers && typeof guidedReview.answers === "object"
       ? guidedReview.answers as Record<string, unknown>
       : {};
-    if (guidedReview && guidedReview.systemId === activeSystem?.id) {
+    if (!monitoringOnlyIntent && guidedReview && guidedReview.systemId === activeSystem?.id) {
       for (const questionId of ["panel_area_dimensions", "panel_area_constraints", "orientation_and_pitch", "cooking_energy", "water_heating_energy", "space_heating_energy", "delivery_approach"]) {
         if (!Object.hasOwn(guidedAnswers, questionId) && !Object.hasOwn(recordedDiscovery, questionId) && !guidedUnknownIds.includes(questionId)) guidedUnknownIds.push(questionId);
       }
     }
-    const activeDiscovery = selectedSiteBrief ? undefined : guidedQuestion(guidedUnknownIds[0]) ?? nextRequiredDiscoveryQuestion(activeSystem?.settings);
+    const activeDiscovery = monitoringOnlyIntent || activeSystem?.phase === "monitor" || selectedSiteBrief ? undefined : guidedQuestion(guidedUnknownIds[0]) ?? nextRequiredDiscoveryQuestion(activeSystem?.settings);
     const lastAssistantMessage = [...prior].reverse().find((item) => item.role === "assistant")?.content;
     const askedDiscoveryKey = discoveryKeyFromAssistantQuestion(lastAssistantMessage);
     const userUncertain = userExpressesUncertainty(parsed.data.message);
@@ -388,15 +402,17 @@ export async function POST(request: Request) {
     const resolvedGuidedIds = new Set<string>();
     for (const [projectId, actions] of actionsBySystem) {
       const system = connectedSystems.find((item) => item.id === projectId);
+      const monitoringOnlySystem = system?.phase === "monitor" || (monitoringOnlyIntent && system?.id === activeSystem?.id);
       // A completed Site brief is the authoritative discovery gate for this
       // conversation. Do not reopen generic system questions from stale
       // settings while reviewing its proposed architecture.
-      const nextDiscovery = selectedSiteBrief && system?.site_id === conversationSiteId
+      const nextDiscovery = monitoringOnlySystem || (selectedSiteBrief && system?.site_id === conversationSiteId)
         ? undefined
         : nextRequiredDiscoveryQuestion(system?.settings, actions);
       if (!userUncertain && actions.some((action) => action.name === "record_design_discovery"))
         discoveryFollowup = nextDiscovery?.[1];
       const safeActions = actions.filter((action) => {
+        if (monitoringOnlySystem && ["record_design_discovery", "record_design_preference", "record_preliminary_design", "record_proposed_component"].includes(action.name)) return false;
         if (action.name === "record_design_discovery" && userUncertain) return false;
         if (action.name !== "record_design_preference" || !nextDiscovery) return true;
         blockedArchitectureQuestion = nextDiscovery[1];
@@ -488,6 +504,8 @@ export async function POST(request: Request) {
     if (!guidedUnknownIds.length && activeDiscovery && !appliedActions.length && /\b(?:next|continue|what now)\b/i.test(parsed.data.message)) {
       message = `Here’s the next step: ${activeDiscovery[1]}`;
     }
+    if (monitoringOnlyIntent && activeSystem)
+      message = `Understood - I’ve set ${activeSystem.name} to monitor mode. I won’t run design discovery or build prompts for this system; Wattson will treat it as a commissioned as-built installation for monitoring, diagnostics and record-keeping.`;
     if (!message && architectureReply) message = architectureReply;
     if (!message && discoveryReply) message = discoveryReply;
     const proposedDesignUpdated = appliedActions.some((action) =>
@@ -513,10 +531,13 @@ export async function POST(request: Request) {
     if (!proposedDesignUpdated && existingProposedDesign && asksToContinueProposal) {
       message = "Your proposed design is ready in the Design Calculator. I’m taking you there now — it is separate from the as-built overview and schematic, so nothing there is being treated as installed.";
     }
+    const monitorModeLink = monitoringOnlyIntent && activeSystem
+      ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}?view=monitor`
+      : undefined;
     const proposedDesignLink = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
       : undefined;
-    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, actionUrl: proposedDesignLink, actionLabel: proposedDesignLink ? "Open proposed design" : undefined } });
+    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, actionUrl: proposedDesignLink ?? monitorModeLink, actionLabel: proposedDesignLink ? "Open proposed design" : monitorModeLink ? "Open monitor" : undefined } });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
     const proposedDesignUrl = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
@@ -525,8 +546,8 @@ export async function POST(request: Request) {
       message,
       citations: result.citations,
       actions: appliedActions,
-      actionUrl: proposedDesignUrl,
-      actionLabel: proposedDesignUrl ? "Open proposed design" : undefined,
+      actionUrl: proposedDesignUrl ?? monitorModeLink,
+      actionLabel: proposedDesignUrl ? "Open proposed design" : monitorModeLink ? "Open monitor" : undefined,
       inventoryEquipmentId: inventoryCapture?.equipmentId,
     });
   } catch (problem) {

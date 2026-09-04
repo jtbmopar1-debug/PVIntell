@@ -23,6 +23,7 @@ import { useState } from "react";
 import { SolarWeather } from "@/components/solar-weather";
 import { allHowToGuides, UniversalHowToMenu } from "@/components/pvintell-workspace";
 import type { Site, SiteEquipment, SystemSummary } from "@/domain/models";
+import type { SolarArrayForecastInput } from "@/weather/forecast";
 
 function Logo() {
   return (
@@ -56,6 +57,7 @@ export function SiteInventoryPage({
   email,
   weatherMode = false,
   solarArrayKw = 0,
+  solarArrays = [],
 }: {
   site: Site;
   sites: Site[];
@@ -64,6 +66,7 @@ export function SiteInventoryPage({
   email: string;
   weatherMode?: boolean;
   solarArrayKw?: number;
+  solarArrays?: SolarArrayForecastInput[];
 }) {
   const router = useRouter();
   const [systems, setSystems] = useState(initialSystems);
@@ -246,15 +249,15 @@ export function SiteInventoryPage({
             <form action="/auth/signout" method="post" className="ml-auto"><button className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Sign out</button></form>
           </nav>
         </header>
-        <div className="mx-auto max-w-[1220px] space-y-8 p-5 md:p-8">
+        <div className="mx-auto max-w-[1220px] space-y-4 p-4 md:p-6">
           {weatherMode ? (
-            <SolarWeather site={site} solarArrayKw={solarArrayKw} />
+            <SolarWeather site={site} solarArrayKw={solarArrayKw} solarArrays={solarArrays} />
           ) : (
             <>
               <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
                 <div>
                   <div className="eyebrow">Site overview</div>
-                  <h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">
+                  <h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">
                     {site.name} project workspace
                   </h1>
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">

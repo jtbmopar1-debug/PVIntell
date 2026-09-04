@@ -49,6 +49,8 @@ const preliminaryDesignSchema = z.object({
   panel_weight_kg: z.number().positive().max(500).optional(),
   required_panel_area_m2: z.number().positive().max(100000).optional(),
   fit_status: z.enum(["verified", "unverified", "does_not_fit"]),
+  azimuth_degrees: z.number().min(0).max(360).optional(),
+  tilt_degrees: z.number().min(0).max(90).optional(),
   inverter_kw: z.number().positive().max(1000).optional(),
   battery_usable_kwh: z.number().positive().max(10000).optional(),
 });
@@ -109,6 +111,12 @@ const discoveryKey = z.enum([
 ]);
 const designDiscoverySchema = z.object({
   key: discoveryKey,
+  value: z.string().trim().min(1).max(1500),
+  confidence: z.enum(["user_confirmed", "evidence_provided"]).default("user_confirmed"),
+});
+const systemKnowledgeSchema = z.object({
+  category: z.enum(["operation", "control", "monitoring", "maintenance", "fault_history", "as_built_note", "other"]),
+  title: z.string().trim().min(1).max(120),
   value: z.string().trim().min(1).max(1500),
   confidence: z.enum(["user_confirmed", "evidence_provided"]).default("user_confirmed"),
 });
@@ -254,6 +262,7 @@ export interface AppliedWattsonAction {
     | "component_updated"
     | "design_preference_updated"
     | "design_discovery_updated"
+    | "system_knowledge_updated"
     | "settings_updated"
     | "pv_array_added"
     | "pv_array_updated"
@@ -306,7 +315,7 @@ export const wattsonActionTools = [
     type: "function",
     name: "record_preliminary_design",
     description:
-      "Save or refresh Wattson's evidence-led preliminary working design after discovery and an architecture direction are complete. Use this for proposed sizing only, never installed or purchased equipment. Prefer a modest useful starting stage plus a compatible expansion path. A panel count is a candidate only: set fit_status to verified solely when recorded usable dimensions, obstructions, clearances and the candidate panel dimensions demonstrate that it fits; otherwise use unverified. Record series/parallel string arrangement and panel electrical values only when the exact module and controller or inverter input limits are supported by evidence; otherwise leave them unknown. Do not use budget to determine technical size.",
+      "Save or refresh Wattson's evidence-led preliminary working design after discovery and an architecture direction are complete. Use this for proposed sizing only, never installed or purchased equipment. Prefer a modest useful starting stage plus a compatible expansion path. A panel count is a candidate only: set fit_status to verified solely when recorded usable dimensions, obstructions, clearances and the candidate panel dimensions demonstrate that it fits; otherwise use unverified. Record proposed azimuth and tilt when the mounting surface or frame direction is supported by site evidence, and explain seasonal production trade-offs in the design basis or expansion path. Record series/parallel string arrangement and panel electrical values only when the exact module and controller or inverter input limits are supported by evidence; otherwise leave them unknown. Do not use budget to determine technical size.",
     parameters: {
       type: "object",
       properties: {
@@ -330,6 +339,8 @@ export const wattsonActionTools = [
         panel_weight_kg: { type: "number", exclusiveMinimum: 0 },
         required_panel_area_m2: { type: "number", exclusiveMinimum: 0 },
         fit_status: { type: "string", enum: ["verified", "unverified", "does_not_fit"] },
+        azimuth_degrees: { type: "number", minimum: 0, maximum: 360, description: "Proposed panel facing direction in degrees from true north clockwise: 0 north, 90 east, 180 south, 270 west." },
+        tilt_degrees: { type: "number", minimum: 0, maximum: 90, description: "Proposed panel tilt from horizontal, in degrees." },
         inverter_kw: { type: "number", exclusiveMinimum: 0 },
         battery_usable_kwh: { type: "number", exclusiveMinimum: 0 },
       },
@@ -413,6 +424,30 @@ export const wattsonActionTools = [
         },
       },
       required: ["component_type", "quantity"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "record_system_knowledge",
+    description:
+      "Save one confirmed fact about an already installed or commissioned system for future monitoring, diagnostics or fault finding. Use this in monitor/as-built mode for operating behaviour, controls, smart devices, maintenance notes, known quirks, fault history or confirmed as-built context. This is not design discovery and must not create proposed equipment.",
+    parameters: {
+      type: "object",
+      properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
+        category: { type: "string", enum: ["operation", "control", "monitoring", "maintenance", "fault_history", "as_built_note", "other"] },
+        title: { type: "string" },
+        value: { type: "string" },
+        confidence: {
+          type: "string",
+          enum: ["user_confirmed", "evidence_provided"],
+        },
+      },
+      required: ["category", "title", "value", "confidence"],
       additionalProperties: false,
     },
   },
@@ -720,6 +755,8 @@ export async function applyWattsonActions(
         panelWeightKg: input.panel_weight_kg ?? previous.panelWeightKg,
         requiredPanelAreaM2: input.required_panel_area_m2 ?? previous.requiredPanelAreaM2,
         fitStatus: input.fit_status,
+        azimuthDegrees: input.azimuth_degrees ?? previous.azimuthDegrees,
+        tiltDegrees: input.tilt_degrees ?? previous.tiltDegrees,
         inverterKw: input.inverter_kw ?? previous.inverterKw,
         batteryUsableKwh: input.battery_usable_kwh ?? previous.batteryUsableKwh,
         updatedAt: new Date().toISOString(),
@@ -788,6 +825,35 @@ export async function applyWattsonActions(
       applied.push({
         type: "design_discovery_updated",
         summary: `Added ${parsed.data.key.replaceAll("_", " ")} to the discovery notes`,
+      });
+    }
+
+    if (action.name === "record_system_knowledge") {
+      const parsed = systemKnowledgeSchema.safeParse(action.arguments);
+      if (!parsed.success) continue;
+      const input = parsed.data;
+      const current = await supabase.from("projects").select("settings").eq("id", projectId).single();
+      if (current.error) throw current.error;
+      const settings = (current.data.settings ?? {}) as Record<string, unknown>;
+      const existing = Array.isArray(settings.systemKnowledge) ? settings.systemKnowledge as Array<Record<string, unknown>> : [];
+      const entry = {
+        id: crypto.randomUUID(),
+        category: input.category,
+        title: input.title,
+        value: input.value,
+        confidence: input.confidence,
+        recordedAt: new Date().toISOString(),
+        source: "wattson",
+      };
+      const duplicateIndex = existing.findIndex((item) => String(item.title ?? "").toLowerCase() === input.title.toLowerCase());
+      settings.systemKnowledge = duplicateIndex >= 0
+        ? existing.map((item, index) => index === duplicateIndex ? { ...item, ...entry, id: item.id ?? entry.id } : item)
+        : [...existing, entry];
+      const changed = await supabase.from("projects").update({ settings }).eq("id", projectId);
+      if (changed.error) throw changed.error;
+      applied.push({
+        type: "system_knowledge_updated",
+        summary: `Saved system knowledge: ${input.title}`,
       });
     }
 
