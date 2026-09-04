@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-labelledby="title desc">
+  <title id="title">Solar mounting rail profiles</title>
+  <desc id="desc">Three aluminium solar mounting rail profiles from shallow to heavy duty.</desc>
+  <defs>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f8fbfd"/><stop offset=".45" stop-color="#bccbd5"/><stop offset="1" stop-color="#6e8292"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#17324d" flood-opacity=".18"/></filter>
+  </defs>
+  <rect width="900" height="520" rx="36" fill="#f4f8fb"/>
+  <g opacity=".25" fill="#7ba2c3"><circle cx="40" cy="40" r="2"/><circle cx="80" cy="40" r="2"/><circle cx="120" cy="40" r="2"/><circle cx="160" cy="40" r="2"/><circle cx="200" cy="40" r="2"/><circle cx="240" cy="40" r="2"/></g>
+  <g filter="url(#shadow)" stroke="#536a7b" stroke-width="6" stroke-linejoin="round">
+    <path d="M100 315V195h170v120h-38v-73h-94v73z" fill="url(#metal)"/>
+    <path d="M355 345V165h190v180h-43V218h-104v127z" fill="url(#metal)"/>
+    <path d="M635 385V125h190v260h-45V180H680v205z" fill="url(#metal)"/>
+  </g>
+  <g fill="#174f80">
+    <rect x="133" y="210" width="105" height="14" rx="7"/>
+    <rect x="397" y="187" width="106" height="14" rx="7"/>
+    <rect x="679" y="149" width="102" height="14" rx="7"/>
+  </g>
+  <g fill="#15324d" font-family="Arial, sans-serif" text-anchor="middle">
+    <text x="185" y="440" font-size="25" font-weight="700">Shallow rail</text>
+    <text x="450" y="440" font-size="25" font-weight="700">Standard rail</text>
+    <text x="730" y="440" font-size="25" font-weight="700">Deep rail</text>
+  </g>
+</svg>

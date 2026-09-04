@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowRight,
   BatteryCharging,
+  BookOpen,
   Bot,
   Camera,
   Calculator,
@@ -34,7 +35,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import Image from "next/image";
@@ -73,6 +74,10 @@ import { planningHowToGuides } from "@/guides/how-to-planning";
 import { componentHowToGuides } from "@/guides/how-to-components";
 import { howToGuideDetails } from "@/guides/how-to-details";
 import { batteryHardwareHowToGuides } from "@/guides/how-to-battery-hardware";
+import { coreHardwareHowToGuides } from "@/guides/how-to-core-hardware";
+import { evChargingHowToGuides } from "@/guides/how-to-ev-charging";
+import { windGenerationHowToGuides } from "@/guides/how-to-wind-generation";
+import { solarHotWaterHowToGuides } from "@/guides/how-to-solar-hot-water";
 import { SolarWeather } from "@/components/solar-weather";
 import { SiteOverview } from "@/components/site-overview";
 import { SystemEquipmentOverview } from "@/components/system-equipment-overview";
@@ -666,7 +671,7 @@ export function PVIntellWorkspace({
         </div>
       </aside>
       <main className="min-w-0">
-        <header className="sticky top-0 z-50 border-b border-line bg-[rgba(248,250,252,.96)] backdrop-blur-xl">
+        <header className="sticky top-0 z-50 border-b border-line bg-[rgba(248,250,252,.98)]">
           <div className="mx-auto flex h-[64px] max-w-[1440px] items-center gap-4 px-4 md:px-6">
             <Link href="/dashboard" className="shrink-0"><Logo /></Link>
             {cloud && <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{initialSite.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div><div className="space-y-1">{sites.map((site) => <Link key={site.id} href={`/sites/${site.id}`} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === initialSite.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}><MapPin size={12}/><span className="truncate">{site.name}</span></Link>)}</div><Link href="/discovery/new-system" className="mt-3 flex items-center gap-2 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]"><Sparkles size={13}/>New independent Site</Link></div></details>}
@@ -676,13 +681,6 @@ export function PVIntellWorkspace({
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <button type="button" onClick={() => setView("wattson")} className="hidden h-9 items-center gap-2 rounded-xl bg-brand px-4 text-[11px] font-bold text-white sm:flex"><Sparkles size={14}/>Ask Wattson</button>
-            <UniversalHowToMenu
-              location={initialSite.location}
-              onAsk={(guide) => {
-                setView("wattson");
-                void send(`Show me how to work with ${guide.title}. First explain what it is, what it does in my solar system, and where it connects. Then walk me through the job one simple illustrated-manual-style step at a time, including the tools, checks, common mistakes, and the point where I need a qualified person. Use my Site and proposed system context.`);
-              }}
-            />
             <Link
               href="/account"
               aria-label="Account settings"
@@ -693,14 +691,35 @@ export function PVIntellWorkspace({
             </div>
           </div>
           <nav className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-4 py-2 md:px-6">
+            {cloud && <Link href="/dashboard" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Dashboard</Link>}
             <button type="button" onClick={() => setView("site")} className={`shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold ${view === "site" ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>Overview</button>
             <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Plan ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery brief</Link><button type="button" onClick={() => setView("wattson")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Continue planning with Wattson</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed system outline</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed build schematic</Link> : <span className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#9aa8b6]">Proposed schematic · locked</span>}</div></details>
             <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" disabled={!proposedSchematicReviewed} onClick={() => setView("build")} className={`block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold ${proposedSchematicReviewed ? "text-muted hover:bg-[#eef3f8]" : "cursor-not-allowed text-[#9aa8b6]"}`}>{proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning</button></div></details>
             <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Records ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" onClick={() => setView("system")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built overview</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built schematic</Link><button type="button" onClick={() => setView("equipment")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Site equipment</button></div></details>
             <button type="button" onClick={() => router.push(`/sites/${initialSite.id}/weather`)} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Solar weather</button>
             <button type="button" onClick={() => setView("monitor")} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Monitor</button>
+            <UniversalHowToMenu
+              location={initialSite.location}
+              onAsk={async (guide, question, recentConversation) => {
+                if (!cloud) {
+                  const terms = question.toLowerCase().split(/\W+/).filter((term) => term.length > 3);
+                  const relatedType = guide.types?.find((type) => terms.some((term) => `${type.name} ${type.description}`.toLowerCase().includes(term)));
+                  return { message: relatedType ? `${relatedType.name}: ${relatedType.description}${relatedType.bestFor ? ` It is usually used for ${relatedType.bestFor.toLowerCase()}` : ""}${relatedType.watchFor ? ` Check: ${relatedType.watchFor}` : ""}` : `${guide.whatItIs} ${guide.whatItDoes}` };
+                }
+                const response = await fetch("/api/wattson/guide", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ message: question, projectId: project.id, project, guide, recentConversation, guideIndex: allHowToGuides.map(({ id, title, group, aliases }) => ({ id, title, group, aliases })) }),
+                });
+                const body = await response.json();
+                if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
+                return body;
+              }}
+            />
+            <Link href="/glossary" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]"><BookOpen size={13} className="mr-1 inline"/>Glossary</Link>
+            <Link href="/account" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]"><Settings2 size={13} className="mr-1 inline"/>Settings</Link>
             <button type="button" onClick={() => setView("wattson")} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-brand hover:bg-[#eaf2fb] sm:hidden">Ask Wattson</button>
-            {cloud && <><Link href="/dashboard" className="ml-auto shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">All Sites</Link><form action="/auth/signout" method="post"><button className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Sign out</button></form></>}
+            {cloud && <form action="/auth/signout" method="post" className="ml-auto"><button className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Sign out</button></form>}
           </nav>
         </header>
         <div className="mx-auto max-w-[1320px] p-5 md:p-8">
@@ -851,6 +870,15 @@ function Wattson({
   inverter,
   startAgain,
 }: any) {
+  const conversationRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const conversation = conversationRef.current;
+      if (conversation) conversation.scrollTo({ top: conversation.scrollHeight, behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messages.length, sending]);
+
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
       <section className="card overflow-hidden">
@@ -896,7 +924,7 @@ function Wattson({
             </button>
           ))}
         </div>
-        <div className="wattson-conversation thin-scrollbar space-y-5 overflow-y-auto p-6">
+        <div ref={conversationRef} className="wattson-conversation thin-scrollbar space-y-5 overflow-y-auto p-6">
           {messages.map((m: ChatMessage) => (
             <div
               key={m.id}
@@ -1301,6 +1329,9 @@ export type NoviceHowToGuide = {
     name: string;
     description: string;
     image?: string;
+    imageCredit?: string;
+    imageSourceUrl?: string;
+    imageLicense?: string;
     bestFor?: string;
     watchFor?: string;
   }[];
@@ -1368,7 +1399,7 @@ const additionalHowToGuides: readonly NoviceHowToGuide[] = [
   { group: "Mounting systems and hardware", id: "mount-rails", title: "Rails, rail splices and expansion gaps", image: "/schematic-components/roof-mounting-system.jpg", summary: "Rails carry module clamps between structural roof or ground interfaces.", whatItIs: "Extruded structural members with matched channels for interfaces, splices, clamps, bonding and cable management.", whatItDoes: "It keeps modules aligned and transfers their loads to the planned attachment points.", buy: ["Rail profile from one engineered mounting family", "Approved splice type and hardware", "End caps and cable-management accessories where required"], tools: ["Tape, string line and square", "Rail cutting tool approved for aluminium", "Deburring tool and calibrated torque wrench"], before: ["Use the engineering table for span, cantilever and attachment spacing", "Check thermal expansion and maximum continuous rail length", "Plan splice positions away from prohibited zones"], steps: ["Cut square and deburr", "Attach rail loosely to all interfaces", "Align and level the run", "Install splices and expansion gaps as specified", "Torque attachments and record them"], checks: ["Span, cantilever, splice and gaps match the plan", "No sharp swarf or edge remains", "Rail is straight and secure"], source: "Use the selected mounting system's structural and installation manual." },
   { group: "Mounting systems and hardware", id: "mount-clamps", title: "Panel mid clamps and end clamps", image: "/schematic-components/roof-mounting-system.jpg", summary: "Matched clamps hold module frames to rails at permitted frame zones.", whatItIs: "End clamps hold an outside frame edge; mid clamps hold adjacent module frames.", whatItDoes: "It transfers module uplift and downward loads into the rail while maintaining spacing.", buy: ["Clamp model matching rail family and module frame thickness", "Bonding/grounding version where the design relies on it", "End caps or array-edge finish parts"], tools: ["Correct hex bit", "Calibrated torque wrench", "Module spacing gauge if supplied"], before: ["Check module clamp zones and frame thickness", "Confirm clamp engagement and bonding method", "Do not mix look-alike clamps from untested systems"], steps: ["Seat the clamp hardware correctly in the rail", "Place the module inside its permitted clamp zone", "Ensure the clamp face sits fully on the frame", "Torque to the selected mounting manual", "Mark or record the completed torque"], checks: ["Full clamp engagement", "Correct edge distance and module gap", "No clamp on glass, drainage hole or prohibited frame zone"], source: "Use both the exact module manual and mounting-system clamp instructions." },
   { group: "Mounting systems and hardware", id: "mount-fasteners-sealing", title: "Roof fasteners, washers, flashing and sealants", image: "/guides/mounting/corrugated-metal-timber.png", summary: "Choose the fixing and weatherproofing system from the roof, substrate and mounting manufacturer's tested detail.", whatItIs: "The structural fastener transfers load; the bonded washer, gasket, flashing or sealant restores the weather barrier.", whatItDoes: "Together they secure the interface and prevent water ingress without damaging the roof coating or membrane.", buy: ["Specified fastener for confirmed timber, light-gauge steel, structural steel, masonry or another substrate", "Specified bonded washer/gasket/flashing", "Chemically compatible primer or sealant only where the detail requires it"], tools: ["Correct pilot drill where specified", "Perpendicular driver and correct socket", "Torque/depth control", "Surface preparation and cleanup materials"], before: ["Confirm substrate material, grade/thickness and required embedment", "Check corrosion class and metal compatibility", "Read roof warranty and sealant compatibility data"], steps: ["Prepare and mark the structural fixing centre", "Fit the specified weather component", "Drill only where and how the manual permits", "Drive perpendicular and stop at the stated washer compression/torque", "Tool and cure sealant only if the selected detail requires it"], checks: ["Fastener is in structure, not sheet alone", "Washer is neither loose nor crushed", "No incompatible sealant or exposed swarf", "Penetration is photographed before concealment"], source: "Exact values come from the mounting-system engineering letter, fastener maker and roof/waterproofing manufacturer." },
-  { group: "DC wiring and connections", id: "dc-cable", title: "PV DC cable: type, size and routing", image: "/schematic-components/dc-cable.jpg", summary: "Solar cable must suit voltage, current, temperature, UV, environment, connector and voltage-drop design.", whatItIs: "Double-insulated cable designed and approved for PV DC circuits.", whatItDoes: "It carries string or array current between modules, combiners, protection and power electronics.", buy: ["Approved PV cable with the calculated conductor size and environmental rating", "Compatible connector/contact size", "UV-rated clips, conduit/glands and identification"], tools: ["Cable cutter and maker-approved stripper", "Routing/measurement tools", "Test instruments appropriate to the work and local rules"], before: ["Calculate current, voltage, temperature derating and voltage drop", "Separate positive and negative routes only as the design requires", "Plan protection from sharp edges, water, animals and movement"], steps: ["Measure the real route including service loops", "Cut cleanly and identify both ends", "Support at the required intervals", "Protect every entry and bend", "Test and record before energising"], checks: ["Cable label and size match design", "No cable rests on roof or sharp metal", "Polarity and route labels are clear"], source: "Use applicable local PV wiring rules plus the cable, connector and equipment manuals." },
+  { group: "DC wiring and connections", id: "dc-cable", title: "PV DC cable: type, size and routing", image: "/schematic-components/pv-cable-dc.jpg", summary: "Solar cable must suit voltage, current, temperature, UV, environment, connector and voltage-drop design.", whatItIs: "Double-insulated cable designed and approved for PV DC circuits.", whatItDoes: "It carries string or array current between modules, combiners, protection and power electronics.", buy: ["Approved PV cable with the calculated conductor size and environmental rating", "Compatible connector/contact size", "UV-rated clips, conduit/glands and identification"], tools: ["Cable cutter and maker-approved stripper", "Routing/measurement tools", "Test instruments appropriate to the work and local rules"], before: ["Calculate current, voltage, temperature derating and voltage drop", "Separate positive and negative routes only as the design requires", "Plan protection from sharp edges, water, animals and movement"], steps: ["Measure the real route including service loops", "Cut cleanly and identify both ends", "Support at the required intervals", "Protect every entry and bend", "Test and record before energising"], checks: ["Cable label and size match design", "No cable rests on roof or sharp metal", "Polarity and route labels are clear"], source: "Use applicable local PV wiring rules plus the cable, connector and equipment manuals." },
   { group: "DC wiring and connections", id: "dc-strings-combiners", title: "PV strings, parallel connections and combiner boxes", image: "/schematic-components/dc-combiner-box.jpg", summary: "Series modules raise voltage; parallel strings raise current and may require string protection and a combiner.", whatItIs: "A string is a series chain of modules. A combiner brings multiple strings into a protected output.", whatItDoes: "It creates the inverter/controller input voltage and current while keeping strings identifiable and protectable.", buy: ["Combiner and terminals rated for maximum DC voltage/current and environment", "Required string fuses/breakers, isolator and surge protection", "Matched glands, labels and cable-management parts"], before: ["Check minimum/maximum string voltage across temperature", "Check MPPT current and short-circuit limits", "Determine whether reverse-current protection is required"], steps: ["Assign and label every module/string", "Route positive and negative conductors consistently", "Terminate only with approved components and controlled torque", "Test each string separately before combining", "Record Voc, polarity and insulation results as permitted"], checks: ["String count and polarity match schematic", "Protection ratings match conductors and module limits", "Unused entries are sealed"], source: "String design and testing require the exact module, combiner and inverter/controller data plus local rules." },
   { group: "AC wiring and connections", id: "ac-output", title: "Inverter AC output and distribution connection", image: "/schematic-components/ac-distribution-board.jpg", summary: "The inverter's AC output feeds a distribution board, dedicated loads or grid connection through designed protection and isolation.", whatItIs: "The mains-voltage side of the solar power system.", whatItDoes: "It distributes usable AC power and coordinates protection, earthing, neutral and changeover arrangements.", buy: ["Cable and containment from the approved AC design", "Correct breaker/RCBO/RCD and isolator types", "Labels, glands, distribution or changeover equipment"], before: ["Confirm local licensing and prescribed-work boundary", "Use prospective fault current, earthing and disconnection calculations", "Confirm inverter neutral/earth and backup-output requirements"], steps: ["Prepare the approved route and equipment positions", "Keep conductors protected and identified", "Terminate, torque and test only by the authorised person where required", "Update the schematic and circuit schedule", "Certify, inspect and connect as locally required"], checks: ["Protection and conductor match", "Neutral/earth arrangement matches inverter mode", "All required test and certification records exist"], source: "Use local electrical rules, network requirements and the exact inverter installation manual." },
   { group: "Protection and isolation", id: "protection-types", title: "DC fuses, breakers, isolators and surge protection", image: "/schematic-components/dc-fuse.jpg", summary: "These devices do different jobs; voltage, current, polarity, interrupt rating and DC suitability matter.", whatItIs: "Fuses and breakers interrupt overcurrent; isolators provide a switching point; surge devices divert transient overvoltage.", whatItDoes: "It limits fault damage and provides planned isolation and protection zones.", buy: ["Devices explicitly rated for the circuit's DC or AC voltage and current", "Correct poles, utilization category, interrupt rating and enclosure", "Matched fuse holders/fuses and surge protective devices where required"], before: ["Calculate maximum current and conductor capacity", "Check source backfeed paths and battery fault current", "Use the equipment maker's permitted protection range"], steps: ["Place each device on the schematic before installation", "Trace which conductor/equipment it protects", "Install with required polarity, enclosure and conductor control", "Label source and load sides", "Test operation and record exact model/rating"], checks: ["No AC-only device used on a DC circuit", "Interrupt rating is adequate", "Every protected cable section is accounted for"], source: "Final device selection requires the circuit design, equipment manuals and applicable local standards." },
@@ -1385,9 +1416,17 @@ const compatibilityHowToGuides: readonly NoviceHowToGuide[] = [
 ];
 
 const componentPlanningHowToGuides = planningHowToGuides.filter((guide) => guide.group !== "Start here: system choices");
-const supersededHowToGuideIds = new Set(["protection", "protection-types"]);
-const rawHowToGuides: readonly NoviceHowToGuide[] = [...noviceHowToGuides, ...additionalHowToGuides, ...compatibilityHowToGuides, ...componentPlanningHowToGuides, ...expandedHowToGuides, ...componentHowToGuides, ...batteryHardwareHowToGuides].filter((guide) => !supersededHowToGuideIds.has(guide.id));
-const allHowToGuides: readonly NoviceHowToGuide[] = rawHowToGuides.map((guide) => {
+const supersededHowToGuideIds = new Set([
+  "protection",
+  "protection-types",
+  "mount-rails",
+  "mount-clamps",
+  "dc-cable",
+  "dc-strings-combiners",
+  "earthing-bonding",
+]);
+const rawHowToGuides: readonly NoviceHowToGuide[] = [...noviceHowToGuides, ...additionalHowToGuides, ...compatibilityHowToGuides, ...componentPlanningHowToGuides, ...expandedHowToGuides, ...componentHowToGuides, ...batteryHardwareHowToGuides, ...coreHardwareHowToGuides, ...evChargingHowToGuides, ...solarHotWaterHowToGuides, ...windGenerationHowToGuides].filter((guide) => !supersededHowToGuideIds.has(guide.id));
+export const allHowToGuides: readonly NoviceHowToGuide[] = rawHowToGuides.map((guide) => {
   const detail = howToGuideDetails[guide.id as keyof typeof howToGuideDetails];
   const enriched: NoviceHowToGuide = detail ? { ...guide, ...detail } : guide;
   return {
@@ -1406,6 +1445,7 @@ const allHowToGuides: readonly NoviceHowToGuide[] = rawHowToGuides.map((guide) =
 
 const howToGroupOrder = [
   "Roofing and roof structure",
+  "Solar hot water",
   "Solar panels and module types",
   "Mounting systems and hardware",
   "DC wiring and connections",
@@ -1416,8 +1456,10 @@ const howToGroupOrder = [
   "Earthing and bonding",
   "Monitoring and communications",
   "Pools and controllable loads",
+  "EV charging and transport",
   "Tools and workmanship",
   "Testing and commissioning",
+  "Wind generation",
 ] as const;
 
 function localHowToAuthority(location?: string) {
@@ -1437,17 +1479,18 @@ function HowToList({ title, items }: { title: string; items?: readonly string[] 
 function HowToTypes({ guide }: { guide: NoviceHowToGuide }) {
   return <>
     {guide.aliases?.length ? <p className="mt-3 text-[10px] text-muted"><strong>Also known as:</strong> {guide.aliases.join(" · ")}</p> : null}
-    {guide.usedFor?.length ? <div className="mt-4 rounded-xl border border-line bg-white p-4"><h3 className="text-[11px] font-extrabold text-brand">Where is it used?</h3><div className="mt-3 flex flex-wrap gap-2">{guide.usedFor.map((use) => <span key={use} className="rounded-full bg-[#eef3f8] px-3 py-1 text-[10px] font-bold text-[#52657a]">{use}</span>)}</div></div> : null}
+    {guide.usedFor?.length ? <div className="mt-4 rounded-xl border border-line bg-white p-4"><h3 className="text-[11px] font-extrabold text-brand">B. What is it used for?</h3><div className="mt-3 flex flex-wrap gap-2">{guide.usedFor.map((use) => <span key={use} className="rounded-full bg-[#eef3f8] px-3 py-1 text-[10px] font-bold text-[#52657a]">{use}</span>)}</div></div> : null}
     {guide.types?.length ? <div className="mt-5">
-      <h3 className="text-sm font-extrabold">Common types — and why they differ</h3>
+      <h3 className="text-sm font-extrabold">C. What it looks like — common types and variations</h3>
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {guide.types.map((type) => <article key={type.name} className="overflow-hidden rounded-xl border border-line bg-white">
           <div className="p-4">
-            {type.image ? <div className="mb-3 flex h-28 items-center justify-center overflow-hidden rounded-lg border border-[#e3eaf1] bg-white p-2">
+            <div className="mb-3 flex h-28 items-center justify-center overflow-hidden rounded-lg border border-[#e3eaf1] bg-white p-2">
               {/* Local reference images vary in size and shape; native dimensions prevent blurry upscaling. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={type.image} alt={type.name} className="h-auto max-h-full w-auto max-w-full object-contain"/>
-            </div> : null}
+              <img src={type.image ?? guide.image} alt={type.name} className="h-auto max-h-full w-auto max-w-full object-contain"/>
+            </div>
+            {type.imageCredit ? <p className="mb-2 text-[8px] leading-3 text-muted">Image: {type.imageSourceUrl ? <a href={type.imageSourceUrl} target="_blank" rel="noreferrer" className="underline">{type.imageCredit}</a> : type.imageCredit}{type.imageLicense ? ` · ${type.imageLicense}` : ""}</p> : null}
             <h4 className="text-[11px] font-extrabold text-brand">{type.name}</h4>
             <p className="mt-2 text-[10px] leading-5 text-muted">{type.description}</p>
             {type.bestFor ? <p className="mt-3 text-[9px] leading-4"><strong>Usually used for:</strong> {type.bestFor}</p> : null}
@@ -1460,9 +1503,66 @@ function HowToTypes({ guide }: { guide: NoviceHowToGuide }) {
   </>;
 }
 
-export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceHowToGuide) => void; location?: string }) {
+type GuideChatReply = { message: string; citations?: readonly { title: string; url: string }[] };
+type GuideChatLine = { id: string; role: "user" | "assistant"; content: string; citations?: GuideChatReply["citations"] };
+
+function GuideWattsonChat({ guide, onAsk, onClose }: { guide: NoviceHowToGuide; onAsk: (guide: NoviceHowToGuide, question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) => Promise<GuideChatReply>; onClose: () => void }) {
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [lines, setLines] = useState<GuideChatLine[]>([{ id: "intro", role: "assistant", content: `I’m focused on ${guide.title}. Ask what a part is, what it does, what it looks like, how it relates to nearby components, or which step you are stuck on.` }]);
+  const conversationRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const conversation = conversationRef.current;
+      if (conversation) conversation.scrollTo({ top: conversation.scrollHeight, behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [lines.length, sending]);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const question = input.trim();
+    if (!question || sending) return;
+    const userLine: GuideChatLine = { id: crypto.randomUUID(), role: "user", content: question };
+    const nextLines = [...lines, userLine];
+    setLines(nextLines);
+    setInput("");
+    setSending(true);
+    try {
+      const reply = await onAsk(guide, question, lines.slice(-7).map(({ role, content }) => ({ role, content })));
+      setLines((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: reply.message, citations: reply.citations }]);
+    } catch (error) {
+      setLines((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: error instanceof Error ? `I couldn’t answer that just now: ${error.message}` : "I couldn’t answer that just now." }]);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-[#0d2238]/45 p-3 sm:items-center" role="dialog" aria-modal="true" aria-label={`Ask Wattson about ${guide.title}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="flex max-h-[min(680px,88vh)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl">
+        <header className="flex items-start gap-3 border-b border-line bg-[#f8fafc] p-4">
+          <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand text-white"><Bot size={18}/></span>
+          <div className="min-w-0 flex-1"><div className="text-[10px] font-extrabold uppercase tracking-[.12em] text-[#3373aa]">Temporary guide help</div><h2 className="mt-1 truncate text-sm font-extrabold">{guide.title}</h2><p className="mt-1 text-[9px] text-muted">This subject chat is cleared when you close it and is not added to your project conversation.</p></div>
+          <button type="button" onClick={onClose} aria-label="Close guide chat" className="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-white text-muted"><X size={15}/></button>
+        </header>
+        <div ref={conversationRef} className="min-h-52 flex-1 space-y-3 overflow-y-auto p-4">
+          {lines.map((line) => <div key={line.id} className={`max-w-[88%] rounded-2xl px-4 py-3 text-[11px] leading-5 ${line.role === "user" ? "ml-auto bg-brand text-white" : "bg-[#eef3f8] text-[#20334a]"}`}><p className="whitespace-pre-wrap">{line.content}</p>{line.citations?.length ? <div className="mt-2 flex flex-wrap gap-2">{line.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer" className="text-[9px] font-bold underline">{citation.title}</a>)}</div> : null}</div>)}
+          {sending ? <div className="inline-flex rounded-2xl bg-[#eef3f8] px-4 py-3 text-[10px] font-bold text-muted">Wattson is checking this guide…</div> : null}
+        </div>
+        <form onSubmit={submit} className="border-t border-line p-3"><div className="flex gap-2"><input autoFocus value={input} onChange={(event) => setInput(event.target.value)} placeholder={`Ask about ${guide.title.toLowerCase()}…`} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-[#f8fafc] px-4 text-xs outline-none focus:border-brand"/><button type="submit" disabled={!input.trim() || sending} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send question"><Send size={16}/></button></div></form>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceHowToGuide, question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) => Promise<GuideChatReply>; location?: string }) {
   const [query, setQuery] = useState("");
+  const [selectedSection, setSelectedSection] = useState("");
   const [selectedId, setSelectedId] = useState<string>("");
+  const [chatGuide, setChatGuide] = useState<NoviceHowToGuide | null>(null);
   const search = query.trim().toLowerCase();
   const visible = search
     ? allHowToGuides.filter((guide) =>
@@ -1474,33 +1574,48 @@ export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceH
   const groups = [
     ...howToGroupOrder.filter((group) => visible.some((guide) => howToSection(guide) === group)),
     ...Array.from(new Set(visible.map(howToSection))).filter((group) => !howToGroupOrder.includes(group as (typeof howToGroupOrder)[number])),
-  ];
+  ].sort((left, right) => left.localeCompare(right));
   const selected = allHowToGuides.find((guide) => guide.id === selectedId);
   const localAuthority = localHowToAuthority(location);
 
   return (
-    <details className="relative">
+    <details className="relative" onToggle={(event) => { if (!event.currentTarget.open) { setQuery(""); setSelectedSection(""); setSelectedId(""); setChatGuide(null); } }}>
       <summary className="cursor-pointer list-none rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]">How to ▾</summary>
-      <div className="absolute right-0 top-11 z-50 max-h-[78vh] w-[min(64rem,94vw)] overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-2xl">
+      {selected ? <button type="button" aria-label="Close the open How-to guide" onClick={() => setSelectedId("")} className="fixed inset-0 z-[80] cursor-default bg-[#0d2238]/45 backdrop-blur-sm"/> : null}
+      <div className={selected ? "fixed left-1/2 top-1/2 z-[90] max-h-[82vh] w-[min(60rem,92vw)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-[0_30px_100px_rgba(9,37,61,.4)]" : `fixed left-1/2 top-28 z-50 max-h-[calc(100vh-8rem)] -translate-x-1/2 overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-2xl ${selectedSection ? "w-[min(42rem,92vw)]" : "w-[min(22rem,92vw)]"}`}>
         <div className="sticky top-0 z-10 -mx-1 bg-white px-1 pb-4">
           <label htmlFor="global-how-to-search" className="text-[10px] font-extrabold uppercase tracking-[.12em] text-[#52657a]">Search the complete How-to library</label>
-          <input id="global-how-to-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Panel mounts, MC4, battery, inverter..." className="mt-2 h-11 w-full rounded-xl border border-line bg-[#f8fafc] px-4 text-xs outline-none focus:border-brand" />
-          <p className="mt-2 text-[10px] text-muted">Available from every page. Site recommendations highlight useful guides but never hide the full library.</p>
+          <input id="global-how-to-search" type="search" value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value) setSelectedSection(""); }} placeholder="Panel mounts, MC4, battery, inverter..." className="mt-2 h-11 w-full rounded-xl border border-line bg-[#f8fafc] px-4 text-xs outline-none focus:border-brand" />
+          <p className="mt-2 text-[10px] text-muted">Choose a section, then choose the component or job you need.</p>
         </div>
         {selected ? (
-          <section>
-            <button type="button" onClick={() => setSelectedId("")} className="mb-3 text-[11px] font-bold text-brand">← All How-to guides</button>
+          <section className="relative">
+            <div className="mb-3 flex items-center justify-between gap-3"><button type="button" onClick={() => setSelectedId("")} className="text-[11px] font-bold text-brand">← Back to {selectedSection || "How-to guides"}</button><button type="button" onClick={() => setSelectedId("")} aria-label="Close guide" className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted"><X size={16}/></button></div>
             <div className="mx-auto flex min-h-44 w-full max-w-2xl items-center justify-center overflow-hidden rounded-2xl border border-[#dce5ee] bg-white p-4 shadow-[0_8px_24px_rgba(18,53,86,.08)]">
               {/* Preserve each local reference image at its natural size; never stretch a small diagram to banner width. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={selected.image} alt={`Reference image for ${selected.title}`} className="h-auto max-h-80 w-auto max-w-full object-contain" />
             </div>
-            <div className="mt-5"><div className="eyebrow">{selected.group}</div><h2 className="mt-2 text-xl font-extrabold">{selected.title}</h2><p className="mt-2 text-xs leading-5 text-muted">{selected.summary}</p>{(selected.whatItIs || selected.whatItDoes) && <div className="mt-4 grid gap-3 sm:grid-cols-2">{selected.whatItIs && <div className="rounded-xl bg-[#eef5fc] p-4"><strong className="text-[11px]">What is this?</strong><p className="mt-2 text-[10px] leading-5 text-muted">{selected.whatItIs}</p></div>}{selected.whatItDoes && <div className="rounded-xl bg-[#fff8df] p-4"><strong className="text-[11px]">What does it do?</strong><p className="mt-2 text-[10px] leading-5 text-muted">{selected.whatItDoes}</p></div>}</div>}<HowToTypes guide={selected}/><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><HowToList title="What to buy" items={selected.buy}/><HowToList title="Tools" items={selected.tools}/><HowToList title="Before you start" items={selected.before}/></div><div className="mt-5"><h3 className="text-sm font-extrabold">Put it together</h3><ol className="mt-3 grid gap-2 sm:grid-cols-2">{selected.steps.map((step, index) => <li key={step} className="flex gap-3 rounded-xl bg-[#f4f7fa] p-3 text-[10px] leading-5"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-[9px] font-bold text-white">{index + 1}</span>{step}</li>)}</ol></div><div className="mt-4 grid gap-3 md:grid-cols-2"><HowToList title="Final checks" items={selected.checks}/><div className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3"><strong className="text-[11px] text-[#765918]">{localAuthority.label}</strong><p className="mt-2 text-[10px] leading-4 text-[#765918]">{localAuthority.note}</p>{localAuthority.url && <a href={localAuthority.url} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-[10px] font-bold underline">Open local authority guidance</a>}</div></div><div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-xl bg-brand px-4 text-[11px] font-bold text-white">Open the detailed manufacturer guide →</a> : <p className="text-[10px] font-bold text-[#765918]">{selected.source}</p>}<button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onAsk(selected); }} className="inline-flex h-10 items-center rounded-xl border border-line px-4 text-[11px] font-bold text-brand">Stuck? Ask Wattson about this guide</button></div>{selected.sourceUrl && <p className="mt-2 text-[9px] leading-4 text-muted">Source example: {selected.source}</p>}</div>
+            <div className="mt-5"><div className="eyebrow">{selected.group}</div><h2 className="mt-2 text-xl font-extrabold">{selected.title}</h2><p className="mt-2 text-xs leading-5 text-muted">{selected.summary}</p>{(selected.whatItIs || selected.whatItDoes) && <div className="mt-4 grid gap-3 sm:grid-cols-2">{selected.whatItIs && <div className="rounded-xl bg-[#eef5fc] p-4"><strong className="text-[11px]">What is this?</strong><p className="mt-2 text-[10px] leading-5 text-muted">{selected.whatItIs}</p></div>}{selected.whatItDoes && <div className="rounded-xl bg-[#fff8df] p-4"><strong className="text-[11px]">What does it do?</strong><p className="mt-2 text-[10px] leading-5 text-muted">{selected.whatItDoes}</p></div>}</div>}<HowToTypes guide={selected}/><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><HowToList title="What to buy" items={selected.buy}/><HowToList title="Tools" items={selected.tools}/><HowToList title="Before you start" items={selected.before}/></div><div className="mt-5"><h3 className="text-sm font-extrabold">Put it together</h3><ol className="mt-3 grid gap-2 sm:grid-cols-2">{selected.steps.map((step, index) => <li key={step} className="flex gap-3 rounded-xl bg-[#f4f7fa] p-3 text-[10px] leading-5"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-[9px] font-bold text-white">{index + 1}</span>{step}</li>)}</ol></div><div className="mt-4 grid gap-3 md:grid-cols-2"><HowToList title="Final checks" items={selected.checks}/><div className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3"><strong className="text-[11px] text-[#765918]">{localAuthority.label}</strong><p className="mt-2 text-[10px] leading-4 text-[#765918]">{localAuthority.note}</p>{localAuthority.url && <a href={localAuthority.url} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-[10px] font-bold underline">Open local authority guidance</a>}</div></div><div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-xl bg-brand px-4 text-[11px] font-bold text-white">Open the detailed manufacturer guide →</a> : <p className="text-[10px] font-bold text-[#765918]">{selected.source}</p>}<button type="button" onClick={() => setChatGuide(selected)} className="inline-flex h-10 items-center rounded-xl border border-line px-4 text-[11px] font-bold text-brand">Stuck? Ask Wattson about this guide</button></div>{selected.sourceUrl && <p className="mt-2 text-[9px] leading-4 text-muted">Source example: {selected.source}</p>}<div className="mt-6 border-t border-line pt-4"><button type="button" onClick={() => setSelectedId("")} className="inline-flex h-10 items-center gap-2 rounded-xl border border-line bg-white px-4 text-[11px] font-bold text-brand">← Back to {selectedSection || "How-to guides"}</button></div></div>
           </section>
+        ) : search && visible.length ? (
+          <div><div className="mb-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">Matching sections</div><div className="space-y-1">{groups.map((group) => <button key={group} type="button" onClick={() => { setQuery(""); setSelectedSection(group); }} className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-3 text-left text-[11px] font-extrabold hover:bg-[#eef3f8]"><span>{group}</span><ChevronRight size={14} className="shrink-0 text-brand"/></button>)}</div></div>
+        ) : selectedSection ? (
+          <div className="grid gap-3 sm:grid-cols-[15rem_minmax(0,1fr)]">
+            <section className="sm:border-r sm:border-line sm:pr-4">
+              <div className="mb-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">How-to sections</div>
+              <div className="space-y-1">{groups.map((group) => <button key={group} type="button" onClick={() => { setSelectedSection(group); setSelectedId(""); }} className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-[11px] font-extrabold ${selectedSection === group ? "bg-[#fff4c5] text-brand" : "hover:bg-[#eef3f8]"}`}><span>{group}</span><ChevronRight size={14} className="shrink-0 text-brand"/></button>)}</div>
+            </section>
+            <section>
+              <div className="mb-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">{selectedSection}</div>
+              <div className="space-y-1">{allHowToGuides.filter((guide) => howToSection(guide) === selectedSection).sort((left, right) => left.title.localeCompare(right.title)).map((guide) => <button key={guide.id} type="button" onClick={() => setSelectedId(guide.id)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-transparent px-3 py-3 text-left text-[11px] font-bold hover:border-line hover:bg-[#eef3f8]">{guide.title}<ChevronRight size={14} className="shrink-0 text-brand"/></button>)}</div>
+            </section>
+          </div>
         ) : visible.length ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{groups.map((group) => <section key={group}><div className="px-2 pb-1 text-[9px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">{group}</div><div className="space-y-1">{visible.filter((guide) => guide.group === group).map((guide) => <button key={guide.id} type="button" onClick={() => setSelectedId(guide.id)} className="w-full rounded-xl px-2 py-2 text-left text-[11px] font-bold hover:bg-[#eef3f8]">{guide.title}</button>)}</div></section>)}</div>
+          <div><div className="mb-3 text-[10px] font-extrabold uppercase tracking-[.12em] text-[#7b8a9c]">How-to sections</div><div className="space-y-1">{groups.map((group) => <button key={group} type="button" onClick={() => setSelectedSection(group)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-transparent px-3 py-3 text-left text-[11px] font-extrabold hover:border-line hover:bg-[#eef3f8]"><span>{group}</span><span className="flex items-center gap-2 text-[9px] font-bold text-muted">{visible.filter((guide) => howToSection(guide) === group).length}<ChevronRight size={14} className="text-brand"/></span></button>)}</div></div>
         ) : <div className="rounded-xl bg-[#f4f7fa] p-5 text-center text-xs text-muted">No guide matches that search yet.</div>}
       </div>
+      {chatGuide ? <GuideWattsonChat guide={chatGuide} onAsk={onAsk} onClose={() => setChatGuide(null)}/> : null}
     </details>
   );
 }

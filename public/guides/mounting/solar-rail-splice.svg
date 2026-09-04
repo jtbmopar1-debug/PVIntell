@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-labelledby="title desc">
+  <title id="title">Solar mounting rail splice</title>
+  <desc id="desc">Two solar mounting rails joined by an internal structural splice with an expansion gap.</desc>
+  <defs>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#eef4f7"/><stop offset=".5" stop-color="#aebfca"/><stop offset="1" stop-color="#617685"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#17324d" flood-opacity=".2"/></filter>
+  </defs>
+  <rect width="900" height="520" rx="36" fill="#f4f8fb"/>
+  <g filter="url(#shadow)">
+    <path d="M55 182h365v160H55z" fill="url(#metal)" stroke="#526979" stroke-width="6"/>
+    <path d="M480 182h365v160H480z" fill="url(#metal)" stroke="#526979" stroke-width="6"/>
+    <path d="M320 218h260v88H320z" fill="#e5a82d" stroke="#9a6910" stroke-width="6"/>
+    <circle cx="365" cy="262" r="13" fill="#174f80"/><circle cx="535" cy="262" r="13" fill="#174f80"/>
+  </g>
+  <path d="M450 120v275" stroke="#d24a3d" stroke-width="5" stroke-dasharray="12 10"/>
+  <path d="M430 405h40M430 405l15-11M430 405l15 11M470 405l-15-11M470 405l-15 11" fill="none" stroke="#d24a3d" stroke-width="5" stroke-linecap="round"/>
+  <text x="450" y="458" fill="#15324d" font-family="Arial, sans-serif" font-size="26" font-weight="700" text-anchor="middle">Product-specified join and gap</text>
+</svg>

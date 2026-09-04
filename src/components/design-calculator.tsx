@@ -18,6 +18,18 @@ function Result({ label, value, detail }: { label: string; value: string; detail
   return <div className="rounded-2xl border border-line bg-white p-4"><span className="text-[10px] font-bold uppercase tracking-[.14em] text-muted">{label}</span><strong className="mt-2 block text-2xl tracking-[-.04em]">{value}</strong><p className="mt-1 text-[10px] leading-4 text-muted">{detail}</p></div>;
 }
 
+function pvLayoutLabel(design: Pick<DesignCalculatorState, "pvStrings" | "panelsPerString" | "panelCount">) {
+  if (design.pvStrings && design.panelsPerString) return `${design.pvStrings} parallel string${design.pvStrings === 1 ? "" : "s"} x ${design.panelsPerString} panels in series`;
+  if (design.panelsPerString) return `${design.panelsPerString} panels in series per string`;
+  if (design.pvStrings) return `${design.pvStrings} parallel string${design.pvStrings === 1 ? "" : "s"}`;
+  return design.panelCount ? "Series/parallel layout still to be checked" : "Panel count still to be checked";
+}
+
+function pvLayoutCountMismatch(design: Pick<DesignCalculatorState, "pvStrings" | "panelsPerString" | "panelCount">) {
+  if (!design.pvStrings || !design.panelsPerString || !design.panelCount) return false;
+  return design.pvStrings * design.panelsPerString !== design.panelCount;
+}
+
 export function DesignCalculator({ project, site }: { project: Project; site: Site }) {
   const [design, setDesign] = useState<DesignCalculatorState>(() => ({
     panelType: "bifacial", fitStatus: "unverified", peakSunHours: project.peakSunHours,
@@ -43,7 +55,12 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     const dropPercent = n(design.connectionVoltage) ? dropVolts / n(design.connectionVoltage) * 100 : 0;
     const allowedDrop = n(design.connectionVoltage) * n(design.maxVoltageDropPercent, 2) / 100;
     const minimumCable = allowedDrop ? factor * .0175 * n(design.connectionLengthM) * n(design.connectionCurrent) / allowedDrop : 0;
-    return { pvKw, rawArea, totalWeight, dailyKwh, orientationFactor, nominalBattery, usableBattery, dropVolts, dropPercent, minimumCable, planningBreaker: n(design.connectionCurrent) * 1.25 };
+    const configuredPanels = n(design.pvStrings) * n(design.panelsPerString);
+    const stringVmp = n(design.panelVmpV) * n(design.panelsPerString);
+    const stringVoc = n(design.panelVocV) * n(design.panelsPerString);
+    const arrayImp = n(design.panelImpA) * n(design.pvStrings);
+    const arrayIsc = n(design.panelIscA) * n(design.pvStrings);
+    return { pvKw, rawArea, totalWeight, dailyKwh, orientationFactor, nominalBattery, usableBattery, dropVolts, dropPercent, minimumCable, planningBreaker: n(design.connectionCurrent) * 1.25, configuredPanels, stringVmp, stringVoc, arrayImp, arrayIsc };
   }, [design, project.peakSunHours, site.latitude]);
 
   async function save(nextDesign: DesignCalculatorState = design) {
@@ -78,6 +95,8 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
 
     <section className="card overflow-hidden"><div className="flex items-center gap-3 border-b border-line bg-[#fff8d8] p-5"><Sun className="text-[#d99b00]" size={20}/><div><h2 className="font-extrabold">Solar array and physical fit</h2><p className="text-[10px] text-muted">Panel count is not fit-confirmed until usable dimensions, gaps, setbacks and obstructions are checked.</p></div></div><div className="grid gap-6 p-5 xl:grid-cols-[1.4fr_.8fr]"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><label className="space-y-1.5 text-xs font-bold"><span>Panel type</span><select value={design.panelType} onChange={(e) => set("panelType", e.target.value as DesignCalculatorState["panelType"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="bifacial">Bifacial</option><option value="monofacial">Monofacial</option><option value="other">Other</option><option value="not_selected">Not selected</option></select></label><NumberField label="Panel rating" value={design.panelWatts} unit="W" onChange={(v) => set("panelWatts", v)}/><NumberField label="Panel count" value={design.panelCount} onChange={(v) => set("panelCount", Math.round(v))}/><NumberField label="Panel length" value={design.panelLengthMm} unit="mm" onChange={(v) => set("panelLengthMm", v)}/><NumberField label="Panel width" value={design.panelWidthMm} unit="mm" onChange={(v) => set("panelWidthMm", v)}/><NumberField label="Panel weight" value={design.panelWeightKg} unit="kg" onChange={(v) => set("panelWeightKg", v)}/><NumberField label="Azimuth" value={design.azimuthDegrees} unit="°" max={360} onChange={(v) => set("azimuthDegrees", v)}/><NumberField label="Tilt" value={design.tiltDegrees} unit="°" max={90} onChange={(v) => set("tiltDegrees", v)}/><NumberField label="Peak sun hours" value={design.peakSunHours} unit="h/day" max={24} onChange={(v) => set("peakSunHours", v)}/><NumberField label="Planning efficiency" value={design.systemEfficiencyPercent} unit="%" max={100} onChange={(v) => set("systemEfficiencyPercent", v)}/><label className="space-y-1.5 text-xs font-bold sm:col-span-2"><span>Physical fit status</span><select value={design.fitStatus} onChange={(e) => set("fitStatus", e.target.value as DesignCalculatorState["fitStatus"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="unverified">Not checked yet</option><option value="verified">Verified against usable area</option><option value="does_not_fit">Does not fit</option></select></label></div><div className="grid grid-cols-2 gap-3"><Result label="PV rating" value={`${round(results.pvKw, 2)} kW`} detail="Panel nameplate total"/><Result label="Module area" value={`${round(results.rawArea, 1)} m²`} detail="Panels only; add mounting gaps and required clearances"/><Result label="Panel weight" value={`${round(results.totalWeight, 0)} kg`} detail="Modules only; structure and mounting still require assessment"/><Result label="Planning output" value={`${round(results.dailyKwh, 1)} kWh/day`} detail={`Illustrative yield using ${round(results.orientationFactor * 100, 0)}% orientation factor; not a production guarantee`}/></div></div>{design.panelType === "bifacial" && <p className="border-t border-line bg-[#f5f8fb] px-5 py-3 text-[10px] leading-4 text-muted">Bifacial is evaluated by default, but rear-side gain is not counted here. It depends on clearance, spacing and the surface below the panel; a flush roof can provide little extra rear yield.</p>}</section>
 
+    <section className="card overflow-hidden"><div className="border-b border-line bg-[#eef5fc] p-5"><div className="eyebrow">PV string layout</div><h2 className="mt-2 text-base font-extrabold">Series and parallel layout for the schematic</h2><p className="mt-1 text-xs leading-5 text-muted">This is the simple picture-language version: panels in series make one string; strings in parallel feed the selected controller or inverter input.</p></div><div className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4"><NumberField label="Parallel strings" value={design.pvStrings} onChange={(v) => set("pvStrings", Math.round(v))}/><NumberField label="Panels per series string" value={design.panelsPerString} onChange={(v) => set("panelsPerString", Math.round(v))}/><NumberField label="Panel Vmp" value={design.panelVmpV} unit="V" onChange={(v) => set("panelVmpV", v)}/><NumberField label="Panel Voc" value={design.panelVocV} unit="V" onChange={(v) => set("panelVocV", v)}/><NumberField label="Panel Imp" value={design.panelImpA} unit="A" onChange={(v) => set("panelImpA", v)}/><NumberField label="Panel Isc" value={design.panelIscA} unit="A" onChange={(v) => set("panelIscA", v)}/><div className="rounded-xl border border-line bg-white p-3 text-[10px] leading-4 text-muted sm:col-span-2"><strong className="block text-[11px] text-ink">{pvLayoutLabel(design)}</strong>{pvLayoutCountMismatch(design) ? <span className="mt-1 block text-[#b9412b]">Panel count does not match strings x panels per string.</span> : <span className="mt-1 block">This label appears on the proposed schematic.</span>}</div></div><div className="grid gap-3 border-t border-line bg-[#f5f8fb] p-5 sm:grid-cols-2 lg:grid-cols-4"><Result label="Configured panels" value={results.configuredPanels ? `${round(results.configuredPanels, 0)}` : "Not set"} detail="Parallel strings x panels in series"/><Result label="String Vmp" value={results.stringVmp ? `${round(results.stringVmp, 1)} V` : "Not set"} detail="Panel Vmp x panels in series"/><Result label="String Voc" value={results.stringVoc ? `${round(results.stringVoc, 1)} V` : "Not set"} detail="Nameplate subtotal only; not cold corrected"/><Result label="Array current" value={results.arrayImp ? `${round(results.arrayImp, 1)} A` : "Not set"} detail="Panel Imp x parallel strings"/></div></section>
+
     <div className="grid gap-6 xl:grid-cols-2"><section className="card overflow-hidden"><div className="flex items-center gap-3 border-b border-line p-5"><BatteryCharging className="text-brand" size={20}/><h2 className="font-extrabold">Inverter and battery</h2></div><div className="grid gap-4 p-5 sm:grid-cols-2"><label className="space-y-1.5 text-xs font-bold sm:col-span-2"><span>Equipment arrangement</span><select value={design.architecture ?? "not_decided"} onChange={(e) => set("architecture", e.target.value as DesignCalculatorState["architecture"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="not_decided">Not decided</option><option value="combined_hybrid_inverter">Combined hybrid inverter</option><option value="separate_solar_controller_and_inverter">Separate charge controller and inverter</option><option value="ac_coupled">AC-coupled</option></select></label><NumberField label="Inverter continuous rating" value={design.inverterKw} unit="kW" onChange={(v) => set("inverterKw", v)}/><label className="space-y-1.5 text-xs font-bold"><span>Battery chemistry</span><input value={design.batteryChemistry ?? ""} onChange={(e) => set("batteryChemistry", e.target.value)} placeholder="e.g. LiFePO₄" className="h-11 w-full rounded-xl border border-line bg-white px-3"/></label><NumberField label="Battery voltage" value={design.batteryVoltage} unit="V" onChange={(v) => set("batteryVoltage", v)}/><NumberField label="Capacity per battery" value={design.batteryAh} unit="Ah" onChange={(v) => set("batteryAh", v)}/><NumberField label="Number of batteries" value={design.batteryQuantity} onChange={(v) => set("batteryQuantity", Math.round(v))}/><NumberField label="Planning usable amount" value={design.usableBatteryPercent} unit="%" max={100} onChange={(v) => set("usableBatteryPercent", v)}/></div><div className="grid grid-cols-2 gap-3 border-t border-line bg-[#f5f8fb] p-5"><Result label="Nominal storage" value={`${round(results.nominalBattery, 1)} kWh`} detail="Voltage × amp-hours × quantity"/><Result label="Planning usable" value={`${round(results.usableBattery, 1)} kWh`} detail="Confirm the manufacturer’s allowed limits and BMS settings"/></div></section>
 
     <section className="card overflow-hidden"><div className="flex items-center gap-3 border-b border-line p-5"><Cable className="text-brand" size={20}/><div><h2 className="font-extrabold">Cable and protection check</h2><p className="text-[10px] text-muted">A first-pass planning check, not a final compliant cable or breaker selection.</p></div></div><div className="grid gap-4 p-5 sm:grid-cols-2"><label className="space-y-1.5 text-xs font-bold"><span>Connection type</span><select value={design.connectionType} onChange={(e) => set("connectionType", e.target.value as DesignCalculatorState["connectionType"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="dc">DC</option><option value="ac_single">Single-phase AC</option><option value="ac_three">Three-phase AC</option></select></label><NumberField label="Operating voltage" value={design.connectionVoltage} unit="V" onChange={(v) => set("connectionVoltage", v)}/><NumberField label="Expected current" value={design.connectionCurrent} unit="A" onChange={(v) => set("connectionCurrent", v)}/><NumberField label="One-way cable length" value={design.connectionLengthM} unit="m" onChange={(v) => set("connectionLengthM", v)}/><NumberField label="Chosen copper cable" value={design.cableSizeMm2} unit="mm²" onChange={(v) => set("cableSizeMm2", v)}/><NumberField label="Chosen breaker / fuse" value={design.breakerAmps} unit="A" onChange={(v) => set("breakerAmps", v)}/><NumberField label="Maximum voltage drop" value={design.maxVoltageDropPercent} unit="%" max={20} onChange={(v) => set("maxVoltageDropPercent", v)}/></div><div className="grid grid-cols-2 gap-3 border-t border-line bg-[#f5f8fb] p-5"><Result label="Calculated drop" value={`${round(results.dropVolts, 2)} V / ${round(results.dropPercent, 1)}%`} detail="Basic copper-conductor calculation; temperature and installation derating not included"/><Result label="Minimum by drop only" value={`${round(results.minimumCable, 1)} mm²`} detail={`Current-carrying capacity, fault protection and local rules may require larger; 125% current reference is ${round(results.planningBreaker, 1)} A`}/></div></section></div>
@@ -95,7 +114,7 @@ function ProposedPlan({ project, design, onToggle }: { project: Project; design:
     {
       id: "solar-array",
       title: "Solar array and mounting",
-      detail: design.panelCount ? `${design.panelCount} panels are in the working design. Confirm fit, structure, access and mounting before buying.` : "No panel count is proposed yet. Wattson needs physical-fit evidence before an array can be confirmed.",
+      detail: design.panelCount ? `${design.panelCount} panels are in the working design. ${pvLayoutLabel(design)}. Confirm fit, structure, access and mounting before buying.` : "No panel count is proposed yet. Wattson needs physical-fit evidence before an array can be confirmed.",
       help: "Measure the usable rectangle, subtract obstructions, then compare it with a real panel and mounting layout.",
     },
     {
@@ -236,8 +255,15 @@ function createProposedAsBuiltDraft(design: DesignCalculatorState): NonNullable<
       : design.architecture === "ac_coupled"
         ? ["Solar panels", "PV inverter", "AC connection", "Your lights, outlets and tools"]
         : ["Solar panels", "Inverter / charger to be selected", "Your lights, outlets and tools"];
+  const pvLayout = pvLayoutLabel(design);
+  const pvFeedLabel = design.pvStrings && design.panelsPerString
+    ? `${design.pvStrings} string${design.pvStrings === 1 ? "" : "s"} x ${design.panelsPerString} panels`
+    : "PV string layout to confirm";
+  const solarDetail = design.panelCount
+    ? `${design.panelCount} x ${design.panelWatts ?? "?"} W; ${pvLayout}`
+    : pvLayout;
   const nodes: NonNullable<Draft["nodes"]> = [
-    { id: "solar", label: "Solar panels", detail: design.panelCount ? `${design.panelCount} × ${design.panelWatts ?? "?"} W proposed` : "Panel count still to be checked", image: "/schematic-components/solar-panel-pv-module.jpg", x: 35, y: 30 },
+    { id: "solar", label: "Solar panels", detail: solarDetail, image: "/schematic-components/solar-panel-pv-module.jpg", x: 35, y: 30 },
     { id: "battery", label: "Battery storage", detail: design.batteryVoltage ? `${design.batteryVoltage} V storage proposed` : "Storage size still to be checked", image: "/schematic-components/lifepo4-battery-bank.jpg", x: 35, y: 345 },
     { id: "switchboard", label: "Building power board", detail: "Sends power to lights, outlets and tools", image: "/schematic-components/ac-distribution-board.jpg", x: 940, y: 180 },
     { id: "earth", label: "Safety earth", detail: "Provides a safety path into the ground", image: "/schematic-components/earth-electrode.svg", x: 940, y: 415 },
@@ -252,7 +278,7 @@ function createProposedAsBuiltDraft(design: DesignCalculatorState): NonNullable<
       { id: "ac-safety", label: "Building safety switch", detail: "Protects the cable feeding the building", image: "/schematic-components/ac-circuit-breaker-mcb.jpg", x: 745, y: 180 },
     );
     connections.push(
-      { from: "solar", to: "solar-safety", label: "Power from panels", kind: "solar-dc" },
+      { from: "solar", to: "solar-safety", label: pvFeedLabel, kind: "solar-dc" },
       { from: "solar-safety", to: "controller", label: "Safe solar feed", kind: "solar-dc" },
       { from: "controller", to: "battery", label: "Power charging battery", kind: "battery-dc" },
       { from: "battery", to: "battery-safety", label: "Stored battery power", kind: "battery-dc" },
@@ -270,7 +296,7 @@ function createProposedAsBuiltDraft(design: DesignCalculatorState): NonNullable<
       { id: "ac-safety", label: "Building safety switch", detail: "Protects the cable feeding the building", image: "/schematic-components/ac-circuit-breaker-mcb.jpg", x: 745, y: 180 },
     );
     connections.push(
-      { from: "solar", to: "solar-safety", label: "Power from panels", kind: "solar-dc" },
+      { from: "solar", to: "solar-safety", label: pvFeedLabel, kind: "solar-dc" },
       { from: "solar-safety", to: "pv-inverter", label: "Safe solar feed", kind: "solar-dc" },
       { from: "pv-inverter", to: "ac-safety", label: "Solar power for building", kind: "ac" },
       { from: "battery", to: "battery-safety", label: "Stored battery power", kind: "battery-dc" },
@@ -287,7 +313,7 @@ function createProposedAsBuiltDraft(design: DesignCalculatorState): NonNullable<
       { id: "ac-safety", label: "Building safety switch", detail: "Protects the cable feeding the building", image: "/schematic-components/ac-circuit-breaker-mcb.jpg", x: 745, y: 180 },
     );
     connections.push(
-      { from: "solar", to: "solar-safety", label: "Power from panels", kind: "solar-dc" },
+      { from: "solar", to: "solar-safety", label: pvFeedLabel, kind: "solar-dc" },
       { from: "solar-safety", to: "inverter", label: "Safe solar feed", kind: "solar-dc" },
       { from: "battery", to: "battery-safety", label: "Stored battery power", kind: "battery-dc" },
       { from: "battery-safety", to: "inverter", label: "Safe battery feed", kind: "battery-dc" },
@@ -296,5 +322,23 @@ function createProposedAsBuiltDraft(design: DesignCalculatorState): NonNullable<
       { from: "switchboard", to: "earth", label: "Safety earth wire", kind: "earth" },
     );
   }
-  return { createdAt: new Date().toISOString(), architecture: design.architecture, flow, nodes, connections, panelCount: design.panelCount, panelWatts: design.panelWatts, batteryVoltage: design.batteryVoltage, batteryAh: design.batteryAh, batteryQuantity: design.batteryQuantity, inverterKw: design.inverterKw };
+  return {
+    createdAt: new Date().toISOString(),
+    architecture: design.architecture,
+    flow,
+    nodes,
+    connections,
+    panelCount: design.panelCount,
+    panelWatts: design.panelWatts,
+    pvStrings: design.pvStrings,
+    panelsPerString: design.panelsPerString,
+    panelVmpV: design.panelVmpV,
+    panelVocV: design.panelVocV,
+    panelImpA: design.panelImpA,
+    panelIscA: design.panelIscA,
+    batteryVoltage: design.batteryVoltage,
+    batteryAh: design.batteryAh,
+    batteryQuantity: design.batteryQuantity,
+    inverterKw: design.inverterKw,
+  };
 }

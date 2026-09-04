@@ -5,17 +5,17 @@ export const batteryHardwareHowToGuides = [
     group: "Batteries and charging",
     id: "battery-enclosures-racks",
     title: "Battery boxes, cabinets and racks",
-    image: "/schematic-components/lifepo4-battery-bank.jpg",
+    image: "/guides/battery/battery-enclosure-types.png",
     summary: "Support the battery weight, guard live terminals and preserve the exact battery's ventilation, temperature and service clearances.",
     keywords: ["battery box", "battery cabinet", "battery rack", "battery shelf", "battery enclosure", "mount battery", "battery room"],
     whatItIs: "The structure and enclosure that restrains batteries and separates their stored electrical energy from people, tools, water, heat, impact and other hazards.",
     whatItDoes: "It carries concentrated weight, prevents movement, guards terminals and organises cables while allowing the product's required cooling, venting, inspection and replacement access.",
     usedFor: ["Single mobile batteries", "Wall or floor storage batteries", "Rack modules", "Flooded lead-acid banks", "Outdoor battery systems"],
     types: [
-      { name: "Vented battery box", description: "A restrained box with a lid and a designed route for any required gas ventilation.", bestFor: "A compatible low-voltage battery in a mobile, marine or small stationary installation.", watchFor: "A box is not automatically acid-proof, ignition-protected, weatherproof or adequately vented." },
-      { name: "Floor or wall cabinet", description: "A purpose-built enclosure holding one or more supported modules with guarded connections.", bestFor: "A battery family expressly approved for that cabinet and orientation.", watchFor: "Wall strength, seismic/restraint loads, clearances, cooling and fire/location rules." },
-      { name: "19-inch or proprietary rack", description: "A frame for slide-in battery modules, often with communications and common DC distribution.", bestFor: "Matched rack-battery product families.", watchFor: "Rack depth, rail load, module count, airflow, busbar/fuse architecture and lifting access." },
-      { name: "Outdoor rated enclosure", description: "A weather-rated housing with managed heat, condensation, drainage and cable entries.", bestFor: "Products whose environmental and temperature ratings permit the exact outdoor location.", watchFor: "Sun can overheat a sealed cabinet; an IP rating alone does not solve condensation, flooding or battery ventilation." }
+      { name: "Vented battery box", image: "/guides/battery/vented-battery-box.png", description: "A restrained box with a lid and a designed route for any required gas ventilation.", bestFor: "A compatible low-voltage battery in a mobile, marine or small stationary installation.", watchFor: "A box is not automatically acid-proof, ignition-protected, weatherproof or adequately vented." },
+      { name: "Floor or wall cabinet", image: "/guides/battery/battery-cabinet.png", description: "A purpose-built enclosure holding one or more supported modules with guarded connections.", bestFor: "A battery family expressly approved for that cabinet and orientation.", watchFor: "Wall strength, seismic/restraint loads, clearances, cooling and fire/location rules." },
+      { name: "19-inch or proprietary rack", image: "/guides/battery/rack-mount-battery-system.png", description: "A frame for slide-in battery modules, often with communications and common DC distribution.", bestFor: "Matched rack-battery product families.", watchFor: "Rack depth, rail load, module count, airflow, busbar/fuse architecture and lifting access." },
+      { name: "Outdoor rated enclosure", image: "/guides/battery/outdoor-battery-enclosure.png", description: "A weather-rated housing with managed heat, condensation, drainage and cable entries.", bestFor: "Products whose environmental and temperature ratings permit the exact outdoor location.", watchFor: "Sun can overheat a sealed cabinet; an IP rating alone does not solve condensation, flooding or battery ventilation." }
     ],
     questions: [
       { question: "Can I put batteries in any cupboard?", answer: "No. Confirm floor/wall load, enclosure material, battery orientation, ventilation, temperature, clearances, access, fire and local location restrictions before treating a cupboard as a battery space." },
@@ -58,15 +58,15 @@ export const batteryHardwareHowToGuides = [
     group: "Batteries and charging",
     id: "balanced-parallel-battery-wiring",
     title: "Balanced parallel battery wiring",
-    image: "/schematic-components/busbar.jpg",
+    image: "/guides/battery/parallel-bank-busbars.svg",
     summary: "Give parallel batteries deliberately equal current paths instead of attaching every system cable to the nearest unit.",
     keywords: ["parallel batteries", "balanced battery bank", "equal cable length", "diagonal connection", "battery busbar", "uneven current"],
     whatItIs: "A bank layout in which each parallel battery or string sees an equivalent resistance through cables, lugs, fuses and connection points.",
     whatItDoes: "It reduces avoidable current imbalance so one battery is not charged and discharged harder merely because its electrical path is shorter.",
     types: [
-      { name: "Common busbars", description: "Equal designed positive and negative leads connect each battery/string to common distribution bars.", bestFor: "Clear, scalable banks with individual protection where required.", watchFor: "Cable, lug, fuse and terminal resistance—not length alone—forms the path." },
-      { name: "Opposite-end or diagonal take-off", description: "Main positive and negative leave from opposite ends of a small parallel bank.", bestFor: "Some simple banks when the battery maker permits it.", watchFor: "It is not perfectly equal for every large bank and does not replace individual protection rules." },
-      { name: "Manufacturer integrated bus system", description: "Matched modules connect through the maker's rack, busbar and communication architecture.", bestFor: "Supported modular batteries.", watchFor: "Follow module count, firmware, fuse and cable-position rules exactly." }
+      { name: "Common busbars", image: "/guides/battery/parallel-bank-busbars.svg", description: "Equal designed positive and negative leads connect each battery/string to common distribution bars.", bestFor: "Clear, scalable banks with individual protection where required.", watchFor: "Cable, lug, fuse and terminal resistance—not length alone—forms the path." },
+      { name: "Opposite-end or diagonal take-off", image: "/guides/battery/parallel-bank-diagonal.svg", description: "Main positive and negative leave from opposite ends of a small parallel bank.", bestFor: "Some simple banks when the battery maker permits it.", watchFor: "It is not perfectly equal for every large bank and does not replace individual protection rules." },
+      { name: "Manufacturer integrated bus system", image: "/guides/battery/integrated-battery-rack-bus.svg", description: "Matched modules connect through the maker's rack, busbar and communication architecture.", bestFor: "Supported modular batteries.", watchFor: "Follow module count, firmware, fuse and cable-position rules exactly." }
     ],
     questions: [
       { question: "Why not connect the inverter to the first battery?", answer: "The nearest unit can have the lowest-resistance path and carry more current. Equal path design distributes work more evenly." },
@@ -91,9 +91,9 @@ export const batteryHardwareHowToGuides = [
     whatItIs: "A device converting AC supply into controlled DC charging. It may be standalone or built into an inverter/charger.",
     whatItDoes: "It limits voltage and current through charging stages appropriate to the exact battery and can maintain storage when its product mode permits.",
     types: [
-      { name: "Portable charger", description: "Temporary charger using clamps or a removable lead.", bestFor: "A supported individual battery and controlled charging location.", watchFor: "Connection order, ventilation, unattended use, lead protection and the exact battery mode." },
-      { name: "Permanently mounted charger", description: "Hardwired or fixed charger connected through designed AC and DC circuits.", bestFor: "Stationary, vehicle or marine service charging.", watchFor: "DC protection near the battery, airflow, heat, source capacity and local AC work rules." },
-      { name: "Inverter/charger", description: "One unit both creates AC from the battery and charges it from an AC source.", bestFor: "Integrated backup, off-grid or mobile systems.", watchFor: "AC input limit, generator compatibility, transfer/neutral-earth behavior, BMS communication and battery current limit." }
+      { name: "Portable charger", image: "/guides/battery/portable-ac-charger.svg", description: "Temporary charger using clamps or a removable lead.", bestFor: "A supported individual battery and controlled charging location.", watchFor: "Connection order, ventilation, unattended use, lead protection and the exact battery mode." },
+      { name: "Permanently mounted charger", image: "/guides/battery/fixed-ac-charger.svg", description: "Hardwired or fixed charger connected through designed AC and DC circuits.", bestFor: "Stationary, vehicle or marine service charging.", watchFor: "DC protection near the battery, airflow, heat, source capacity and local AC work rules." },
+      { name: "Inverter/charger", image: "/guides/battery/inverter-charger.svg", description: "One unit both creates AC from the battery and charges it from an AC source.", bestFor: "Integrated backup, off-grid or mobile systems.", watchFor: "AC input limit, generator compatibility, transfer/neutral-earth behavior, BMS communication and battery current limit." }
     ],
     questions: [
       { question: "Can any 12 V charger charge any 12 V battery?", answer: "No. Nominal voltage alone is insufficient. Chemistry, absorption/float behavior, charge current, temperature compensation, BMS control and maker approval must match." },
@@ -118,10 +118,10 @@ export const batteryHardwareHowToGuides = [
     whatItIs: "A converter taking one DC voltage/source and producing a regulated DC output; charger models apply a battery charge profile, while power-supply models feed loads.",
     whatItDoes: "It separates voltage domains, limits charging current and can protect an alternator/source or prevent series-bank imbalance caused by midpoint loads.",
     types: [
-      { name: "Battery-to-battery charger", description: "Uses an alternator or source battery to charge a service battery under controlled voltage/current.", bestFor: "Vehicle, marine and dual-battery systems.", watchFor: "Smart-alternator detection, source capacity, battery profile, heat and shutdown control." },
-      { name: "Isolated DC-DC", description: "Input and output do not share a direct negative conductor inside the converter.", bestFor: "Architectures requiring galvanic separation or controlled grounding.", watchFor: "Isolation must be part of the complete earthing/bonding design; it is not automatically required." },
-      { name: "Non-isolated DC-DC", description: "Input and output normally share negative while voltage is converted.", bestFor: "Compatible common-negative systems.", watchFor: "Ground loops, chassis paths and negative conductor current still require design." },
-      { name: "Load converter", description: "Supplies a lower/higher DC load voltage rather than charging a battery.", bestFor: "12 V loads from a 24/48 V bank or another deliberately converted load domain.", watchFor: "Output regulation, startup current, isolation, fuse placement and continuous/peak rating." }
+      { name: "Battery-to-battery charger", image: "/guides/battery/battery-to-battery-charger.svg", description: "Uses an alternator or source battery to charge a service battery under controlled voltage/current.", bestFor: "Vehicle, marine and dual-battery systems.", watchFor: "Smart-alternator detection, source capacity, battery profile, heat and shutdown control." },
+      { name: "Isolated DC-DC", image: "/guides/battery/isolated-dc-dc.svg", description: "Input and output do not share a direct negative conductor inside the converter.", bestFor: "Architectures requiring galvanic separation or controlled grounding.", watchFor: "Isolation must be part of the complete earthing/bonding design; it is not automatically required." },
+      { name: "Non-isolated DC-DC", image: "/guides/battery/non-isolated-dc-dc.svg", description: "Input and output normally share negative while voltage is converted.", bestFor: "Compatible common-negative systems.", watchFor: "Ground loops, chassis paths and negative conductor current still require design." },
+      { name: "Load converter", image: "/guides/battery/dc-load-converter.svg", description: "Supplies a lower/higher DC load voltage rather than charging a battery.", bestFor: "12 V loads from a 24/48 V bank or another deliberately converted load domain.", watchFor: "Output regulation, startup current, isolation, fuse placement and continuous/peak rating." }
     ],
     questions: [
       { question: "Why not connect a 12 V load to one battery in a 24 V bank?", answer: "That unit discharges harder and the series bank becomes unbalanced. A designed DC-DC converter supplies the lower voltage from the whole bank." },
@@ -146,9 +146,9 @@ export const batteryHardwareHowToGuides = [
     whatItIs: "A contactor is an electrically controlled high-current switch. A pre-charge path temporarily connects through a resistor before the main contactor closes.",
     whatItDoes: "The BMS can allow or stop charge/discharge through contactors, while pre-charge reduces damaging inrush into inverter or controller input capacitors.",
     types: [
-      { name: "Charge/discharge enable signals", description: "Low-current BMS outputs instruct compatible chargers, inverters or intermediate relays.", bestFor: "Equipment designed to obey those signals or communications.", watchFor: "A signal output may not be able to drive a contactor coil directly." },
-      { name: "Main contactor", description: "A rated electromagnetic switch opens or closes the battery power path.", bestFor: "BMS-controlled battery systems designed around that exact contactor.", watchFor: "DC voltage, continuous/fault current, coil voltage, economiser, polarity, arc direction and welded-contact detection." },
-      { name: "Pre-charge contactor and resistor", description: "A smaller controlled path charges downstream capacitance before the main path closes.", bestFor: "Systems whose inverter/controller and BMS architecture specifies pre-charge.", watchFor: "Resistor energy/time, sequence feedback, repeated attempts and failed-precharge detection must be engineered." }
+      { name: "Charge/discharge enable signals", image: "/guides/battery/bms-enable-signals.svg", description: "Low-current BMS outputs instruct compatible chargers, inverters or intermediate relays.", bestFor: "Equipment designed to obey those signals or communications.", watchFor: "A signal output may not be able to drive a contactor coil directly." },
+      { name: "Main contactor", image: "/guides/battery/main-battery-contactor.svg", description: "A rated electromagnetic switch opens or closes the battery power path.", bestFor: "BMS-controlled battery systems designed around that exact contactor.", watchFor: "DC voltage, continuous/fault current, coil voltage, economiser, polarity, arc direction and welded-contact detection." },
+      { name: "Pre-charge contactor and resistor", image: "/guides/battery/precharge-contactor-resistor.svg", description: "A smaller controlled path charges downstream capacitance before the main path closes.", bestFor: "Systems whose inverter/controller and BMS architecture specifies pre-charge.", watchFor: "Resistor energy/time, sequence feedback, repeated attempts and failed-precharge detection must be engineered." }
     ],
     questions: [
       { question: "Does every battery need contactors?", answer: "No. Some batteries contain switching; some use external contactors; some low-voltage products use other permitted disconnect control. Follow the complete battery/BMS/inverter design." },
@@ -173,10 +173,10 @@ export const batteryHardwareHowToGuides = [
     whatItIs: "Sensors, BMS limits, ventilation, insulation, heaters or cooling used to keep a battery inside its permitted operating range.",
     whatItDoes: "It prevents prohibited charging/discharging, adjusts charge behavior where required and avoids hidden capacity/power loss or accelerated ageing from temperature extremes.",
     types: [
-      { name: "Temperature-compensated lead-acid charging", description: "A sensor lets the charger adjust voltage as battery temperature changes.", bestFor: "Lead-acid products whose manual specifies compensation.", watchFor: "Sensor location and compensation slope must match the battery/charger." },
-      { name: "BMS low/high-temperature limits", description: "The BMS reduces or stops charge/discharge outside programmed cell limits.", bestFor: "Compatible managed lithium or sodium battery systems.", watchFor: "A disconnect is protection, not thermal conditioning; every charge source must obey it." },
-      { name: "Integrated or external battery heating", description: "A controlled heater raises cell temperature before permitted cold charging.", bestFor: "An exact product/system designed for heating.", watchFor: "Heater energy source, sensor placement, thermostat/BMS control, insulation and fire/environment rating." },
-      { name: "Cabinet ventilation or active cooling", description: "Moves or rejects heat from cells and electronics.", bestFor: "Installations whose loss/ambient calculations require it.", watchFor: "Dust, salt, humidity, condensation, fan failure and uneven module temperatures." }
+      { name: "Temperature-compensated lead-acid charging", image: "/guides/battery/lead-acid-temperature-sensor.svg", description: "A sensor lets the charger adjust voltage as battery temperature changes.", bestFor: "Lead-acid products whose manual specifies compensation.", watchFor: "Sensor location and compensation slope must match the battery/charger." },
+      { name: "BMS low/high-temperature limits", image: "/guides/battery/bms-temperature-limits.svg", description: "The BMS reduces or stops charge/discharge outside programmed cell limits.", bestFor: "Compatible managed lithium or sodium battery systems.", watchFor: "A disconnect is protection, not thermal conditioning; every charge source must obey it." },
+      { name: "Integrated or external battery heating", image: "/guides/battery/battery-heater.svg", description: "A controlled heater raises cell temperature before permitted cold charging.", bestFor: "An exact product/system designed for heating.", watchFor: "Heater energy source, sensor placement, thermostat/BMS control, insulation and fire/environment rating." },
+      { name: "Cabinet ventilation or active cooling", image: "/guides/battery/battery-cabinet-cooling.svg", description: "Moves or rejects heat from cells and electronics.", bestFor: "Installations whose loss/ambient calculations require it.", watchFor: "Dust, salt, humidity, condensation, fan failure and uneven module temperatures." }
     ],
     questions: [
       { question: "Can LiFePO4 charge below freezing?", answer: "Only within the exact cell/battery maker's permitted temperature and BMS/heating behavior. Do not generalise from another LiFePO4 product." },

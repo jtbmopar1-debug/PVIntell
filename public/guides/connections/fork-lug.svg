@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 260" role="img" aria-labelledby="t d">
+  <title id="t">Fork or spade cable lug</title><desc id="d">An insulated wire terminal with an open fork fitted beneath a terminal screw.</desc><rect width="480" height="260" rx="22" fill="#f7fafc"/>
+  <text x="240" y="34" text-anchor="middle" font-family="Arial,sans-serif" font-size="20" font-weight="700" fill="#173a60">FORK / SPADE LUG</text><path d="M45 135h205" stroke="#24679a" stroke-width="40" stroke-linecap="round"/><path d="M220 106h95l68-48 31 28-45 49 45 49-31 28-68-48h-95z" fill="#d6a955" stroke="#8b641e" stroke-width="5"/><path d="M370 103l-38 32 38 32" fill="#f7fafc" stroke="#8b641e" stroke-width="5"/><circle cx="379" cy="135" r="14" fill="#6f8192"/>
+  <text x="240" y="238" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" fill="#5b6d80">Open tongue fits only terminals that expressly accept it</text>
+</svg>

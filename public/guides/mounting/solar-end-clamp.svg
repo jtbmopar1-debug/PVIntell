@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-labelledby="title desc">
+  <title id="title">Solar panel end clamp</title>
+  <desc id="desc">An end clamp retaining the outside frame of the last solar panel on a mounting rail.</desc>
+  <defs><linearGradient id="glass" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#246ca5"/><stop offset="1" stop-color="#071e36"/></linearGradient><filter id="shadow"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#17324d" flood-opacity=".2"/></filter></defs>
+  <rect width="900" height="520" rx="36" fill="#f4f8fb"/>
+  <g filter="url(#shadow)">
+    <path d="M245 100h500v240H245z" fill="url(#glass)" stroke="#60798b" stroke-width="18"/>
+    <path d="M150 350h650v72H150z" fill="#aebfca" stroke="#526979" stroke-width="6"/>
+    <path d="M172 150h72v110h55v62H172z" fill="#d6e0e6" stroke="#536a7b" stroke-width="6"/>
+    <path d="M199 255v110" stroke="#174f80" stroke-width="22" stroke-linecap="round"/>
+    <circle cx="199" cy="298" r="16" fill="#174f80" stroke="#eef5fa" stroke-width="5"/>
+  </g>
+  <path d="M178 130h74" stroke="#e6ad32" stroke-width="7" stroke-linecap="round"/>
+  <text x="450" y="475" fill="#15324d" font-family="Arial, sans-serif" font-size="26" font-weight="700" text-anchor="middle">End clamp retains the outside frame</text>
+</svg>

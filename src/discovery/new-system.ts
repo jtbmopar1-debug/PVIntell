@@ -31,6 +31,12 @@ function hasPoolUse(answers: DiscoveryAnswers) {
   return answers.pool_or_spa === "existing" || answers.pool_or_spa === "planned";
 }
 
+function hasEvUse(answers: DiscoveryAnswers) {
+  const selected = [answers.everyday_needs, answers.heavy_loads, answers.future_changes]
+    .flatMap((value) => Array.isArray(value) ? value : [value]);
+  return selected.includes("ev");
+}
+
 function needsModuleElectronicsCompatibility(answers: DiscoveryAnswers) {
   const choices = Array.isArray(answers.module_level_electronics) ? answers.module_level_electronics : [answers.module_level_electronics];
   return choices.some((value) => ["optimisers", "microinverters", "compare", "existing_mixed"].includes(String(value)));
@@ -241,6 +247,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "security", label: "Security, cameras or gate", description: "Cameras, alarms, gates and communications." },
       { value: "medical", label: "Medical equipment", description: "Any essential health-related electrical equipment." },
       { value: "cooling", label: "Cooling or ventilation", description: "Fans, air conditioning or extraction." },
+      { value: "ev", label: "Electric-vehicle charging", description: "A vehicle that regularly charges at this property." },
       { value: "pool_circulation", label: "Pool or spa circulation", description: "Filtration, sanitation, circulation pumps and controls—not the heating energy itself." },
       { value: "none", label: "No regular loads yet", description: "The building is not yet in use or its loads are not defined." },
     ],
@@ -278,7 +285,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "heat_pump", label: "Heat pump or air conditioning", description: "Heating/cooling compressor load." },
       { value: "electric_water", label: "Electric water heating", description: "Cylinder, instant heater or heat-pump water heater." },
       { value: "pool_heat_pump", label: "Pool or spa heat pump", description: "A seasonal compressor load that may run for many hours." },
-      { value: "ev", label: "EV charging", description: "Vehicle charging now or later." },
+      { value: "ev", label: "EV charging", description: "Vehicle charging currently used or being added as part of this system." },
       { value: "none", label: "None of these", description: "No known large or high-surge loads." },
     ],
   },
@@ -291,6 +298,61 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "heated_pool", label: "Pool, spa or pool heating", description: "Future circulation, solar-thermal collectors, heat pump or another heating method." },
       { value: "more_pv", label: "More solar panels", description: "Expanding the array later." }, { value: "none", label: "Nothing planned yet", description: "Keep the design focused on current needs." },
     ],
+  },
+  {
+    id: "ev_status", stage: "design", title: "Where are you up to with EV charging?",
+    noviceHelp: "This separates a real load from a future allowance. PVIntell will not pretend a future vehicle already consumes electricity.", type: "choice", options: [
+      { value: "vehicle_and_charger", label: "Vehicle and charger already here", description: "Record the real vehicle, charging equipment and measured use where possible." },
+      { value: "vehicle_no_charger", label: "Vehicle here, charger not chosen", description: "Use the vehicle inlet and daily travel to plan a suitable charging option." },
+      { value: "vehicle_planned", label: "Vehicle planned", description: "Keep expandable capacity without adding invented present-day energy use." },
+      { value: "charger_provision_only", label: "Prepare the property only", description: "Allow routes, board space and capacity while leaving the vehicle and charger unselected." },
+    ], showWhen: hasEvUse,
+  },
+  {
+    id: "ev_vehicle_details", stage: "design", title: "What vehicle or charging equipment do you already know?",
+    noviceHelp: "A model/year, photo of the charging inlet, charger label or simple ‘not chosen yet’ is enough. Wattson uses this to check connector and charging limits instead of guessing.", type: "textarea", showWhen: hasEvUse,
+  },
+  {
+    id: "ev_travel_profile", stage: "design", title: "How much driving normally needs to be replaced at home?",
+    noviceHelp: "Describe a typical day and the occasional longest day, including kilometres or miles. If the car already reports charging energy, enter that too. This determines daily energy; battery size alone does not.", technicalHelp: "Prefer measured wall energy in kWh. Otherwise retain distance and vehicle consumption as separate evidence, include charging losses explicitly and do not infer daily energy from traction-battery capacity.", type: "textarea", showWhen: hasEvUse,
+  },
+  {
+    id: "ev_charging_window", stage: "design", title: "When is the vehicle usually parked long enough to charge?",
+    noviceHelp: "Choose every realistic window. A long overnight stay may need less charging power than a short turnaround, while daytime parking can use more direct solar.", type: "multi_choice", options: [
+      { value: "daytime", label: "Daytime at home", description: "Can follow available solar while the vehicle is parked." },
+      { value: "overnight", label: "Overnight", description: "A long window can reduce the required charging rate." },
+      { value: "short_turnaround", label: "Short turnaround", description: "The vehicle sometimes needs substantial energy in only a few hours." },
+      { value: "irregular", label: "It varies", description: "Use a flexible energy target and departure deadline rather than one fixed clock." },
+    ], showWhen: hasEvUse,
+  },
+  {
+    id: "ev_charging_priority", stage: "design", title: "What matters most when the EV charges?",
+    noviceHelp: "These choices tell Wattson whether to favour spare solar, guarantee a departure target, protect backup energy or limit property demand.", type: "multi_choice", options: [
+      { value: "solar_surplus", label: "Use spare solar first", description: "Vary charging around measured solar that the property is not using." },
+      { value: "departure_target", label: "Be ready by departure", description: "Permit another source when necessary to reach the required energy by a chosen time." },
+      { value: "low_tariff", label: "Use lower-price periods", description: "Schedule grid charging where a real time tariff supports it." },
+      { value: "protect_site_capacity", label: "Never overload the property", description: "Dynamically reduce EV current as other loads rise." },
+      { value: "preserve_backup", label: "Preserve home-battery reserve", description: "Do not silently drain outage or off-grid reserve into the vehicle." },
+    ], showWhen: hasEvUse,
+  },
+  {
+    id: "ev_available_supply", stage: "design", title: "What charging supply is already available at the parking position?",
+    noviceHelp: "Choose what is physically present—not what might be possible. A charger label or switchboard/circuit photo can be reviewed later.", type: "choice", options: [
+      { value: "portable_outlet", label: "Portable charger and outlet", description: "The outlet, circuit, plug temperature and continuous-load suitability still need checking." },
+      { value: "fixed_single_phase", label: "Fixed single-phase wallbox", description: "Record its real model, circuit and configured current." },
+      { value: "fixed_three_phase", label: "Fixed three-phase wallbox", description: "Vehicle, Site and EVSE must all support the intended arrangement." },
+      { value: "no_supply", label: "Nothing installed yet", description: "Plan the parking position, cable route, circuit and power management from scratch." },
+      { value: "unknown", label: "I’m not sure", description: "Keep the rating unresolved and let Wattson explain what to photograph." },
+    ], showWhen: hasEvUse,
+  },
+  {
+    id: "ev_bidirectional_goal", stage: "design", title: "Should vehicle-to-home or vehicle-to-grid remain an option?",
+    noviceHelp: "Only some vehicle, charger and regional combinations can send energy outward. Choosing ‘consider it’ records a compatibility goal, not a promised feature.", type: "choice", options: [
+      { value: "no", label: "Normal charging only", description: "The vehicle receives energy but is not planned as a property power source." },
+      { value: "v2l", label: "Vehicle-to-load interests me", description: "Use the vehicle’s supported outlet for compatible individual loads." },
+      { value: "consider_v2h", label: "Keep V2H/V2G possible", description: "Check the complete vehicle, bidirectional charger, transfer/export and local approval ecosystem." },
+      { value: "existing_supported", label: "I already have supported V2X equipment", description: "Capture every exact model and commissioned connection before treating it as available." },
+    ], showWhen: hasEvUse,
   },
   {
     id: "delivery_approach", stage: "design", title: "How do you want to approach the build?",

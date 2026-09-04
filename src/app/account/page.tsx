@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { setPassword } from "./actions";
 import { PasswordField } from "@/components/password-field";
+import { MeasurementUnitsSettings } from "@/components/measurement-units-settings";
 
 export default async function AccountPage({
   searchParams,
@@ -20,11 +21,11 @@ export default async function AccountPage({
       <div className="mx-auto max-w-2xl">
         <div className="flex items-center justify-between">
           <Link
-            href="/"
+            href="/dashboard"
             className="flex items-center gap-2 text-xs font-bold text-muted"
           >
             <ArrowLeft size={15} />
-            Back to PVIntell
+            Back to dashboard
           </Link>
           <div className="flex items-center gap-2 font-display text-sm font-extrabold">
               <span className="grid size-8 place-items-center rounded-lg bg-[#f6c945] text-[#143c63]">
@@ -36,10 +37,10 @@ export default async function AccountPage({
         <div className="mt-12">
           <div className="eyebrow">Account settings</div>
           <h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.045em]">
-            Sign-in and security
+            Settings
           </h1>
           <p className="mt-2 text-sm text-muted">
-            Manage how you access your PVIntell projects.
+            Manage your display preferences and how you access PVIntell.
           </p>
         </div>
         {(notice.error || notice.message || notice.setup === "password") && (
@@ -92,6 +93,7 @@ export default async function AccountPage({
             </div>
           </div>
         </section>
+        <MeasurementUnitsSettings />
       </div>
     </main>
   );

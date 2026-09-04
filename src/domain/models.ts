@@ -130,6 +130,12 @@ export interface DesignCalculatorState {
     connections?: Array<{ from: string; to: string; label: string; kind: "solar-dc" | "battery-dc" | "ac" | "earth" }>;
     panelCount?: number;
     panelWatts?: number;
+    pvStrings?: number;
+    panelsPerString?: number;
+    panelVmpV?: number;
+    panelVocV?: number;
+    panelImpA?: number;
+    panelIscA?: number;
     batteryVoltage?: number;
     batteryAh?: number;
     batteryQuantity?: number;
@@ -143,6 +149,12 @@ export interface DesignCalculatorState {
   panelType?: "bifacial" | "monofacial" | "other" | "not_selected";
   panelWatts?: number;
   panelCount?: number;
+  pvStrings?: number;
+  panelsPerString?: number;
+  panelVmpV?: number;
+  panelVocV?: number;
+  panelImpA?: number;
+  panelIscA?: number;
   targetPvKw?: number;
   panelLengthMm?: number;
   panelWidthMm?: number;

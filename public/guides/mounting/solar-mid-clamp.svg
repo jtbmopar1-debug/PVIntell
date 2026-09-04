@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-labelledby="title desc">
+  <title id="title">Solar panel mid clamp</title>
+  <desc id="desc">A mid clamp holding the frames of two adjacent solar panels onto one mounting rail.</desc>
+  <defs><linearGradient id="glass" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#246ca5"/><stop offset="1" stop-color="#071e36"/></linearGradient><filter id="shadow"><feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#17324d" flood-opacity=".2"/></filter></defs>
+  <rect width="900" height="520" rx="36" fill="#f4f8fb"/>
+  <g filter="url(#shadow)">
+    <path d="M70 105h335v230H70zM495 105h335v230H495z" fill="url(#glass)" stroke="#60798b" stroke-width="18"/>
+    <path d="M55 345h790v75H55z" fill="#aebfca" stroke="#526979" stroke-width="6"/>
+    <path d="M382 78h136v70h-38v80h-60v-80h-38z" fill="#d6e0e6" stroke="#536a7b" stroke-width="6"/>
+    <circle cx="450" cy="112" r="17" fill="#174f80" stroke="#eef5fa" stroke-width="5"/>
+  </g>
+  <path d="M405 150h-35M495 150h35" stroke="#e6ad32" stroke-width="7" stroke-linecap="round"/>
+  <text x="450" y="475" fill="#15324d" font-family="Arial, sans-serif" font-size="26" font-weight="700" text-anchor="middle">One clamp holds two panel frames</text>
+</svg>

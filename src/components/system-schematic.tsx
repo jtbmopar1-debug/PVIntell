@@ -325,9 +325,39 @@ function ConnectionPath({
   );
 }
 
+function pvArrangement(array: PVArray) {
+  if (array.strings && array.panelsPerString)
+    return `${array.strings} parallel string${array.strings === 1 ? "" : "s"} x ${array.panelsPerString} panels in series`;
+  if (array.panelsPerString) return `${array.panelsPerString} panels in series per string`;
+  if (array.strings) return `${array.strings} parallel string${array.strings === 1 ? "" : "s"}`;
+  return "Series/parallel layout not confirmed";
+}
+
+function pvConnectionLabel(array: PVArray) {
+  if (!array.strings) return "PV DC";
+  return `${array.strings} PV string${array.strings === 1 ? "" : "s"}`;
+}
+
 function pvDetails(array: PVArray): Array<[string, string]> {
+  const stringVmp = array.panelsPerString && array.maximumPowerVoltageV
+    ? array.panelsPerString * array.maximumPowerVoltageV
+    : undefined;
+  const stringVoc = array.panelsPerString && array.openCircuitVoltageV
+    ? array.panelsPerString * array.openCircuitVoltageV
+    : undefined;
+  const arrayImp = array.strings && array.maximumPowerCurrentA
+    ? array.strings * array.maximumPowerCurrentA
+    : undefined;
+  const arrayIsc = array.strings && array.shortCircuitCurrentA
+    ? array.strings * array.shortCircuitCurrentA
+    : undefined;
   return [
-    ["Panels", `${array.panelCount ?? "?"} × ${array.panelWatts ?? "?"} W`],
+    ["Panels", `${array.panelCount ?? "?"} x ${array.panelWatts ?? "?"} W`],
+    ["Arrangement", pvArrangement(array)],
+    ["String Vmp", stringVmp ? `${stringVmp.toFixed(1)} V` : "Not confirmed"],
+    ["String Voc", stringVoc ? `${stringVoc.toFixed(1)} V nameplate; cold correction still required` : "Not confirmed"],
+    ["Array Imp", arrayImp ? `${arrayImp.toFixed(1)} A` : "Not confirmed"],
+    ["Array Isc", arrayIsc ? `${arrayIsc.toFixed(1)} A` : "Not confirmed"],
     ["Cable", text(array.cableSizeMm2 && `${array.cableSizeMm2} mm²`) ?? "Not confirmed"],
     ["Cable length", text(array.cableLengthM && `${array.cableLengthM} m`) ?? "Not confirmed"],
     ["Breaker / fuse", text(array.breakerDetails) ?? "Not confirmed"],
@@ -435,7 +465,7 @@ export function SystemSchematic({
       ...project.pvArrays.map((array) => ({
         id: `pv:${array.id}`,
         label: array.name,
-        subtitle: `${array.panelCount ?? "?"} × ${array.panelWatts ?? "?"} W panels`,
+        subtitle: `${array.panelCount ?? "?"} x ${array.panelWatts ?? "?"} W; ${pvArrangement(array)}`,
         kind: "pv" as const,
         href: `${base}/pv-strings/${array.id}`,
         imageSrc: `${imageBase}/solar-panel-pv-module.jpg`,
@@ -699,7 +729,7 @@ export function SystemSchematic({
       if (target && !claimedDirectPairs.has(`pv:${array.id}:${target.id}`))
         connections.push({
           id: `pv-link:${array.id}`,
-          label: "PV DC",
+          label: pvConnectionLabel(array),
           sourceId: `pv:${array.id}`,
           targetId: target.id,
           values: pvDetails(array),

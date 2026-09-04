@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-labelledby="t d">
+  <title id="t">Parallel batteries with diagonal take-off</title><desc id="d">Three batteries are linked in parallel while the main positive and negative leave from opposite ends.</desc>
+  <rect width="900" height="520" rx="36" fill="#f4f8fb"/>
+  <g fill="#fff" stroke="#91a7b8" stroke-width="5"><rect x="170" y="175" width="170" height="150" rx="18"/><rect x="365" y="175" width="170" height="150" rx="18"/><rect x="560" y="175" width="170" height="150" rx="18"/></g>
+  <g fill="#15324d" font-family="Arial,sans-serif" font-size="20" font-weight="700" text-anchor="middle"><text x="255" y="270">BATTERY 1</text><text x="450" y="270">BATTERY 2</text><text x="645" y="270">BATTERY 3</text><text x="450" y="455" font-size="24">Main cables leave from opposite ends</text></g>
+  <g stroke-width="9" fill="none" stroke-linecap="round"><path d="M210 185H690" stroke="#d94b48"/><path d="M300 315H690" stroke="#263746"/><path d="M210 185H70V100" stroke="#d94b48"/><path d="M690 315H830V400" stroke="#263746"/></g>
+  <g fill="#d94b48"><circle cx="210" cy="185" r="11"/><circle cx="405" cy="185" r="11"/><circle cx="600" cy="185" r="11"/></g><g fill="#263746"><circle cx="300" cy="315" r="11"/><circle cx="495" cy="315" r="11"/><circle cx="690" cy="315" r="11"/></g>
+  <g font-family="Arial,sans-serif" font-size="18" font-weight="700"><text x="45" y="82" fill="#b63232">MAIN +</text><text x="785" y="435" fill="#263746">MAIN −</text></g>
+</svg>

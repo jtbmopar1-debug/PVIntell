@@ -5,12 +5,42 @@ import { createClient } from "@/lib/supabase/server";
 
 const querySchema = z.object({ siteId: z.uuid() });
 const regionCellDegrees = 0.02;
+const forecastDays = 5;
+const cacheVersion = "five-day-v1";
 const cellCoordinate = (coordinate: number) => Number((Math.round(coordinate / regionCellDegrees) * regionCellDegrees).toFixed(4));
 const localDate = (timezone: string) => {
   const parts = new Intl.DateTimeFormat("en-NZ", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
   const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "";
   return `${value("year")}-${value("month")}-${value("day")}`;
 };
+function localMidnightUtc(timezone: string, dayOffset = 0) {
+  const nowParts = new Intl.DateTimeFormat("en-NZ", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(nowParts.find((part) => part.type === type)?.value ?? 0);
+  const localCalendarDate = new Date(Date.UTC(value("year"), value("month") - 1, value("day") + dayOffset));
+  const target = Date.UTC(localCalendarDate.getUTCFullYear(), localCalendarDate.getUTCMonth(), localCalendarDate.getUTCDate());
+  let candidate = target;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const candidateParts = new Intl.DateTimeFormat("en-NZ", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(candidate));
+    const candidateValue = (type: Intl.DateTimeFormatPartTypes) => Number(candidateParts.find((part) => part.type === type)?.value ?? 0);
+    const represented = Date.UTC(candidateValue("year"), candidateValue("month") - 1, candidateValue("day"), candidateValue("hour"), candidateValue("minute"), candidateValue("second"));
+    candidate -= represented - target;
+  }
+  return new Date(candidate);
+}
 function cacheClient(): SupabaseClient | undefined {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim(); const key = process.env.NEXT_SECRET_SUPABASE_SERVICE_KEY?.trim();
   return url && key ? createSupabaseAdmin(url, key, { auth: { persistSession: false, autoRefreshToken: false } }) : undefined;
@@ -36,7 +66,7 @@ export async function GET(request: Request) {
   try { timezone = tzLookup(site.data.latitude, site.data.longitude); } catch { /* Use the stored timezone when lookup is unavailable. */ }
   if (timezone !== site.data.timezone) await supabase.from("sites").update({ timezone }).eq("id", parsed.data.siteId);
   const latitude = cellCoordinate(site.data.latitude); const longitude = cellCoordinate(site.data.longitude);
-  const locationKey = `${latitude.toFixed(4)}:${longitude.toFixed(4)}:${timezone}`; const dateKey = localDate(timezone); const admin = cacheClient(); let ownsCacheClaim = false;
+  const locationKey = `${latitude.toFixed(4)}:${longitude.toFixed(4)}:${timezone}:${cacheVersion}`; const dateKey = localDate(timezone); const admin = cacheClient(); let ownsCacheClaim = false;
   if (admin) {
     const cached = await admin.from("weather_forecast_cache").select("payload,fetched_at").eq("location_key", locationKey).eq("local_date", dateKey).maybeSingle();
     if (!cached.error && cached.data?.payload) return Response.json({ ...(cached.data.payload as Record<string, unknown>), cache: { source: "shared-region", localDate: dateKey, fetchedAt: cached.data.fetched_at } });
@@ -52,7 +82,7 @@ export async function GET(request: Request) {
   }
   const apiKey = process.env.STORMGLASS_API_KEY?.trim();
   if (!apiKey) return Response.json({ error: "STORMGLASS_API_KEY is not configured." }, { status: 503 });
-  const startDate = new Date(); startDate.setMinutes(0, 0, 0); const endDate = new Date(startDate.getTime() + 48 * 60 * 60 * 1000);
+  const startDate = localMidnightUtc(timezone); const endDate = localMidnightUtc(timezone, forecastDays);
   const common = `lat=${latitude}&lng=${longitude}&start=${encodeURIComponent(startDate.toISOString())}&end=${encodeURIComponent(endDate.toISOString())}&source=sg`;
   const requests = [
     `https://api.stormglass.io/v2/weather/point?${common}&params=airTemperature,cloudCover,precipitation,windSpeed`,

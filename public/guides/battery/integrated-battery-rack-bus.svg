@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-labelledby="t d">
+  <title id="t">Battery rack with integrated bus and communications</title><desc id="d">Four rack batteries slide into a cabinet and connect to protected power busbars and a communication link.</desc>
+  <rect width="900" height="520" rx="36" fill="#f4f8fb"/>
+  <rect x="155" y="45" width="590" height="425" rx="22" fill="#465866" stroke="#203543" stroke-width="8"/>
+  <g fill="#f9fbfc" stroke="#91a7b8" stroke-width="4"><rect x="210" y="85" width="395" height="70" rx="12"/><rect x="210" y="170" width="395" height="70" rx="12"/><rect x="210" y="255" width="395" height="70" rx="12"/><rect x="210" y="340" width="395" height="70" rx="12"/></g>
+  <g fill="#174f80"><circle cx="560" cy="120" r="11"/><circle cx="560" cy="205" r="11"/><circle cx="560" cy="290" r="11"/><circle cx="560" cy="375" r="11"/></g>
+  <g stroke-width="10" stroke-linecap="round"><path d="M650 95v300" stroke="#d94b48"/><path d="M690 95v300" stroke="#263746"/></g>
+  <path d="M560 120C620 120 610 205 560 205S610 290 560 290S610 375 560 375" fill="none" stroke="#e2a928" stroke-width="6" stroke-dasharray="10 8"/>
+  <g fill="#15324d" font-family="Arial,sans-serif" font-size="20" font-weight="700"><text x="245" y="128">BATTERY MODULE</text><text x="245" y="213">BATTERY MODULE</text><text x="245" y="298">BATTERY MODULE</text><text x="245" y="383">BATTERY MODULE</text></g>
+  <g fill="#fff" font-family="Arial,sans-serif" font-size="17" font-weight="700"><text x="630" y="435">POWER BUS</text><text x="505" y="445">DATA</text></g>
+</svg>

@@ -2,16 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Site } from "@/domain/models";
-
-export interface SolarWeatherHour {
-  time: string;
-  temperature: number | null;
-  cloudCover: number | null;
-  precipitation: number | null;
-  windSpeed: number | null;
-  irradiance: number | null;
-  uvIndex: number | null;
-}
+import { localDateKey } from "@/weather/forecast";
+import type { SolarWeatherHour } from "@/weather/forecast";
+export { localDateKey } from "@/weather/forecast";
+export type { SolarWeatherHour } from "@/weather/forecast";
 
 export interface SolarWeatherPayload {
   hours: SolarWeatherHour[];
@@ -20,7 +14,7 @@ export interface SolarWeatherPayload {
 }
 
 interface CacheEntry {
-  version: 1;
+  version: 2;
   localDate: string;
   timezone: string;
   latitude: number;
@@ -28,19 +22,16 @@ interface CacheEntry {
   payload: SolarWeatherPayload;
 }
 
-const cachePrefix = "pvintell:solar-weather:v1:";
+const cachePrefix = "pvintell:solar-weather:v2:";
 const requests = new Map<string, Promise<SolarWeatherPayload>>();
 
-export function localDateKey(date: Date, timezone: string) {
-  const parts = new Intl.DateTimeFormat("en-NZ", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((item) => item.type === type)?.value ?? "";
-  return `${part("year")}-${part("month")}-${part("day")}`;
+export function useForecastNow() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 5 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return now;
 }
 
 function storageKey(siteId: string) {
@@ -58,7 +49,7 @@ function readCache(
     if (!raw) return;
     const entry = JSON.parse(raw) as CacheEntry;
     if (
-      entry.version !== 1 ||
+      entry.version !== 2 ||
       entry.latitude !== latitude ||
       entry.longitude !== longitude ||
       entry.timezone !== timezone ||
@@ -89,7 +80,7 @@ async function fetchAndCache(
     const payload = body as SolarWeatherPayload;
     const resolvedTimezone = payload.site?.timezone || timezone;
     const entry: CacheEntry = {
-      version: 1,
+      version: 2,
       localDate: localDateKey(new Date(), resolvedTimezone),
       timezone: resolvedTimezone,
       latitude,
