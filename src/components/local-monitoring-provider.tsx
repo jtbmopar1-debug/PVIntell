@@ -23,14 +23,16 @@ const uploadIntervalMs = 30_000;
 
 export function LocalMonitoringProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<Omit<LocalMonitoringState, "connectJunctek" | "disconnect">>({ status: "idle" });
-  const session = useRef<LocalDeviceSession | null>(null); const activeScope = useRef<Scope>(); const lastUpload = useRef(0);
+  const session = useRef<LocalDeviceSession | null>(null); const activeScope = useRef<Scope | undefined>(undefined); const lastUpload = useRef(0); const uploadInFlight = useRef(false);
 
   async function saveReading(device: LocalDeviceSession, scope: Scope, reading: MonitoringReading) {
-    if (Date.now() - lastUpload.current < uploadIntervalMs) return;
-    lastUpload.current = Date.now();
-    const response = await fetch("/api/monitoring/local-readings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ siteId: scope.siteId, systemId: scope.systemId, adapter: "junctek", deviceId: device.deviceId, displayName: device.displayName, reading }) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.error || "Could not save the Junctek reading");
-    setState((current) => ({ ...current, lastSavedAt: Date.now() }));
+    if (uploadInFlight.current || Date.now() - lastUpload.current < uploadIntervalMs) return;
+    uploadInFlight.current = true;
+    try {
+      const response = await fetch("/api/monitoring/local-readings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ siteId: scope.siteId, systemId: scope.systemId, adapter: "junctek", deviceId: device.deviceId, displayName: device.displayName, reading }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error || "Could not save the Junctek reading");
+      lastUpload.current = Date.now(); setState((current) => ({ ...current, lastSavedAt: Date.now(), error: undefined }));
+    } finally { uploadInFlight.current = false; }
   }
 
   async function connectJunctek(scope: Scope) {
@@ -55,7 +57,7 @@ export function LocalMonitoringProvider({ children }: { children: React.ReactNod
   }
 
   function disconnect() {
-    session.current?.disconnect(); session.current = null; activeScope.current = undefined; lastUpload.current = 0;
+    session.current?.disconnect(); session.current = null; activeScope.current = undefined; lastUpload.current = 0; uploadInFlight.current = false;
     setState({ status: "idle" });
   }
 

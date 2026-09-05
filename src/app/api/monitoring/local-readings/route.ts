@@ -26,6 +26,9 @@ export async function POST(request: Request) {
   ]);
   const failure = device.error ?? sample.error ?? latest.error;
   if (failure) return Response.json({ error: "The local reading could not be saved" }, { status: 500 });
+  const cutoff = new Date(Date.now() - 10 * 60_000).toISOString();
+  const expired = await admin.from("monitoring_samples").delete().eq("connection_id", connectionId).lt("measured_at", cutoff);
+  if (expired.error) return Response.json({ error: "The local reading was saved, but expired history could not be removed" }, { status: 500 });
   await admin.from("monitoring_connections").update({ status: "connected", last_attempt_at: now, last_success_at: now, status_message: null }).eq("id", connectionId);
   return Response.json({ ok: true, measuredAt: r.measuredAt });
 }
