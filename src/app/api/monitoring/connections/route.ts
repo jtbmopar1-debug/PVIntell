@@ -5,6 +5,7 @@ import { SupabaseVaultCredentialService } from "@/monitoring/credential-service"
 import { discoverDessCollectors } from "@/monitoring/dess-monitor";
 
 const inputSchema = z.object({ siteId: z.uuid(), systemId: z.uuid(), provider: z.literal("dess_monitor"), username: z.string().trim().min(1).max(200), password: z.string().min(1).max(500) });
+const disconnectSchema = z.object({ siteId: z.uuid(), systemId: z.uuid(), connectionId: z.uuid() });
 export async function POST(request: Request) {
   const db = await createClient(); const claims = await db.auth.getClaims(); const ownerId = claims.data?.claims?.sub;
   if (claims.error || typeof ownerId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -30,4 +31,17 @@ export async function POST(request: Request) {
     }
     return Response.json({ ok: true, connectionId: created.data.id, devices: collectors.map(({ providerDeviceId, displayName, method, status }) => ({ providerDeviceId, displayName, method, status })) });
   } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "DESSMonitor connection failed" }, { status: 400 }); }
+}
+
+export async function DELETE(request: Request) {
+  const db = await createClient(); const claims = await db.auth.getClaims(); const ownerId = claims.data?.claims?.sub;
+  if (claims.error || typeof ownerId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const parsed = disconnectSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return Response.json({ error: "Invalid monitoring connection" }, { status: 400 });
+  const deleted = await db.from("monitoring_connections").delete()
+    .eq("id", parsed.data.connectionId).eq("owner_id", ownerId).eq("site_id", parsed.data.siteId).eq("project_id", parsed.data.systemId)
+    .select("id").maybeSingle();
+  if (deleted.error) return Response.json({ error: "Could not disconnect monitoring" }, { status: 500 });
+  if (!deleted.data) return Response.json({ error: "Monitoring connection not found" }, { status: 404 });
+  return Response.json({ ok: true });
 }

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
+import { LocalMonitoringProvider } from "@/components/local-monitoring-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -20,7 +21,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
-      <body className="min-h-full">{children}<ServiceWorkerRegister /><Script id="pvintell-theme" strategy="beforeInteractive">{`(function(){try{var t=localStorage.getItem('pvintell:theme:v1')==='dark'?'dark':'light';document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t}catch(e){}})()`}</Script></body>
+      <body className="min-h-full"><LocalMonitoringProvider>{children}</LocalMonitoringProvider><ServiceWorkerRegister /><Script id="pvintell-theme" strategy="beforeInteractive">{`(function(){try{var t=localStorage.getItem('pvintell:theme:v1')==='dark'?'dark':'light';document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t}catch(e){}})()`}</Script></body>
     </html>
   );
 }

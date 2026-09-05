@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeJunctekFrame, junctekMetrics } from "@/local-devices/junctek";
+import { decodeJunctekFrame, junctekMetrics, parseJunctekKmLive, parseJunctekR50 } from "@/local-devices/junctek";
 
 describe("Junctek local adapter", () => {
   it("decodes packed BCD parameters and ignores the checksum", () => {
@@ -12,5 +12,17 @@ describe("Junctek local adapter", () => {
   });
   it("calculates SOC only when capacity and remaining Ah are supplied", () => {
     expect(junctekMetrics({ 0xb0: 1000, 0xd2: 50000 })?.batterySocPercent).toBe(50);
+  });
+  it("decodes KM-F R50 measured values", () => {
+    expect(parseJunctekR50(":r50=1,123,4852,125,7421,2749,437,298,113,0,0,1,69,100,230208,112418,"))
+      .toMatchObject({ batteryVoltageV: 48.52, batteryCurrentA: 1.25, batteryPowerW: 60.65 });
+  });
+  it("decodes the KM-F live Bluetooth record", () => {
+    expect(parseJunctekKmLive(":A=5549,1520,0,20308,617375,6300,30,150500,6667,\r\n"))
+      .toMatchObject({ batteryVoltageV: 55.49, batteryCurrentA: -1.52, batteryPowerW: -84.34, batterySocPercent: 98 });
+  });
+  it("uses a positive current and power for KM-F charge records", () => {
+    expect(parseJunctekKmLive(":A=5470,4880,1,20308,617375,6300,30,150500,6667,\r\n"))
+      .toMatchObject({ batteryCurrentA: 4.88, batteryPowerW: 266.94 });
   });
 });
