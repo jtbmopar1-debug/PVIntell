@@ -60,6 +60,7 @@ import type {
 import { evaluateDiagnostics } from "@/diagnostics/rules";
 import { BrowserProjectStore } from "@/persistence/project-store";
 import { SiteEquipmentInventory } from "@/components/site-equipment";
+import { SystemMonitor } from "@/components/system-monitor";
 import { expandedHowToGuides } from "@/guides/how-to-expansion";
 import { planningHowToGuides } from "@/guides/how-to-planning";
 import { componentHowToGuides } from "@/guides/how-to-components";
@@ -688,17 +689,17 @@ export function PVIntellWorkspace({
               <button type="button" onClick={() => setMenu((open) => !open)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>{menu ? <X size={17}/> : <Menu size={18}/>}</button>
               </div>
             </div>
-            <nav className="mx-auto hidden max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-6 py-1.5 md:flex" aria-label="System navigation">
+            {view !== "monitor" && <nav className="mx-auto hidden max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-6 py-1.5 md:flex" aria-label="System navigation">
             <button type="button" onClick={() => setView("site")} className={`shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold ${view === "site" ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>Site</button>
             {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Plan ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery brief</Link><button type="button" onClick={() => setView("wattson")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Continue planning with Wattson</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed system outline</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed build schematic</Link> : <span className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#9aa8b6]">Proposed schematic · locked</span>}</div></details>}
             {monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Project history ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original discovery brief</Link><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed design</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed schematic</Link> : null}<button type="button" onClick={() => setView("build")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build record</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning record</button></div></details>}
             {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" disabled={!proposedSchematicReviewed} onClick={() => setView("build")} className={`block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold ${proposedSchematicReviewed ? "text-muted hover:bg-[#eef3f8]" : "cursor-not-allowed text-[#9aa8b6]"}`}>{proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning</button></div></details>}
             <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">System records ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" onClick={() => setView("overview")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">System overview</button><button type="button" onClick={() => setView("system")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built equipment</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built schematic</Link><button type="button" onClick={() => setView("equipment")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Site equipment</button></div></details>
             {monitorOnly && <button type="button" onClick={() => setView("monitor")} className="shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Monitor</button>}
-           </nav>
+           </nav>}
             {menu ? <nav className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-line bg-white p-3 md:hidden" aria-label="Mobile navigation"><div className="grid gap-1">
               {cloud ? <><Link href={`/dashboard?site=${initialSite.id}`} className="mobile-nav-item">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-lg bg-[#fff2b8] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link></> : null}
-              <div className="my-1 border-t border-line" />
+              {view !== "monitor" ? <><div className="my-1 border-t border-line" />
               <button type="button" onClick={() => { setView("site"); setMenu(false); }} className="mobile-nav-item">Site</button>
               <Link href={`/sites/${initialSite.id}/discovery`} className="mobile-nav-item">{monitorOnly ? "Original discovery" : "Discovery"}</Link>
               <Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="mobile-nav-item">{monitorOnly ? "Original proposed design" : "Proposed design"}</Link>
@@ -709,7 +710,7 @@ export function PVIntellWorkspace({
               <button type="button" onClick={() => { setView("system"); setMenu(false); }} className="mobile-nav-item">As-built equipment</button>
               <Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="mobile-nav-item">As-built schematic</Link>
               <button type="button" onClick={() => { setView("equipment"); setMenu(false); }} className="mobile-nav-item">Site equipment</button>
-              {monitorOnly ? <button type="button" onClick={() => { setView("monitor"); setMenu(false); }} className="mobile-nav-item">Monitor</button> : null}
+              {monitorOnly ? <button type="button" onClick={() => { setView("monitor"); setMenu(false); }} className="mobile-nav-item">Monitor</button> : null}</> : null}
               <div className="my-1 border-t border-line" />
               <div className="rounded-lg text-xs font-bold text-muted"><UniversalHowToMenu location={initialSite.location} onAsk={askGuide}/></div>
               <Link href={`/settings?site=${initialSite.id}`} className="mobile-nav-item">Settings</Link>
@@ -784,7 +785,7 @@ export function PVIntellWorkspace({
             <Commission project={project} complete={completeCommissioning} />
           )}{" "}
           {view === "monitor" && (
-            <Monitor project={project} site={initialSite} />
+            <SystemMonitor project={project} site={initialSite} />
           )}
         </div>
       </main>
@@ -1727,7 +1728,7 @@ function Commission({
     </div>
   );
 }
-function Monitor({ project, site }: { project: Project; site: Site }) {
+export function LegacyMonitor({ project, site }: { project: Project; site: Site }) {
   return (
     <div className="animate-rise space-y-5">
       <Heading eyebrow="System monitoring" title={project.name} description={`Dedicated monitoring for ${project.name} at ${site.name}. Live production, load and battery values will appear here after a supported data connection is configured.`} />

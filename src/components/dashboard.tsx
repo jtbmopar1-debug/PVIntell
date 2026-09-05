@@ -87,11 +87,14 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
 
   const nextSteps = useMemo(() => {
     const goals = profile.assessment.goals ?? [];
-    const steps: Array<{ title: string; detail: string; href: string }> = [{ title: "Start a new system", detail: "Work from your needs and existing equipment toward a clear proposed system.", href: "/discovery/new-system" }];
-    if (goals.includes("Record an as-built system") && systems[0]) steps.push({ title: "Record installed equipment", detail: "Add each inverter, battery, PV string and connection as it is actually installed.", href: `/sites/${systems[0].siteId}/systems/${systems[0].id}` });
+    const installedHref = selectedSite ? `/record-installed?site=${selectedSite.id}` : "/record-installed";
+    const steps: Array<{ title: string; detail: string; href: string }> = [
+      { title: "Record installed equipment", detail: "Create an as-built system, then add the equipment and connections that are already there.", href: installedHref },
+      { title: "Start a new system", detail: "Work from your needs and existing equipment toward a clear proposed system.", href: "/discovery/new-system" },
+    ];
     if (goals.includes("Understand what I already have") && systems[0]) steps.push({ title: "Build the system schematic", detail: "Map the equipment and connections so the complete system is easy to understand.", href: `/sites/${systems[0].siteId}/systems/${systems[0].id}/schematic` });
     return steps.slice(0, 3);
-  }, [profile.assessment.goals, systems]);
+  }, [profile.assessment.goals, selectedSite, systems]);
 
   async function send(messageOverride?: string) {
     const message = messageOverride?.trim() || input.trim() || (attachment ? "Please use this image as evidence for the current discovery question." : "");

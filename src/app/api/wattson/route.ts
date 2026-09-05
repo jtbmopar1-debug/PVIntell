@@ -8,6 +8,8 @@ import { createClient } from "@/lib/supabase/server";
 import { isNewSystemSetupIntent, startHereLabel, startHereMessage, startHereUrl } from "@/ai/new-system-intent";
 import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
 import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
+import { loadMonitoringSnapshot } from "@/monitoring/repository";
+import { buildMonitoringWattsonContext } from "@/monitoring/wattson-context";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -323,6 +325,10 @@ export async function POST(request: Request) {
   let structuredContext: Record<string, unknown>;
   if (process.env.GEMINI_API_KEY) {
     try {
+      let monitoringContext: unknown;
+      try {
+        monitoringContext = buildMonitoringWattsonContext(await loadMonitoringSnapshot(supabase, userId, owned.data.site_id, parsed.data.projectId));
+      } catch { /* Monitoring must not break non-monitoring Wattson conversations. */ }
       const result = await askGemini({
         message: parsed.data.message,
         project: parsed.data.project,
@@ -336,6 +342,7 @@ export async function POST(request: Request) {
           inventoryLabelCapture: inventoryCapture,
           connectedSiteSystems,
         },
+        monitoringContext,
         image,
       });
       const systemSettings = selectedSystem?.settings;

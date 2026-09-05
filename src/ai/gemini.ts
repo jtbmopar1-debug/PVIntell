@@ -134,6 +134,7 @@ export async function askGemini({
   project,
   recentConversation,
   questionnaireContext,
+  monitoringContext,
   image,
   allowActions = true,
 }: {
@@ -141,6 +142,7 @@ export async function askGemini({
   project: Project;
   recentConversation: Array<{ role: string; content: string }>;
   questionnaireContext?: unknown;
+  monitoringContext?: unknown;
   image?: { data: string; mimeType: string };
   allowActions?: boolean;
 }): Promise<GeminiWattsonResult> {
@@ -211,7 +213,8 @@ Preliminary design rules:
 - Treat predicted yield and cable/protection results as planning estimates. Explain the decisive assumptions and do not label a value compliant until the applicable manufacturer and regional requirements have been verified.
 Trace recorded connection endpoints before discussing topology. Do not infer a switch, isolation method, source relationship, backfeed path or equipment capability merely from a component name. If records conflict, state the conflict briefly instead of selecting the convenient value or combining incompatible values.
 During a requested safety review, or when the records show a specific credible hazard, identify the exact component or connection and the exact supporting record. Do not inject generic protection, isolation, earthing or changeover warnings into an unrelated answer. Never treat an unrecorded field as proof that equipment is absent or unsafe; say "not recorded" only when that missing fact matters to the user's question.
-Keep responses concise, practical, and specific to this project. Do not claim live telemetry when the context says it is simulated.
+Monitoring context contains measured provider data only when supplied. Check its timestamps, never treat a missing metric as zero, and never infer unreported battery or grid values.
+Keep responses concise, practical, and specific to this project. Do not claim live telemetry when no monitoring context is supplied.
 Respect the user’s recorded delivery approach and practical ability. A DIY-led project is not the same as a turnkey installation. Help the user design, document, source, mount, assemble, test and learn without repeatedly redirecting them to a professional. Explain the hazard, the purpose of each check and what competent verification looks like; the user decides what work to undertake and when to seek help.
 Electrical permissions vary by location and task. Do not make a broad global claim about what every homeowner may or may not do. Discuss local permission, inspection, certification or network requirements only when the user asks, when a grid-connection decision depends on them, or when they are immediately relevant to the current build step. Phrase unverified legal boundaries as considerations to check, not as PVIntell granting or refusing permission.
 Do not use a budget to determine the technical system requirement or reduce the design before the required capacity is understood. Design from the site, loads, resilience goal and future needs. Discuss prices only when the user asks, using current regional evidence and keeping equipment, DIY-project and turnkey-installed costs separate.
@@ -247,11 +250,11 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
       ? [
           {
             type: "text",
-            text: `Structured PVIntell context:\n${JSON.stringify({ project, questionnaireContext, recentConversation, telemetryStatus: "simulated telemetry only", requestClassification: route })}\n\nRespond to the latest user message and inspect the attached image:\n${message}`,
+            text: `Structured PVIntell context:\n${JSON.stringify({ project, questionnaireContext, recentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message and inspect the attached image:\n${message}`,
           },
           { type: "image", data: image.data, mime_type: image.mimeType },
         ]
-      : `Structured PVIntell context:\n${JSON.stringify({ project, questionnaireContext, recentConversation, telemetryStatus: "simulated telemetry only", requestClassification: route })}\n\nRespond to the latest user message:\n${message}`,
+      : `Structured PVIntell context:\n${JSON.stringify({ project, questionnaireContext, recentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message:\n${message}`,
     tools,
   };
   const response = await fetch(
