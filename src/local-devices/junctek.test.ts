@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeJunctekFrame, junctekMetrics, parseJunctekKmLive, parseJunctekR50 } from "@/local-devices/junctek";
+import { decodeJunctekFrame, junctekMetrics, parseJunctekKmLive, parseJunctekR50, parseJunctekR51Capacity } from "@/local-devices/junctek";
 
 describe("Junctek local adapter", () => {
   it("decodes packed BCD parameters and ignores the checksum", () => {
@@ -16,6 +16,13 @@ describe("Junctek local adapter", () => {
   it("decodes KM-F R50 measured values", () => {
     expect(parseJunctekR50(":r50=1,123,4852,125,7421,2749,437,298,113,0,0,1,69,100,230208,112418,"))
       .toMatchObject({ batteryVoltageV: 48.52, batteryCurrentA: 1.25, batteryPowerW: 60.65 });
+  });
+  it("combines R51 configured capacity with R50 remaining capacity for SOC", () => {
+    const settings = ":r51=1,69,2000,1000,2000,3000,20000,120,1000,120,90,101,0,0,1,100,0,10000,1000,20,20,80,0,4321,2,";
+    const capacityAh = parseJunctekR51Capacity(settings);
+    expect(capacityAh).toBe(100);
+    expect(parseJunctekR50(":r50=1,123,4852,125,74210,2749,437,298,113,0,0,0,69,100,230208,112418,", capacityAh))
+      .toMatchObject({ batteryCurrentA: -1.25, batterySocPercent: 74.2 });
   });
   it("decodes the KM-F live Bluetooth record", () => {
     expect(parseJunctekKmLive(":A=5549,1520,0,20308,617375,6300,30,150500,6667,\r\n"))

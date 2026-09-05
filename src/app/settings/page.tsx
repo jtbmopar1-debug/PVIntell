@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen, ChevronRight, CircleHelp, CloudSun, FileText, LockKeyhole, LogOut, MessageSquareText, SlidersHorizontal, UserRound } from "lucide-react";
+import { ArrowLeft, BookOpen, ChevronRight, CircleHelp, CloudSun, FileText, Link2, LockKeyhole, LogOut, MessageSquareText, SlidersHorizontal, UserRound } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -16,6 +16,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const settings = [
     { href: "/account", title: "Account & location", detail: "Identity, password, Sites and system map positions", icon: UserRound },
     { href: "/settings/preferences", title: "Preferences", detail: "Measurement units and installable app settings", icon: SlidersHorizontal },
+    { href: "/settings/connections", title: "Connections", detail: "Match monitoring devices and services to systems", icon: Link2 },
     { href: weatherHref, title: "Solar weather", detail: weatherSite ? `Forecast and production outlook · ${weatherSite.name}` : "Forecast and production outlook", icon: CloudSun },
     { href: "/glossary", title: "Glossary", detail: "Plain-language solar, battery and electrical terms", icon: BookOpen },
     { href: "/wattson-chats", title: "Wattson chats", detail: "Review, continue or delete saved conversations", icon: MessageSquareText },

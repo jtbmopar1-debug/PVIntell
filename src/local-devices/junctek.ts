@@ -32,12 +32,21 @@ export function junctekMetrics(values: Record<number, number>): MonitoringReadin
   return { measuredAt: new Date().toISOString(), ...(voltage == null ? {} : { batteryVoltageV: voltage / 100 }), ...(amps == null ? {} : { batteryCurrentA: direction * amps / 100 }), ...(watts == null ? {} : { batteryPowerW: direction * watts / 100 }), ...(capacity && remaining != null ? { batterySocPercent: Math.max(0, Math.min(100, (remaining / 1000) / (capacity / 10) * 100)) } : {}) };
 }
 
-export function parseJunctekR50(line: string): MonitoringReading | undefined {
+export function parseJunctekR50(line: string, presetCapacityAh?: number): MonitoringReading | undefined {
   const match = line.trim().match(/^:r50=([^\r\n]+),?$/i); if (!match) return undefined;
   const fields = match[1].split(",").filter(Boolean).map((field) => Number(field.trim()));
   if (fields.length < 12 || fields.some((field) => !Number.isFinite(field))) return undefined;
-  const voltage = fields[2] / 100; const current = fields[3] / 100 * (fields[11] === 1 ? 1 : -1);
-  return { measuredAt: new Date().toISOString(), batteryVoltageV: voltage, batteryCurrentA: current, batteryPowerW: Math.round(voltage * current * 100) / 100 };
+  const voltage = fields[2] / 100; const current = fields[3] / 100 * (fields[11] === 1 ? 1 : -1); const remainingAh = fields[4] / 1_000;
+  const soc = presetCapacityAh && presetCapacityAh > 0 ? Math.max(0, Math.min(100, Math.round((remainingAh / presetCapacityAh) * 1_000) / 10)) : undefined;
+  return { measuredAt: new Date().toISOString(), batteryVoltageV: voltage, batteryCurrentA: current, batteryPowerW: Math.round(voltage * current * 100) / 100, ...(soc == null ? {} : { batterySocPercent: soc }) };
+}
+
+export function parseJunctekR51Capacity(line: string): number | undefined {
+  const match = line.trim().match(/^:r51=([^\r\n]+),?$/i); if (!match) return undefined;
+  const fields = match[1].split(",").filter(Boolean).map((field) => Number(field.trim()));
+  if (fields.length < 9 || fields.some((field) => !Number.isFinite(field))) return undefined;
+  const capacityAh = fields[8] / 10;
+  return capacityAh > 0 ? capacityAh : undefined;
 }
 
 export function parseJunctekKmLive(line: string): MonitoringReading | undefined {
@@ -70,13 +79,16 @@ export const junctekAdapter: LocalDeviceAdapter = {
       } catch { /* Candidate is not exposed by this device. */ }
     }
     if (!notify) { server.disconnect(); throw new Error("The KM140F paired, but its readable Bluetooth service was not found. The device service UUID is needed to complete support."); }
-    let buffered: number[] = []; let textBuffer = "";
+    let buffered: number[] = []; let textBuffer = ""; let presetCapacityAh: number | undefined;
     const consume = (view: DataView) => {
       const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
       if (bytes.includes(0x3a) || textBuffer) {
         textBuffer += new TextDecoder().decode(bytes);
         const lines = textBuffer.split(/\r?\n/); textBuffer = lines.pop() ?? "";
-        for (const line of lines) { const metrics = parseJunctekR50(line) ?? parseJunctekKmLive(line); if (metrics) onReading(metrics); }
+        for (const line of lines) {
+          presetCapacityAh = parseJunctekR51Capacity(line) ?? presetCapacityAh;
+          const metrics = parseJunctekR50(line, presetCapacityAh) ?? parseJunctekKmLive(line); if (metrics) onReading(metrics);
+        }
       }
       buffered.push(...bytes);
       while (buffered.includes(0xbb) && buffered.includes(0xee)) { const start = buffered.indexOf(0xbb); const end = buffered.indexOf(0xee, start); if (end < 0) break; const metrics = junctekMetrics(decodeJunctekFrame(Uint8Array.from(buffered.slice(start, end + 1)))); buffered = buffered.slice(end + 1); if (metrics) onReading(metrics); }
@@ -89,7 +101,8 @@ export const junctekAdapter: LocalDeviceAdapter = {
     let pollId: ReturnType<typeof setInterval> | undefined;
     if (writer && selectedService === km140fServiceUuid) {
       const requestReading = () => void writer.writeValue(new TextEncoder().encode(":R50=1,2,1,\r\n")).catch(() => undefined);
-      requestReading(); pollId = setInterval(requestReading, 2_500);
+      void writer.writeValue(new TextEncoder().encode(":R51=1,2,1,\r\n")).catch(() => undefined);
+      setTimeout(requestReading, 150); pollId = setInterval(requestReading, 2_500);
     } else if (writer) {
       setTimeout(() => { void writer.writeValue(Uint8Array.from([0xbb, 0x9a, 0xa9, 0x0c, 0xee])).catch(() => undefined); }, 250);
     }

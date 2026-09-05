@@ -1,7 +1,6 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { Unplug } from "lucide-react";
 import { junctekAdapter } from "@/local-devices/junctek";
 import type { LocalDeviceSession } from "@/local-devices/types";
 import type { MonitoringReading } from "@/monitoring/types";
@@ -62,7 +61,7 @@ export function LocalMonitoringProvider({ children }: { children: React.ReactNod
   }
 
   useEffect(() => disconnect, []);
-  return <LocalMonitoringContext.Provider value={{ ...state, connectJunctek, disconnect }}>{children}{state.status === "connected" ? <div className="fixed bottom-3 right-3 z-40 flex items-center gap-2 rounded-xl border border-line bg-white/95 px-3 py-2 text-[10px] shadow-lg backdrop-blur"><span className="size-2 rounded-full bg-[#2aa876]"/><strong>{state.deviceName}</strong><span className="text-muted">monitoring while PVIntell is open</span><button type="button" onClick={disconnect} aria-label="Disconnect local monitor" className="ml-1 grid size-7 place-items-center rounded-lg bg-[#eef3f8] text-brand"><Unplug size={13}/></button></div> : null}</LocalMonitoringContext.Provider>;
+  return <LocalMonitoringContext.Provider value={{ ...state, connectJunctek, disconnect }}>{children}{state.status === "connected" ? <div role="status" className="pointer-events-none fixed bottom-3 right-3 z-40 flex items-center gap-2 rounded-xl border border-line bg-white/95 px-3 py-2 text-[10px] shadow-lg backdrop-blur"><span className="size-2 rounded-full bg-[#2aa876]"/><strong>{state.deviceName}</strong><span className="text-muted">live while PVIntell is open</span></div> : null}</LocalMonitoringContext.Provider>;
 }
 
 export function useLocalMonitoring() {

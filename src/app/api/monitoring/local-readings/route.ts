@@ -13,9 +13,13 @@ export async function POST(request: Request) {
   const scope = await userDb.from("projects").select("id").eq("id", parsed.data.systemId).eq("site_id", parsed.data.siteId).eq("owner_id", ownerId).maybeSingle();
   if (scope.error || !scope.data) return Response.json({ error: "System not found" }, { status: 404 });
   const admin = createAdminClient(); const now = new Date().toISOString();
+  const assigned = await admin.from("monitoring_connections").select("id,site_id,project_id").eq("owner_id", ownerId).eq("provider", "junctek_local").eq("provider_account_ref", parsed.data.deviceId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (assigned.error) return Response.json({ error: "Could not inspect the Bluetooth device assignment" }, { status: 500 });
+  if (assigned.data && (assigned.data.site_id !== parsed.data.siteId || assigned.data.project_id !== parsed.data.systemId)) return Response.json({ error: `${parsed.data.displayName} is assigned to another system. Reassign or forget it in Settings → Connections.` }, { status: 409 });
   let connection = await admin.from("monitoring_connections").select("id").eq("owner_id", ownerId).eq("site_id", parsed.data.siteId).eq("project_id", parsed.data.systemId).eq("provider", "junctek_local").eq("provider_account_ref", parsed.data.deviceId).maybeSingle();
   if (connection.error) return Response.json({ error: "Could not inspect local monitoring connection" }, { status: 500 });
-  if (!connection.data) connection = await admin.from("monitoring_connections").insert({ owner_id: ownerId, site_id: parsed.data.siteId, project_id: parsed.data.systemId, provider: "junctek_local", display_name: parsed.data.displayName, provider_account_ref: parsed.data.deviceId, status: "connected", capabilities: ["current", "battery"], last_attempt_at: now, last_success_at: now }).select("id").single();
+  await admin.from("monitoring_connections").update({ is_active: false }).eq("owner_id", ownerId).eq("project_id", parsed.data.systemId).eq("is_active", true);
+  if (!connection.data) connection = await admin.from("monitoring_connections").insert({ owner_id: ownerId, site_id: parsed.data.siteId, project_id: parsed.data.systemId, provider: "junctek_local", display_name: parsed.data.displayName, provider_account_ref: parsed.data.deviceId, status: "connected", is_active: true, capabilities: ["current", "battery"], last_attempt_at: now, last_success_at: now }).select("id").single();
   if (connection.error || !connection.data) return Response.json({ error: "Could not create local monitoring connection" }, { status: 500 });
   const connectionId = connection.data.id; const r = parsed.data.reading;
   const row = { connection_id: connectionId, owner_id: ownerId, site_id: parsed.data.siteId, project_id: parsed.data.systemId, measured_at: r.measuredAt, received_at: now, battery_power_w: r.batteryPowerW ?? null, battery_voltage_v: r.batteryVoltageV ?? null, battery_current_a: r.batteryCurrentA ?? null, battery_soc_percent: r.batterySocPercent ?? null };
@@ -29,6 +33,6 @@ export async function POST(request: Request) {
   const cutoff = new Date(Date.now() - 10 * 60_000).toISOString();
   const expired = await admin.from("monitoring_samples").delete().eq("connection_id", connectionId).lt("measured_at", cutoff);
   if (expired.error) return Response.json({ error: "The local reading was saved, but expired history could not be removed" }, { status: 500 });
-  await admin.from("monitoring_connections").update({ status: "connected", last_attempt_at: now, last_success_at: now, status_message: null }).eq("id", connectionId);
+  await admin.from("monitoring_connections").update({ status: "connected", is_active: true, last_attempt_at: now, last_success_at: now, status_message: null }).eq("id", connectionId);
   return Response.json({ ok: true, measuredAt: r.measuredAt });
 }
