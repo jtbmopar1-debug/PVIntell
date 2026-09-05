@@ -6,6 +6,7 @@ import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 import { newSystemQuestions } from "@/discovery/new-system";
 import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
+import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -140,7 +141,7 @@ export async function POST(request: Request) {
   const [profile, sites, systems, siteDiscoveries, selectedConversation] = await Promise.all([
     supabase.from("profiles").select("display_name,home_location,timezone,onboarding_assessment").eq("id", userId).single(),
     supabase.from("sites").select("id,name,location,timezone,location_confirmed").eq("owner_id", userId).order("created_at"),
-    supabase.from("projects").select("id,site_id,name,description,mode,phase,location,system_voltage,settings").eq("owner_id", userId).order("created_at"),
+    supabase.from("projects").select("id,site_id,name,description,mode,phase,location,system_voltage,settings,map_latitude,map_longitude,location_mode,map_location_updated_at").eq("owner_id", userId).order("created_at"),
     supabase.from("site_discoveries").select("site_id,status,answers,baseline_answers,impact_pending").eq("owner_id", userId),
     parsed.data.conversationId ? supabase.from("user_conversations").select("id,site_id,project_id").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
@@ -200,13 +201,16 @@ export async function POST(request: Request) {
     });
   }
   let conversation = parsed.data.conversationId
-    ? await supabase.from("user_conversations").select("id").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle()
-    : await supabase.from("user_conversations").select("id").eq("owner_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    ? await supabase.from("user_conversations").select("id,title").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle()
+    : await supabase.from("user_conversations").select("id,title").eq("owner_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (conversation.error) return Response.json({ error: conversation.error.message }, { status: 400 });
+  if (parsed.data.conversationId && !conversation.data) return Response.json({ error: "That Wattson conversation was not found." }, { status: 404 });
   if (!conversation.data) {
-    const created = await supabase.from("user_conversations").insert({ owner_id: userId }).select("id").single();
+    if (await userConversationCount(supabase, userId) >= WATTSON_CONVERSATION_LIMIT)
+      return Response.json({ error: `You have reached the ${WATTSON_CONVERSATION_LIMIT}-chat limit. Delete an old chat from Wattson chats before starting another.` }, { status: 409 });
+    const created = await supabase.from("user_conversations").insert({ owner_id: userId, site_id: conversationSiteId, project_id: parsed.data.projectId }).select("id").single();
     if (created.error) return Response.json({ error: created.error.message }, { status: 400 });
-    conversation = { ...conversation, data: created.data };
+    conversation = { ...conversation, data: { ...created.data, title: "Wattson dashboard" } };
   }
   const conversationId = conversation.data?.id;
   if (!conversationId) return Response.json({ error: "Could not open Wattson conversation." }, { status: 500 });
@@ -215,6 +219,8 @@ export async function POST(request: Request) {
     : parsed.data.message;
   const inserted = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "user", content: userContent, structured_context: imagePath ? { imagePath } : {} });
   if (inserted.error) return Response.json({ error: inserted.error.message }, { status: 400 });
+  if (!conversation.data?.title || conversation.data.title === "Wattson dashboard")
+    await supabase.from("user_conversations").update({ title: conversationTitle(parsed.data.message) }).eq("id", conversationId).eq("owner_id", userId);
   const recent = await supabase.from("user_chat_messages").select("role,content").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(12);
   const history = (recent.data ?? []).reverse();
   const prior = history.at(-1)?.content === userContent ? history.slice(0, -1) : history;
@@ -230,7 +236,7 @@ export async function POST(request: Request) {
         inventoryLabelCapture: inventoryCapture,
         sites: (sites.data ?? []).map((site) => ({ ...site, unassignedEquipment: (siteEquipment.data ?? []).filter((item) => item.site_id === site.id && !item.assigned_project_id) })),
         connectedSiteSystems: connectedSystems,
-        scope: "Dashboard Wattson is a general solar and electrical assistant with selected-Site awareness. Answer the user's actual question directly first, whether it is general, educational, comparative, diagnostic or specific to a recorded Site/system. Use the selected Site and its complete component, PV string, load, assumption and connection records when relevant, but do not force an unrelated Site context onto a general question. A hypothetical design question is not a request to create a system. Never start system discovery, create a workspace, or redirect to Start here from dashboard chat; the dedicated Start a new system flow owns that job. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update an existing system record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If a requested Site-specific action has an unclear target, ask one focused question instead of taking an action.",
+        scope: "Dashboard Wattson is a general solar and electrical assistant with selected-Site awareness. Answer the user's actual question directly first, whether it is general, educational, comparative, diagnostic or specific to a recorded Site/system. Use the selected Site and its complete installed component, PV-array/string, load, assumption and connection records whenever the question concerns that Site, performance or improvement; do not make the user remind you what is already mounted. connectedSiteSystems may include map_latitude, map_longitude, location_mode and map_location_updated_at. A static system position is installation context. A mobile system position is only the user's last saved guide position: state that limitation when location materially affects the answer and never imply that a boat, vehicle or movable system is permanently there. For azimuth, tilt, yield or expansion questions, explicitly compare the recorded existing arrays with the location-based ideal and distinguish improving the existing installation from proposing a separate new array. Do not force an unrelated Site context onto a genuinely general question. A hypothetical design question is not a request to create a system. Never start system discovery, create a workspace, or redirect to Start here from dashboard chat; the dedicated Start a new system flow owns that job. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update an existing system record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If a requested Site-specific action has an unclear target only after checking the records, ask one focused question instead of taking an action.",
       },
       image,
       allowActions: true,
@@ -467,6 +473,7 @@ export async function POST(request: Request) {
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
       : undefined;
     return Response.json({
+      conversationId,
       message,
       citations: result.citations,
       actions: appliedActions,

@@ -230,6 +230,7 @@ export async function loadSiteWorkspace(
   supabase: SupabaseClient,
   siteId: string,
   requestedSystemId: string,
+  requestedConversationId?: string,
 ) {
   const workspace = await ensureWorkspace(supabase);
   const ownedSite = workspace.sites.find((site) => site.id === siteId);
@@ -238,12 +239,13 @@ export async function loadSiteWorkspace(
     (system) => system.site_id === siteId && system.id === requestedSystemId,
   );
   if (!selected) throw new Error("Power system not found");
-  return loadWorkspace(supabase, selected.id);
+  return loadWorkspace(supabase, selected.id, requestedConversationId);
 }
 
 export async function loadWorkspace(
   supabase: SupabaseClient,
   requestedSystemId?: string,
+  requestedConversationId?: string,
 ) {
   const workspace = await ensureWorkspace(supabase);
   const rowSummary =
@@ -320,13 +322,9 @@ export async function loadWorkspace(
       .select("*")
       .eq("project_id", row.id)
       .order("recorded_at"),
-    supabase
-      .from("conversations")
-      .select("id")
-      .eq("project_id", row.id)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+    requestedConversationId
+      ? supabase.from("conversations").select("id").eq("project_id", row.id).eq("id", requestedConversationId).maybeSingle()
+      : supabase.from("conversations").select("id").eq("project_id", row.id).order("created_at", { ascending: false }).limit(1).maybeSingle(),
     supabase
       .from("questionnaire_responses")
       .select("template_key,template_version,status,answers")
@@ -561,6 +559,7 @@ export async function loadWorkspace(
   return {
     project,
     messages,
+    conversationId: conversation.data?.id,
     site,
     sites,
     systems,

@@ -5,8 +5,9 @@ import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
 const entries = [
+  ["Azimuth", "solar-panel-pv-module.jpg", "Solar geometry", "The compass direction a panel surface faces, measured horizontally from true north.", "PVIntell uses 0° for true north, 90° for east, 180° for south and 270° for west. Equator-facing is generally true north in the Southern Hemisphere and true south in the Northern Hemisphere. The best practical direction can still change with latitude, shade, roof layout, loads and the desired morning or afternoon production profile."],
   ["Solar panel (PV module)", "solar-panel-pv-module.jpg", "Solar", "Turns sunlight into DC electricity.", "Panels are joined into one or more PV strings before feeding a controller or inverter."],
-  ["PV string", "solar-panel-pv-module.jpg", "Solar", "A group of solar panels electrically connected together.", "Each string has voltage and current limits that must suit the equipment it feeds."],
+  ["PV string", "solar-panel-pv-module.jpg", "Solar", "A chain of solar panels connected in series so they operate as one DC circuit.", "Series-connected panels add voltage while string current remains approximately the current of one panel. Two or more matching strings can then be connected in parallel, which adds current. The string voltage, current, panel count and series/parallel arrangement must remain within the controller or inverter input limits."],
   ["Roof mounting system", "roof-mounting-system.jpg", "Solar", "Secures panels to the roof or another structure.", "Correct mounting protects the roof and resists local wind loads."],
   ["PV combiner box", "dc-combiner-box.jpg", "Solar", "Combines multiple PV strings into fewer outputs.", "It may also contain string protection, isolation and surge protection."],
   ["Hybrid inverter", "hybrid-inverter.jpg", "Conversion", "Combines several jobs, commonly converting battery DC to AC and managing grid, generator or solar inputs.", "It is compact and simple to operate, but concentrates several functions in one unit."],
@@ -46,6 +47,7 @@ const entries = [
   ["Energy meter", "energy-meter.jpg", "Monitoring", "Measures electrical energy entering, leaving or moving through a circuit.", "It can support billing, solar performance checks and load analysis."],
   ["CT clamp", "current-transformer-ct-clamp.jpg", "Monitoring", "Measures AC current without becoming part of the power conductor.", "Its direction and location affect whether readings show import, export, load or generation."],
   ["Monitoring data logger", "monitoring-device-data-logger.jpg", "Monitoring", "Collects operating data from power equipment.", "It sends readings to a local display or online monitoring service."],
+  ["Tilt / panel angle", "roof-mounting-system.jpg", "Solar geometry", "The angle of a panel measured up from horizontal: 0° is flat and 90° is vertical.", "Tilt changes seasonal solar capture, drainage, soiling, wind loading and row spacing. A latitude-based angle is only a starting point; annual yield, winter resilience, roof pitch, shading and mounting limits can justify a different angle."],
 ] as const;
 
 function glossaryImage(image: string) {
@@ -56,11 +58,12 @@ export function Glossary() {
   const [query, setQuery] = useState("");
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return needle ? entries.filter((entry) => entry.join(" ").toLowerCase().includes(needle)) : entries;
+    const matching = needle ? entries.filter((entry) => entry.join(" ").toLowerCase().includes(needle)) : entries;
+    return [...matching].sort((a, b) => a[0].localeCompare(b[0]));
   }, [query]);
   return <div className="space-y-6">
     <div className="relative max-w-xl"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={17}/><input value={query} onChange={(event) => setQuery(event.target.value)} className="field mt-0 pl-11" placeholder="Search a component or term"/></div>
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{visible.map(([term, image, category, what, role]) => <article key={term} className="card overflow-hidden"><div className="grid h-44 place-items-center bg-white p-4"><Image src={glossaryImage(image)} alt={term} width={240} height={160} className="h-full w-full object-contain"/></div><div className="border-t border-line p-5"><div className="eyebrow">{category}</div><h2 className="mt-2 text-base font-extrabold">{term}</h2><p className="mt-3 text-xs leading-5 text-ink">{what}</p><p className="mt-2 text-[11px] leading-5 text-muted">{role}</p></div></article>)}</div>
+    <div className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">{visible.map(([term, image, category, what, role]) => <article key={term} className="card grid min-w-0 grid-cols-[7.5rem_minmax(0,1fr)] overflow-hidden sm:block"><div className="grid min-h-36 place-items-center border-r border-line bg-white p-2 sm:h-44 sm:min-h-0 sm:border-r-0 sm:p-4"><Image src={glossaryImage(image)} alt={term} width={240} height={160} sizes="(max-width: 639px) 120px, (max-width: 1279px) 45vw, 30vw" className="h-auto max-h-32 w-full object-contain sm:h-full sm:max-h-none"/></div><div className="min-w-0 p-3 sm:border-t sm:border-line sm:p-5"><div className="eyebrow">{category}</div><h2 className="mt-1.5 break-words text-[15px] font-extrabold leading-5 sm:mt-2 sm:text-base">{term}</h2><p className="mt-2 text-[13px] leading-5 text-ink sm:mt-3 sm:text-xs">{what}</p><p className="mt-1.5 text-[13px] leading-5 text-muted sm:mt-2 sm:text-[11px]">{role}</p></div></article>)}</div>
     {!visible.length && <div className="card p-8 text-sm text-muted">No glossary entries match “{query}”.</div>}
   </div>;
 }

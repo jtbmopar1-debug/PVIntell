@@ -368,7 +368,11 @@ function PanelObstructionsCard({ question, profile, panelLocations, panelAreaDim
   const items = panelObstructions(value);
   const save = (next: PanelObstruction[]) => setAnswer(JSON.stringify(next));
   const update = (id: string, field: keyof Omit<PanelObstruction, "id">, nextValue: string) => save(items.map((item) => item.id === id ? { ...item, [field]: nextValue } : item));
-  const add = () => save([...items.filter((item) => item.kind !== "none"), { id: `obstruction-${Date.now()}`, areaId: areas[0]?.id ?? "", kind: "", lengthM: "", widthM: "" }]);
+  const nextObstructionId = items.reduce((highest, item) => {
+    const suffix = Number(item.id.replace(/^obstruction-/, ""));
+    return Number.isFinite(suffix) ? Math.max(highest, suffix) : highest;
+  }, 0) + 1;
+  const add = () => save([...items.filter((item) => item.kind !== "none"), { id: `obstruction-${nextObstructionId}`, areaId: areas[0]?.id ?? "", kind: "", lengthM: "", widthM: "" }]);
   const total = items.filter((item) => item.kind !== "none").reduce((sum, item) => sum + Number(item.lengthM || 0) * Number(item.widthM || 0), 0);
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>

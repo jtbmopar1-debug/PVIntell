@@ -63,12 +63,11 @@ export default async function SystemPhotosPage({
   }
   photos.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
 
-  const back = `/sites/${siteId}/systems/${systemId}`;
   return (
     <main className="min-h-screen bg-[#f5f7fa] px-5 py-8 md:px-10">
       <div className="mx-auto max-w-6xl">
-        <Link href={back} className="inline-flex items-center gap-2 text-xs font-bold text-brand">
-          <ArrowLeft size={15} /> Back to system overview
+        <Link href={`/systems?site=${siteId}`} className="inline-flex items-center gap-2 text-xs font-bold text-brand">
+          <ArrowLeft size={15} /> Back to systems
         </Link>
         <div className="my-7 flex items-start gap-4">
           <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-brand text-white">

@@ -1,5 +1,6 @@
-import { BatteryCharging, ShieldCheck, Sparkles, Zap } from "lucide-react";
+import { BatteryCharging, ShieldCheck, Sparkles } from "lucide-react";
 import Link from "next/link";
+import { BrandLogo } from "@/components/brand-logo";
 import { PasswordField } from "@/components/password-field";
 import { login, loginWithGoogle, signup } from "./actions";
 
@@ -19,17 +20,7 @@ export default async function LoginPage({
     <main className="grid min-h-[100dvh] bg-[#f5f7fa] lg:grid-cols-[1.05fr_.95fr]">
       <section className="relative hidden overflow-hidden bg-[#0f3b66] p-10 text-white lg:flex lg:flex-col">
         <div className="absolute -right-28 -top-28 size-[420px] rounded-full bg-[#f6c945]/15 blur-2xl" />
-        <div className="relative flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-xl bg-[#f6c945] text-[#143c63]">
-            <Zap size={21} fill="currentColor" />
-          </span>
-          <div>
-            <div className="font-display text-xl font-extrabold">PVIntell</div>
-            <div className="text-[9px] font-bold uppercase tracking-[.2em] text-white/55">
-              Power, made clear
-            </div>
-          </div>
-        </div>
+        <div className="relative"><BrandLogo inverse /></div>
         <div className="relative my-auto max-w-xl">
           <div className="text-xs font-bold uppercase tracking-[.16em] text-[#f6c945]">
             Meet Wattson
@@ -63,14 +54,7 @@ export default async function LoginPage({
       </section>
       <section className="flex items-center justify-center p-4 sm:p-6 md:p-8">
         <div className="w-full max-w-[380px]">
-          <div className="mb-5 lg:hidden">
-            <div className="flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-xl bg-[#f6c945] text-[#143c63]">
-                <Zap size={20} fill="currentColor" />
-              </span>
-              <strong className="font-display text-xl">PVIntell</strong>
-            </div>
-          </div>
+          <div className="mb-5 lg:hidden"><BrandLogo /></div>
           <div className="eyebrow">
             {creating ? "Create account" : "Welcome back"}
           </div>
@@ -128,7 +112,7 @@ export default async function LoginPage({
           {creating ? <SignupForm /> : <LoginForm />}
           <p className="mt-4 text-center text-[9px] leading-4 text-muted">
             {creating
-              ? "By creating an account, you agree to use PVIntell as guidance and to make your own informed decisions about the work you undertake."
+              ? <>By creating an account, you agree to the <Link href="/terms" className="font-bold text-brand">Terms</Link> and acknowledge the <Link href="/privacy" className="font-bold text-brand">Privacy Policy</Link>.</>
               : "If you joined with Google, continue with Google. A Google account does not automatically create a PVIntell password."}
           </p>
         </div>

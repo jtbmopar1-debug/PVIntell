@@ -16,8 +16,10 @@ export function PwaInstallCard() {
   useEffect(() => {
     const standalone = window.matchMedia("(display-mode: standalone)").matches
       || Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone);
-    setInstalled(standalone);
-    setIos(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
+    const detection = window.setTimeout(() => {
+      setInstalled(standalone);
+      setIos(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
+    }, 0);
     const capture = (event: Event) => {
       event.preventDefault();
       setPrompt(event as InstallPromptEvent);
@@ -26,6 +28,7 @@ export function PwaInstallCard() {
     window.addEventListener("beforeinstallprompt", capture);
     window.addEventListener("appinstalled", markInstalled, { once: true });
     return () => {
+      window.clearTimeout(detection);
       window.removeEventListener("beforeinstallprompt", capture);
       window.removeEventListener("appinstalled", markInstalled);
     };

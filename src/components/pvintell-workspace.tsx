@@ -3,9 +3,9 @@
 
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   BatteryCharging,
-  BookOpen,
   Bot,
   Camera,
   Calculator,
@@ -14,7 +14,6 @@ import {
   ChevronRight,
   CircleGauge,
   ClipboardCheck,
-  CloudSun,
   Compass,
   HelpCircle,
   Home,
@@ -26,8 +25,6 @@ import {
   PlugZap,
   RotateCcw,
   Send,
-  Settings2,
-  ShieldCheck,
   Sparkles,
   Sun,
   Waypoints,
@@ -62,12 +59,6 @@ import type {
 } from "@/domain/models";
 import { evaluateDiagnostics } from "@/diagnostics/rules";
 import { BrowserProjectStore } from "@/persistence/project-store";
-import {
-  scenarioForStart,
-  systemDiscoveryQuestionnaire,
-  type QuestionnaireAnswer,
-} from "@/questionnaires/templates";
-import { SystemQuestionnaire } from "@/components/system-questionnaire";
 import { SiteEquipmentInventory } from "@/components/site-equipment";
 import { expandedHowToGuides } from "@/guides/how-to-expansion";
 import { planningHowToGuides } from "@/guides/how-to-planning";
@@ -79,15 +70,17 @@ import { evChargingHowToGuides } from "@/guides/how-to-ev-charging";
 import { windGenerationHowToGuides } from "@/guides/how-to-wind-generation";
 import { solarHotWaterHowToGuides } from "@/guides/how-to-solar-hot-water";
 import { SolarWeather } from "@/components/solar-weather";
+import { BrandLogo } from "@/components/brand-logo";
 import { SiteOverview } from "@/components/site-overview";
 import { SystemEquipmentOverview } from "@/components/system-equipment-overview";
+import { SystemTechnicalOverview } from "@/components/system-technical-overview";
 import { DesignCalculator, ProposedBuildSchematic } from "@/components/design-calculator";
 import type { SolarArrayForecastInput } from "@/weather/forecast";
 
 export type WorkspaceView =
   | "site"
+  | "overview"
   | "wattson"
-  | "setup"
   | "equipment"
   | "weather"
   | "design"
@@ -103,7 +96,7 @@ type QuestionnaireDrafts = Record<
   {
     version: number;
     status: string;
-    answers: Record<string, QuestionnaireAnswer>;
+    answers: Record<string, unknown>;
   }
 >;
 const ai = new MockAIProvider();
@@ -165,8 +158,6 @@ const demoSystem: SystemSummary = {
   projectType: demoProject.projectType,
   phase: demoProject.phase,
 };
-const QuestionnairePanel = SystemQuestionnaire;
-
 function Badge({
   children,
   tone = "neutral",
@@ -189,21 +180,7 @@ function Badge({
   );
 }
 function Logo() {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="grid size-9 place-items-center rounded-[11px] bg-[#f6c945] text-[#143c63]">
-        <Zap size={19} fill="currentColor" />
-      </span>
-      <div>
-        <div className="font-display text-[17px] font-extrabold tracking-[-.04em]">
-          PVIntell
-        </div>
-        <div className="text-[9px] font-bold uppercase tracking-[.18em] text-muted">
-          Power, made clear
-        </div>
-      </div>
-    </div>
-  );
+  return <BrandLogo />;
 }
 function Heading({
   eyebrow,
@@ -298,10 +275,10 @@ function discoverLoads(message: string, project: Project) {
 export function PVIntellWorkspace({
   initialProject = demoProject,
   initialMessages = initialConversation,
+  initialConversationId,
   initialSite = demoSite,
   sites = [demoSite],
   systems = [demoSystem],
-  initialQuestionnaires = {},
   initialSiteEquipment = [],
   cloud = false,
   sitePage = false,
@@ -312,6 +289,7 @@ export function PVIntellWorkspace({
 }: {
   initialProject?: Project;
   initialMessages?: ChatMessage[];
+  initialConversationId?: string;
   initialSite?: Site;
   sites?: Site[];
   systems?: SystemSummary[];
@@ -328,18 +306,15 @@ export function PVIntellWorkspace({
   const router = useRouter();
   const [project, setProject] = useState(initialProject);
   const [view, setView] = useState<View>(
-    initialView ?? (systemPage ? (initialProject.phase === "monitor" ? "monitor" : "system") : sitePage ? "site" : "wattson"),
+    initialView ?? (systemPage ? (initialProject.phase === "monitor" ? "overview" : "system") : sitePage ? "site" : "wattson"),
   );
   const [messages, setMessages] = useState(initialMessages);
+  const [conversationId, setConversationId] = useState(initialConversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [menu, setMenu] = useState(false);
   const [expandedSiteId, setExpandedSiteId] = useState(initialSite.id);
   const [equipmentToEdit, setEquipmentToEdit] = useState<string>();
-  const [questionnaireAnswers, setQuestionnaireAnswers] = useState<
-    Record<string, QuestionnaireAnswer>
-  >(initialQuestionnaires[systemDiscoveryQuestionnaire.key]?.answers ?? {});
-  const [savingQuestionnaire, setSavingQuestionnaire] = useState(false);
   const loads = useMemo(() => calculateLoads(project.loads), [project.loads]);
   const solar = useMemo(
     () =>
@@ -387,10 +362,8 @@ export function PVIntellWorkspace({
       }),
     [],
   );
-  const monitorOnly = project.phase === "monitor";
-  useEffect(() => {
-    if (monitorOnly && ["setup", "design", "proposed-schematic", "build", "commission"].includes(view)) setView("monitor");
-  }, [monitorOnly, view]);
+  const monitorOnly = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
+  const viewingProjectHistory = monitorOnly && ["design", "proposed-schematic", "build", "commission"].includes(view);
   function persist(p: Project) {
     setProject(p);
     if (cloud) {
@@ -401,55 +374,28 @@ export function PVIntellWorkspace({
       });
     } else store.save(p);
   }
-  async function saveQuestionnaire(
-    answers: Record<string, QuestionnaireAnswer>,
-    status: "draft" | "completed" = "draft",
-  ) {
-    if (!cloud) return;
-    setSavingQuestionnaire(true);
-    try {
-      const response = await fetch(
-        `/api/questionnaires/${systemDiscoveryQuestionnaire.key}`,
-        {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            projectId: project.id,
-            version: systemDiscoveryQuestionnaire.version,
-            status,
-            answers,
-          }),
-        },
-      );
-      if (!response.ok) {
-        const body = await response.json();
-        throw new Error(body.error ?? "Could not save questionnaire");
-      }
-    } finally {
-      setSavingQuestionnaire(false);
+  async function completeCommissioning() {
+    if (cloud) {
+      const response = await fetch(`/api/systems/${project.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phase: "monitor" }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not mark this system as commissioned.");
     }
+    setProject((current) => ({ ...current, phase: "monitor" }));
+    setView("overview");
+    router.refresh();
   }
-  function openQuestionnaire(title: string) {
-    const scenario = scenarioForStart(title);
-    const next = scenario
-      ? { ...questionnaireAnswers, scenario }
-      : questionnaireAnswers;
-    setQuestionnaireAnswers(next);
-    setView("setup");
-    if (scenario) void saveQuestionnaire(next);
-  }
-  async function reviewQuestionnaire() {
-    await saveQuestionnaire(questionnaireAnswers, "completed");
-    setView("wattson");
-    await send(
-      "I've completed my system setup questionnaire. Please review it, identify any important gaps, and tell me the next best step.",
-    );
+  function openDiscovery() {
+    router.push(cloud ? `/sites/${initialSite.id}/discovery` : "/discovery/new-system");
   }
   async function send(text = input) {
     const message = text.trim();
     const start = message.match(/^I want to start with: (.*?)\./);
     if (start) {
-      openQuestionnaire(start[1]);
+      openDiscovery();
       return;
     }
     if (!message || sending) return;
@@ -479,11 +425,13 @@ export function PVIntellWorkspace({
             message,
             projectId: updated.id,
             project: updated,
+            conversationId,
           }),
         });
         const body = await response.json();
         if (!response.ok)
           throw new Error(body.error ?? "Wattson is unavailable");
+        if (typeof body.conversationId === "string") setConversationId(body.conversationId);
         reply = body.message;
         citations = body.citations;
         actionUrl = body.actionUrl;
@@ -539,8 +487,10 @@ export function PVIntellWorkspace({
       window.alert(body.error ?? "Could not start a new conversation");
       return;
     }
+    setConversationId(body.id);
     setMessages([]);
     setInput("");
+    router.replace(`/sites/${initialSite.id}/systems/${project.id}?view=wattson&conversation=${body.id}`, { scroll: false });
   }
   async function sendImage(file: File) {
     if (sending) return;
@@ -563,11 +513,13 @@ export function PVIntellWorkspace({
       body.set("message", message);
       body.set("projectId", project.id);
       body.set("project", JSON.stringify(project));
+      if (conversationId) body.set("conversationId", conversationId);
       body.set("file", file);
       const response = await fetch("/api/wattson", { method: "POST", body });
       const result = await response.json();
       if (!response.ok)
         throw new Error(result.error ?? "Wattson could not inspect the image");
+      if (typeof result.conversationId === "string") setConversationId(result.conversationId);
       setMessages((m) => [
         ...m,
         {
@@ -601,9 +553,9 @@ export function PVIntellWorkspace({
       ? [{ id: "site" as View, label: "Site overview", icon: Home }]
       : []),
     { id: "equipment" as View, label: "Site equipment", icon: Package },
-    { id: "weather" as View, label: "Solar weather", icon: CloudSun },
     { id: "design" as View, label: "Proposed design", icon: Calculator },
-    { id: "system" as View, label: "As-built overview", icon: LayoutDashboard },
+    { id: "overview" as View, label: "System overview", icon: LayoutDashboard },
+    { id: "system" as View, label: "As-built equipment", icon: Package },
     { id: "schematic" as View, label: "As-built schematic", icon: Waypoints },
     { id: "build" as View, label: "Build", icon: Wrench },
     { id: "commission" as View, label: "Commission", icon: ClipboardCheck },
@@ -612,6 +564,21 @@ export function PVIntellWorkspace({
   const outlineReady = ["solar-array", "inverter", "battery", "protection"].every((id) => project.designCalculator?.proposedChecklist?.[id]);
   const proposedSchematicReviewed = project.designCalculator?.proposedChecklist?.["proposed-schematic"] ?? false;
   const currentViewLabel = view === "proposed-schematic" ? "Proposed schematic" : nav.find((item) => item.id === view)?.label ?? "Project planning";
+  async function askGuide(guide: NoviceHowToGuide, question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) {
+    if (!cloud) {
+      const terms = question.toLowerCase().split(/\W+/).filter((term) => term.length > 3);
+      const relatedType = guide.types?.find((type) => terms.some((term) => `${type.name} ${type.description}`.toLowerCase().includes(term)));
+      return { message: relatedType ? `${relatedType.name}: ${relatedType.description}${relatedType.bestFor ? ` It is usually used for ${relatedType.bestFor.toLowerCase()}` : ""}${relatedType.watchFor ? ` Check: ${relatedType.watchFor}` : ""}` : `${guide.whatItIs} ${guide.whatItDoes}` };
+    }
+    const response = await fetch("/api/wattson/guide", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: question, projectId: project.id, project, guide, recentConversation, guideIndex: allHowToGuides.map(({ id, title, group, aliases }) => ({ id, title, group, aliases })) }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
+    return body;
+  }
   return (
     <div className="min-h-screen">
       <aside
@@ -705,13 +672,6 @@ export function PVIntellWorkspace({
           <p className="mt-2 truncate text-[10px] leading-4 text-muted">
             {cloud ? email : "Live-shaped sample data. No hardware connected."}
           </p>
-          {cloud && (
-            <form action="/auth/signout" method="post">
-              <button className="mt-3 text-[10px] font-bold text-brand">
-                Sign out
-              </button>
-            </form>
-          )}
         </div>
       </aside>
       <main className="min-w-0">
@@ -719,54 +679,45 @@ export function PVIntellWorkspace({
           <div className="mx-auto flex h-[64px] max-w-[1440px] items-center gap-4 px-4 md:px-6">
             <Link href="/dashboard" className="shrink-0"><Logo /></Link>
             {cloud && <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{initialSite.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div><div className="space-y-1">{sites.map((site) => <Link key={site.id} href={`/sites/${site.id}`} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === initialSite.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}><MapPin size={12}/><span className="truncate">{site.name}</span></Link>)}</div><Link href="/discovery/new-system" className="mt-3 flex items-center gap-2 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]"><Sparkles size={13}/>New independent Site</Link></div></details>}
-            <div className="min-w-0 flex-1 border-l border-line pl-4">
+             <div className="hidden min-w-0 flex-1 border-l border-line pl-4 md:block">
               <div className="eyebrow text-[8px]">{currentViewLabel}</div>
               <div className="mt-1 truncate text-xs font-extrabold">{project.name} <span className="font-medium text-muted">· {project.location} · {project.systemVoltage > 0 ? `${project.systemVoltage} V` : "voltage to confirm"} · {project.projectType}</span></div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <button type="button" onClick={() => setView("wattson")} className="hidden h-9 items-center gap-2 rounded-xl bg-brand px-4 text-[11px] font-bold text-white sm:flex"><Sparkles size={14}/>Ask Wattson</button>
-            <Link
-              href="/account"
-              aria-label="Account settings"
-              className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted"
-            >
-              <Settings2 size={16} />
-            </Link>
+              {cloud && <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${initialSite.id}`} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-xl bg-[#fff2b8] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><UniversalHowToMenu location={initialSite.location} onAsk={askGuide}/><Link href={`/settings?site=${initialSite.id}`} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Settings</Link></nav>}
+              <button type="button" onClick={() => setMenu((open) => !open)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>{menu ? <X size={17}/> : <Menu size={18}/>}</button>
+              </div>
             </div>
-          </div>
-          <nav className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-4 py-2 md:px-6">
-            {cloud && <Link href="/dashboard" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Dashboard</Link>}
-            <button type="button" onClick={() => setView("site")} className={`shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold ${view === "site" ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>Overview</button>
+            <nav className="mx-auto hidden max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-6 py-1.5 md:flex" aria-label="System navigation">
+            <button type="button" onClick={() => setView("site")} className={`shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold ${view === "site" ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>Site</button>
             {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Plan ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery brief</Link><button type="button" onClick={() => setView("wattson")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Continue planning with Wattson</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed system outline</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed build schematic</Link> : <span className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#9aa8b6]">Proposed schematic · locked</span>}</div></details>}
+            {monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Project history ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original discovery brief</Link><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed design</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed schematic</Link> : null}<button type="button" onClick={() => setView("build")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build record</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning record</button></div></details>}
             {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" disabled={!proposedSchematicReviewed} onClick={() => setView("build")} className={`block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold ${proposedSchematicReviewed ? "text-muted hover:bg-[#eef3f8]" : "cursor-not-allowed text-[#9aa8b6]"}`}>{proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning</button></div></details>}
-            <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Records ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" onClick={() => setView("system")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built overview</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built schematic</Link><button type="button" onClick={() => setView("equipment")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Site equipment</button></div></details>
-            <button type="button" onClick={() => router.push(`/sites/${initialSite.id}/weather`)} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Solar weather</button>
-            <button type="button" onClick={() => setView("monitor")} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Monitor</button>
-            <UniversalHowToMenu
-              location={initialSite.location}
-              onAsk={async (guide, question, recentConversation) => {
-                if (!cloud) {
-                  const terms = question.toLowerCase().split(/\W+/).filter((term) => term.length > 3);
-                  const relatedType = guide.types?.find((type) => terms.some((term) => `${type.name} ${type.description}`.toLowerCase().includes(term)));
-                  return { message: relatedType ? `${relatedType.name}: ${relatedType.description}${relatedType.bestFor ? ` It is usually used for ${relatedType.bestFor.toLowerCase()}` : ""}${relatedType.watchFor ? ` Check: ${relatedType.watchFor}` : ""}` : `${guide.whatItIs} ${guide.whatItDoes}` };
-                }
-                const response = await fetch("/api/wattson/guide", {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ message: question, projectId: project.id, project, guide, recentConversation, guideIndex: allHowToGuides.map(({ id, title, group, aliases }) => ({ id, title, group, aliases })) }),
-                });
-                const body = await response.json();
-                if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
-                return body;
-              }}
-            />
-            <Link href="/glossary" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]"><BookOpen size={13} className="mr-1 inline"/>Glossary</Link>
-            <Link href="/account" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]"><Settings2 size={13} className="mr-1 inline"/>Settings</Link>
-            <button type="button" onClick={() => setView("wattson")} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-brand hover:bg-[#eaf2fb] sm:hidden">Ask Wattson</button>
-            {cloud && <form action="/auth/signout" method="post" className="ml-auto"><button className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Sign out</button></form>}
-          </nav>
-        </header>
-        <div className="mx-auto max-w-[1320px] p-4 md:p-6">
+            <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">System records ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" onClick={() => setView("overview")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">System overview</button><button type="button" onClick={() => setView("system")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built equipment</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built schematic</Link><button type="button" onClick={() => setView("equipment")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Site equipment</button></div></details>
+            {monitorOnly && <button type="button" onClick={() => setView("monitor")} className="shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Monitor</button>}
+           </nav>
+            {menu ? <nav className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-line bg-white p-3 md:hidden" aria-label="Mobile navigation"><div className="grid gap-1">
+              {cloud ? <><Link href={`/dashboard?site=${initialSite.id}`} className="mobile-nav-item">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-lg bg-[#fff2b8] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link></> : null}
+              <div className="my-1 border-t border-line" />
+              <button type="button" onClick={() => { setView("site"); setMenu(false); }} className="mobile-nav-item">Site</button>
+              <Link href={`/sites/${initialSite.id}/discovery`} className="mobile-nav-item">{monitorOnly ? "Original discovery" : "Discovery"}</Link>
+              <Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="mobile-nav-item">{monitorOnly ? "Original proposed design" : "Proposed design"}</Link>
+              {outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="mobile-nav-item">{monitorOnly ? "Original proposed schematic" : "Proposed schematic"}</Link> : null}
+              <button type="button" disabled={!monitorOnly && !proposedSchematicReviewed} onClick={() => { setView("build"); setMenu(false); }} className="mobile-nav-item disabled:opacity-45">{monitorOnly ? "Build record" : proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button>
+              <button type="button" onClick={() => { setView("commission"); setMenu(false); }} className="mobile-nav-item">{monitorOnly ? "Commissioning record" : "Commissioning"}</button>
+              <button type="button" onClick={() => { setView("overview"); setMenu(false); }} className="mobile-nav-item">System overview</button>
+              <button type="button" onClick={() => { setView("system"); setMenu(false); }} className="mobile-nav-item">As-built equipment</button>
+              <Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="mobile-nav-item">As-built schematic</Link>
+              <button type="button" onClick={() => { setView("equipment"); setMenu(false); }} className="mobile-nav-item">Site equipment</button>
+              {monitorOnly ? <button type="button" onClick={() => { setView("monitor"); setMenu(false); }} className="mobile-nav-item">Monitor</button> : null}
+              <div className="my-1 border-t border-line" />
+              <div className="rounded-lg text-xs font-bold text-muted"><UniversalHowToMenu location={initialSite.location} onAsk={askGuide}/></div>
+              <Link href={`/settings?site=${initialSite.id}`} className="mobile-nav-item">Settings</Link>
+            </div></nav> : null}
+         </header>
+         <div className="mx-auto max-w-[1320px] p-4 md:p-6">
+           {systemPage && <Link href={`/systems?site=${initialSite.id}`} className="mb-4 inline-flex items-center gap-2 text-[11px] font-bold text-brand"><ArrowLeft size={14}/>Back to systems</Link>}
+           {viewingProjectHistory ? <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#efd98e] bg-[#fff9e3] px-4 py-3 text-[11px] leading-5 text-[#765918]"><ClipboardCheck className="mt-0.5 shrink-0" size={15}/><p><strong>Project history.</strong> This is the retained discovery, proposal, build or commissioning record for an installed system. Current equipment belongs in the as-built records.</p></div> : null}
           {view === "site" && (
             <SiteOverview
               site={initialSite}
@@ -794,22 +745,12 @@ export function PVIntellWorkspace({
               setInput={setInput}
               send={send}
               sending={sending}
-              openQuestionnaire={openQuestionnaire}
               project={project}
               loads={loads}
               solar={solar}
               battery={battery}
               inverter={inverter}
               startAgain={startConversationAgain}
-            />
-          )}{" "}
-          {view === "setup" && (
-            <QuestionnairePanel
-              answers={questionnaireAnswers}
-              setAnswers={setQuestionnaireAnswers}
-              save={saveQuestionnaire}
-              review={reviewQuestionnaire}
-              saving={savingQuestionnaire}
             />
           )}{" "}
           {view === "equipment" && (
@@ -825,6 +766,13 @@ export function PVIntellWorkspace({
           )}{" "}
           {view === "design" && <DesignCalculator project={project} site={initialSite} />}{" "}
           {view === "proposed-schematic" && <ProposedBuildSchematic project={project} />}{" "}
+          {view === "overview" && (
+            <SystemTechnicalOverview
+              project={project}
+              onAskWattson={() => setView("wattson")}
+              onOpenMonitor={() => setView("monitor")}
+            />
+          )}{" "}
           {view === "system" && (
             <SystemEquipmentOverview
               project={project}
@@ -833,10 +781,10 @@ export function PVIntellWorkspace({
           )}{" "}
           {view === "build" && <Build project={project} />}{" "}
           {view === "commission" && (
-            <Commission project={project} persist={persist} />
+            <Commission project={project} complete={completeCommissioning} />
           )}{" "}
           {view === "monitor" && (
-            <Monitor project={project} findings={findings} />
+            <Monitor project={project} site={initialSite} />
           )}
         </div>
       </main>
@@ -1521,6 +1469,24 @@ function HowToList({ title, items }: { title: string; items?: readonly string[] 
   return <details className="rounded-xl border border-line bg-white p-3" open={title === "Before you start"}><summary className="cursor-pointer text-[11px] font-extrabold text-brand">{title}</summary><ul className="mt-3 space-y-2">{items.map((item) => <li key={item} className="flex gap-2 text-[10px] leading-4 text-muted"><Check size={13} className="mt-0.5 shrink-0 text-[#288253]"/>{item}</li>)}</ul></details>;
 }
 
+function SimpleMessage({ content }: { content: string }) {
+  function inline(text: string) {
+    return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) =>
+      part.startsWith("**") && part.endsWith("**")
+        ? <strong key={`${index}:${part}`}>{part.slice(2, -2)}</strong>
+        : <span key={`${index}:${part}`}>{part}</span>,
+    );
+  }
+  return <div className="space-y-2 whitespace-normal">{content.split(/\r?\n/).map((line, index) => {
+    const trimmed = line.trim();
+    if (!trimmed) return <div key={index} className="h-1"/>;
+    const bullet = trimmed.match(/^[-*]\s+(.*)$/);
+    return bullet
+      ? <div key={index} className="flex gap-2"><span aria-hidden="true">•</span><span>{inline(bullet[1])}</span></div>
+      : <p key={index}>{inline(trimmed)}</p>;
+  })}</div>;
+}
+
 function HowToTypes({ guide }: { guide: NoviceHowToGuide }) {
   return <>
     {guide.aliases?.length ? <p className="mt-3 text-[10px] text-muted"><strong>Also known as:</strong> {guide.aliases.join(" · ")}</p> : null}
@@ -1530,7 +1496,7 @@ function HowToTypes({ guide }: { guide: NoviceHowToGuide }) {
       <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {guide.types.map((type) => <article key={type.name} className="overflow-hidden rounded-xl border border-line bg-white">
           <div className="p-4">
-            <div className="mb-3 flex h-28 items-center justify-center overflow-hidden rounded-lg border border-[#e3eaf1] bg-white p-2">
+            <div className="mb-3 flex h-40 items-center justify-center overflow-hidden rounded-lg border border-[#e3eaf1] bg-white p-2 sm:h-28">
               {/* Local reference images vary in size and shape; native dimensions prevent blurry upscaling. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={type.image ?? guide.image} alt={type.name} className="h-auto max-h-full w-auto max-w-full object-contain"/>
@@ -1585,15 +1551,15 @@ function GuideWattsonChat({ guide, onAsk, onClose }: { guide: NoviceHowToGuide; 
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-[#0d2238]/45 p-3 sm:items-center" role="dialog" aria-modal="true" aria-label={`Ask Wattson about ${guide.title}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="flex max-h-[min(680px,88vh)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl">
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-[#0d2238]/45 p-0 sm:items-center sm:p-3" role="dialog" aria-modal="true" aria-label={`Ask Wattson about ${guide.title}`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="flex h-[calc(100dvh-3rem)] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl border border-line bg-white shadow-2xl sm:h-auto sm:max-h-[min(680px,88dvh)] sm:rounded-2xl">
         <header className="flex items-start gap-3 border-b border-line bg-[#f8fafc] p-4">
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand text-white"><Bot size={18}/></span>
           <div className="min-w-0 flex-1"><div className="text-[10px] font-extrabold uppercase tracking-[.12em] text-[#3373aa]">Temporary guide help</div><h2 className="mt-1 truncate text-sm font-extrabold">{guide.title}</h2><p className="mt-1 text-[9px] text-muted">This subject chat is cleared when you close it and is not added to your project conversation.</p></div>
           <button type="button" onClick={onClose} aria-label="Close guide chat" className="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-white text-muted"><X size={15}/></button>
         </header>
         <div ref={conversationRef} className="min-h-52 flex-1 space-y-3 overflow-y-auto p-4">
-          {lines.map((line) => <div key={line.id} className={`max-w-[88%] rounded-2xl px-4 py-3 text-[11px] leading-5 ${line.role === "user" ? "ml-auto bg-brand text-white" : "bg-[#eef3f8] text-[#20334a]"}`}><p className="whitespace-pre-wrap">{line.content}</p>{line.citations?.length ? <div className="mt-2 flex flex-wrap gap-2">{line.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer" className="text-[9px] font-bold underline">{citation.title}</a>)}</div> : null}</div>)}
+          {lines.map((line) => <div key={line.id} className={`max-w-[92%] rounded-2xl px-4 py-3 text-[13px] leading-5 sm:max-w-[88%] sm:text-[11px] ${line.role === "user" ? "ml-auto bg-brand text-white" : "bg-[#eef3f8] text-[#20334a]"}`}><SimpleMessage content={line.content}/>{line.citations?.length ? <div className="mt-2 flex flex-wrap gap-2">{line.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold underline sm:text-[9px]">{citation.title}</a>)}</div> : null}</div>)}
           {sending ? <div className="inline-flex rounded-2xl bg-[#eef3f8] px-4 py-3 text-[10px] font-bold text-muted">Wattson is checking this guide…</div> : null}
         </div>
         <form onSubmit={submit} className="border-t border-line p-3"><div className="flex gap-2"><input autoFocus value={input} onChange={(event) => setInput(event.target.value)} placeholder={`Ask about ${guide.title.toLowerCase()}…`} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-[#f8fafc] px-4 text-xs outline-none focus:border-brand"/><button type="submit" disabled={!input.trim() || sending} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send question"><Send size={16}/></button></div></form>
@@ -1627,7 +1593,7 @@ export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceH
     <details className="relative" onToggle={(event) => { if (!event.currentTarget.open) { setQuery(""); setSelectedSection(""); setSelectedId(""); setChatGuide(null); } }}>
       <summary className="cursor-pointer list-none rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]">How to ▾</summary>
       {selected ? <button type="button" aria-label="Close the open How-to guide" onClick={() => setSelectedId("")} className="fixed inset-0 z-[80] cursor-default bg-[#0d2238]/45 backdrop-blur-sm"/> : null}
-      <div className={selected ? "fixed left-1/2 top-1/2 z-[90] max-h-[82vh] w-[min(60rem,92vw)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-line bg-white p-4 shadow-[0_30px_100px_rgba(9,37,61,.4)]" : `fixed left-1/2 top-20 z-50 max-h-[min(34rem,calc(100vh-6rem))] -translate-x-1/2 overflow-y-auto rounded-xl border border-line bg-white p-2 shadow-2xl ${selectedSection ? "w-[min(24rem,calc(100vw-1rem))]" : "w-[min(15rem,calc(100vw-1rem))]"}`}>
+      <div className={selected ? "fixed inset-0 z-[90] overflow-y-auto bg-white p-3 shadow-[0_30px_100px_rgba(9,37,61,.4)] sm:inset-auto sm:left-1/2 sm:top-1/2 sm:max-h-[82dvh] sm:w-[min(60rem,92vw)] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl sm:border sm:border-line sm:p-4" : `fixed inset-x-2 bottom-2 top-16 z-50 overflow-y-auto rounded-xl border border-line bg-white p-3 shadow-2xl sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-20 sm:max-h-[min(34rem,calc(100dvh-6rem))] sm:-translate-x-1/2 sm:p-2 ${selectedSection ? "sm:w-[min(24rem,calc(100vw-1rem))]" : "sm:w-[min(15rem,calc(100vw-1rem))]"}`}>
         <div className="sticky top-0 z-10 -mx-0.5 bg-white px-0.5 pb-2">
           <label htmlFor="global-how-to-search" className="text-[9px] font-extrabold uppercase tracking-[.12em] text-[#52657a]">Search the How-to library</label>
           <input id="global-how-to-search" type="search" value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value) setSelectedSection(""); }} placeholder="Panel mounts, MC4, battery..." className="mt-1.5 h-8 w-full rounded-lg border border-line bg-[#f8fafc] px-2.5 text-[10px] outline-none focus:border-brand" />
@@ -1636,10 +1602,10 @@ export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceH
         {selected ? (
           <section className="relative">
             <div className="mb-3 flex items-center justify-between gap-3"><button type="button" onClick={() => setSelectedId("")} className="text-[11px] font-bold text-brand">← Back to {selectedSection || "How-to guides"}</button><button type="button" onClick={() => setSelectedId("")} aria-label="Close guide" className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted"><X size={16}/></button></div>
-            <div className="mx-auto flex min-h-44 w-full max-w-2xl items-center justify-center overflow-hidden rounded-2xl border border-[#dce5ee] bg-white p-4 shadow-[0_8px_24px_rgba(18,53,86,.08)]">
+            <div className="mx-auto flex h-48 w-full max-w-2xl items-center justify-center overflow-hidden rounded-xl border border-[#dce5ee] bg-white p-3 shadow-[0_8px_24px_rgba(18,53,86,.08)] sm:h-auto sm:min-h-44 sm:rounded-2xl sm:p-4">
               {/* Preserve each local reference image at its natural size; never stretch a small diagram to banner width. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={selected.image} alt={`Reference image for ${selected.title}`} className="h-auto max-h-80 w-auto max-w-full object-contain" />
+              <img src={selected.image} alt={`Reference image for ${selected.title}`} className="max-h-full max-w-full object-contain sm:h-auto sm:max-h-80 sm:w-auto" />
             </div>
             <div className="mt-5"><div className="eyebrow">{selected.group}</div><h2 className="mt-2 text-xl font-extrabold">{selected.title}</h2><p className="mt-2 text-xs leading-5 text-muted">{selected.summary}</p>{(selected.whatItIs || selected.whatItDoes) && <div className="mt-4 grid gap-3 sm:grid-cols-2">{selected.whatItIs && <div className="rounded-xl bg-[#eef5fc] p-4"><strong className="text-[11px]">What is this?</strong><p className="mt-2 text-[10px] leading-5 text-muted">{selected.whatItIs}</p></div>}{selected.whatItDoes && <div className="rounded-xl bg-[#fff8df] p-4"><strong className="text-[11px]">What does it do?</strong><p className="mt-2 text-[10px] leading-5 text-muted">{selected.whatItDoes}</p></div>}</div>}<HowToTypes guide={selected}/><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><HowToList title="What to buy" items={selected.buy}/><HowToList title="Tools" items={selected.tools}/><HowToList title="Before you start" items={selected.before}/></div><div className="mt-5"><h3 className="text-sm font-extrabold">Put it together</h3><ol className="mt-3 grid gap-2 sm:grid-cols-2">{selected.steps.map((step, index) => <li key={step} className="flex gap-3 rounded-xl bg-[#f4f7fa] p-3 text-[10px] leading-5"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-[9px] font-bold text-white">{index + 1}</span>{step}</li>)}</ol></div><div className="mt-4 grid gap-3 md:grid-cols-2"><HowToList title="Final checks" items={selected.checks}/><div className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3"><strong className="text-[11px] text-[#765918]">{localAuthority.label}</strong><p className="mt-2 text-[10px] leading-4 text-[#765918]">{localAuthority.note}</p>{localAuthority.url && <a href={localAuthority.url} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-[10px] font-bold underline">Open local authority guidance</a>}</div></div><div className="mt-4 flex flex-wrap items-center gap-3 border-t border-line pt-4">{selected.sourceUrl ? <a href={selected.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex h-10 items-center rounded-xl bg-brand px-4 text-[11px] font-bold text-white">Open the detailed manufacturer guide →</a> : <p className="text-[10px] font-bold text-[#765918]">{selected.source}</p>}<button type="button" onClick={() => setChatGuide(selected)} className="inline-flex h-10 items-center rounded-xl border border-line px-4 text-[11px] font-bold text-brand">Stuck? Ask Wattson about this guide</button></div>{selected.sourceUrl && <p className="mt-2 text-[9px] leading-4 text-muted">Source example: {selected.source}</p>}<div className="mt-6 border-t border-line pt-4"><button type="button" onClick={() => setSelectedId("")} className="inline-flex h-10 items-center gap-2 rounded-xl border border-line bg-white px-4 text-[11px] font-bold text-brand">← Back to {selectedSection || "How-to guides"}</button></div></div>
           </section>
@@ -1698,27 +1664,22 @@ function Build({ project }: { project: Project }) {
 }
 function Commission({
   project,
-  persist,
+  complete,
 }: {
   project: Project;
-  persist: (p: Project) => void;
+  complete: () => Promise<void>;
 }) {
-  function add() {
-    if (project.commissioning.some((x) => x.id === "output")) return;
-    persist({
-      ...project,
-      commissioning: [
-        ...project.commissioning,
-        {
-          id: "output",
-          label: "Inverter output",
-          value: "230.4 V / 50.0 Hz",
-          expected: "230 V / 50 Hz",
-          recordedAt: new Date().toISOString(),
-          result: "pass",
-        },
-      ],
-    });
+  const [completing, setCompleting] = useState(false);
+  const [error, setError] = useState("");
+  const buildComplete = project.installationSteps.length > 0 && project.installationSteps.every((step) => step.complete);
+  const checksPass = project.commissioning.length > 0 && project.commissioning.every((record) => record.result === "pass");
+  const installed = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
+  async function finish() {
+    setCompleting(true);
+    setError("");
+    try { await complete(); }
+    catch (problem) { setError(problem instanceof Error ? problem.message : "Could not complete commissioning."); }
+    finally { setCompleting(false); }
   }
   return (
     <div className="animate-rise space-y-6">
@@ -1728,7 +1689,7 @@ function Commission({
         description="Measurements become a permanent baseline for this system."
       />
       <Safety />
-      <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="card overflow-hidden">
           {project.commissioning.map((r) => (
             <div
@@ -1748,124 +1709,34 @@ function Commission({
             </div>
           ))}
         </div>
-        <div className="card p-6">
-          <Bot className="text-brand" />
-          <div className="eyebrow mt-5">Next with Wattson</div>
-          <h3 className="mt-2 font-display text-xl font-extrabold">
-            Check inverter output
-          </h3>
-          <p className="mt-3 text-xs leading-5 text-muted">
-            Verify AC output and protection with suitable test equipment and
-            enough experience to interpret the results. An independent check
-            is sensible if anything is uncertain.
-          </p>
+        <div className="card p-5">
+          <div className="eyebrow">Lifecycle</div>
+          <h3 className="mt-2 text-base font-extrabold">{installed ? "Commissioned system" : "Ready to become an installed system?"}</h3>
+          <div className="mt-4 space-y-2 text-xs"><div className="flex items-center justify-between gap-3"><span>Build sheets complete</span><strong>{buildComplete ? "Yes" : "Not yet"}</strong></div><div className="flex items-center justify-between gap-3"><span>Commissioning checks pass</span><strong>{checksPass ? "Yes" : "Not yet"}</strong></div></div>
+          <p className="mt-4 text-[11px] leading-5 text-muted">Commissioning moves this system beside the other installed systems. Discovery, proposed design, build and commissioning records remain available as project history.</p>
+          {error ? <p className="mt-3 rounded-lg bg-[#fff0eb] p-3 text-[11px] text-[#913e31]">{error}</p> : null}
           <button
-            onClick={add}
-            className="mt-5 w-full rounded-xl bg-brand py-3 text-xs font-bold text-white"
+            onClick={() => void finish()}
+            disabled={installed || !buildComplete || !checksPass || completing}
+            className="mt-4 w-full rounded-xl bg-brand py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
           >
-            Record demo reading
+            {installed ? "System commissioned" : completing ? "Updating…" : "Mark system commissioned"}
           </button>
         </div>
       </div>
     </div>
   );
 }
-function Monitor({ project, findings }: { project: Project; findings: any[] }) {
+function Monitor({ project, site }: { project: Project; site: Site }) {
   return (
-    <div className="animate-rise space-y-6">
-      <Heading
-        eyebrow="Live system"
-        title="Good afternoon — your system is healthy"
-        description={`Mock normalized telemetry for ${project.name}.`}
-      />
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric
-          label="Battery"
-          value={`${demoTelemetry["battery.soc"]}%`}
-          detail={`${demoTelemetry["battery.voltage"]} V • charging`}
-          icon={BatteryCharging}
-        />
-        <Metric
-          label="Solar now"
-          value="3.82 kW"
-          detail={`${demoTelemetry["pv.energyToday"]} kWh today`}
-          icon={Sun}
-        />
-        <Metric
-          label="Home load"
-          value="1.24 kW"
-          detail={`${demoTelemetry["load.energyToday"]} kWh today`}
-          icon={Home}
-        />
-        <Metric
-          label="To battery"
-          value="2.49 kW"
-          detail="Surplus solar charging"
-          icon={Zap}
-        />
+    <div className="animate-rise space-y-5">
+      <Heading eyebrow="System monitoring" title={project.name} description={`Dedicated monitoring for ${project.name} at ${site.name}. Live production, load and battery values will appear here after a supported data connection is configured.`} />
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="card p-4"><div className="eyebrow">System</div><div className="mt-2 text-base font-extrabold">{project.name}</div><p className="mt-1 text-[10px] text-muted">{project.systemVoltage > 0 ? `${project.systemVoltage} V · ` : ""}{project.projectType}</p></div>
+        <div className="card p-4"><div className="eyebrow">Site</div><div className="mt-2 text-base font-extrabold">{site.name}</div><p className="mt-1 text-[10px] text-muted">{site.location}</p></div>
+        <div className="card p-4"><div className="eyebrow">Data connection</div><div className="mt-2 text-sm font-extrabold">Not configured</div><p className="mt-1 text-[10px] text-muted">No live readings are being presented.</p></div>
       </div>
-      <div className="grid gap-6 xl:grid-cols-[1fr_330px]">
-        <div className="card p-6">
-          <div className="eyebrow">Energy today</div>
-          <Chart />
-        </div>
-        <div className="space-y-5">
-          <div className="card p-5">
-            <div className="flex justify-between">
-              <div className="eyebrow">Weather outlook</div>
-              <CloudSun className="text-[#d89628]" />
-            </div>
-            <div className="mt-4 font-display text-3xl font-extrabold">
-              18°{" "}
-              <span className="text-xs font-normal text-muted">
-                Bright intervals
-              </span>
-            </div>
-          </div>
-          <div className="card p-5">
-            <div className="eyebrow">Wattson’s check</div>
-            {findings.map((f) => (
-              <div key={f.id} className="mt-4 flex gap-3">
-                <ShieldCheck className="text-brand" />
-                <div>
-                  <div className="text-xs font-bold">{f.title}</div>
-                  <p className="mt-1 text-[10px] text-muted">{f.explanation}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-function Chart() {
-  const a = [0, 0, 0.2, 0.8, 2, 3.5, 4.8, 4.2, 3.3, 2, 0.5, 0],
-    b = [0.4, 0.3, 0.5, 0.8, 0.6, 1, 0.9, 1.3, 0.8, 0.7, 1, 0.5],
-    p = (d: number[]) =>
-      d
-        .map((v, i) => `${(i / (d.length - 1)) * 100},${90 - (v / 5) * 75}`)
-        .join(" ");
-  return (
-    <div className="mt-6 h-60">
-      <svg
-        viewBox="0 0 100 96"
-        preserveAspectRatio="none"
-        className="h-full w-full"
-      >
-        <polyline
-          points={p(a)}
-          fill="none"
-          stroke="#d8a000"
-          strokeWidth="1.5"
-        />
-        <polyline
-          points={p(b)}
-          fill="none"
-          stroke="#2f5272"
-          strokeWidth="1.2"
-        />
-      </svg>
+      <section className="card p-5"><div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#eaf2fb] text-brand"><CircleGauge size={17}/></span><div><h2 className="text-sm font-extrabold">Awaiting a monitoring connection</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">When a compatible inverter or monitoring service is connected, this page will show only {project.name} data. Other systems remain accessible from their own Monitor tiles.</p></div></div></section>
     </div>
   );
 }

@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Bot, Check, ShieldCheck, Sparkles, Zap } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Check, ShieldCheck, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
+import { BrandLogo } from "@/components/brand-logo";
 
 type MultiKey = "history" | "currentSituation" | "goals";
 
@@ -127,7 +128,7 @@ export function OnboardingAssessment({ initialAnswers }: { initialAnswers: Onboa
 
   return <main className="min-h-screen lg:grid lg:grid-cols-[300px_1fr]">
     <aside className="hidden border-r border-line bg-[#0f3b66] p-8 text-white lg:flex lg:flex-col">
-      <div className="flex items-center gap-3"><span className="grid size-11 place-items-center rounded-2xl bg-[#f6c945] text-[#143c63]"><Zap size={21} fill="currentColor" /></span><div><div className="font-display text-xl font-extrabold">PVIntell</div><div className="text-[9px] font-bold uppercase tracking-[.18em] text-[#bfd3e6]">Power, made clear</div></div></div>
+      <BrandLogo inverse />
       <div className="mt-16"><div className="text-[10px] font-bold uppercase tracking-[.18em] text-[#f6c945]">Your starting profile</div><h2 className="mt-4 font-display text-3xl font-extrabold leading-tight">Wattson should understand you before advising you.</h2><p className="mt-4 text-sm leading-6 text-[#d5e2ee]">Your answers set the language, safety boundaries and starting workflow. You can update them later.</p></div>
       <div className="mt-auto flex gap-3 rounded-2xl border border-white/15 bg-white/5 p-4"><ShieldCheck className="shrink-0 text-[#f6c945]" size={20}/><p className="text-[11px] leading-5 text-[#d5e2ee]">PVIntell adapts its explanations to your experience, highlights specific risks and helps you plan verification where it matters.</p></div>
     </aside>

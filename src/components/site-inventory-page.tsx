@@ -1,18 +1,14 @@
 "use client";
 
 import {
-  BookOpen,
   ChevronDown,
   ChevronRight,
-  CircleGauge,
   ClipboardCheck,
-  CloudSun,
   LayoutDashboard,
   MapPin,
   Menu,
   MoreHorizontal,
   Package,
-  Settings2,
   Trash2,
   X,
   Zap,
@@ -21,31 +17,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { SolarWeather } from "@/components/solar-weather";
+import { BrandLogo } from "@/components/brand-logo";
 import { allHowToGuides, UniversalHowToMenu } from "@/components/pvintell-workspace";
 import type { Site, SiteEquipment, SystemSummary } from "@/domain/models";
 import type { SolarArrayForecastInput } from "@/weather/forecast";
 
 function Logo() {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="grid size-9 place-items-center rounded-[11px] bg-[#f6c945] text-[#143c63]">
-        <Zap size={19} fill="currentColor" />
-      </span>
-      <div>
-        <div className="font-display text-[17px] font-extrabold tracking-[-.04em]">
-          PVIntell
-        </div>
-        <div className="text-[9px] font-bold uppercase tracking-[.18em] text-muted">
-          Power, made clear
-        </div>
-      </div>
-    </div>
-  );
+  return <BrandLogo />;
 }
 
 const systemNavigation = [
   ["equipment", "Site equipment", Package],
-  ["weather", "Solar weather", CloudSun],
   ["system", "As-built record", LayoutDashboard],
 ] as const;
 
@@ -151,6 +133,17 @@ export function SiteInventoryPage({
     setChoosingView(view);
   }
 
+  async function askGuide(guide: { id: string }, question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) {
+    const response = await fetch("/api/wattson/guide", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: question, siteId: site.id, guide, recentConversation, guideIndex: allHowToGuides.map(({ id, title, group, aliases }) => ({ id, title, group, aliases })) }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
+    return body;
+  }
+
   return (
     <div className="min-h-screen">
       <aside
@@ -202,14 +195,6 @@ export function SiteInventoryPage({
           </Link>
           <div className="px-3 pt-3 text-[10px] font-bold uppercase tracking-[.12em] text-[#7b8a9c]">Site tools</div>
           {systemNavigation.map(([view, label, Icon]) =>
-            view === "weather" ? (
-              weatherMode ? <div key={view} className="flex w-full items-center gap-3 rounded-xl border-l-4 border-[#f6c945] bg-[#fff6cf] px-3 py-2.5 text-left text-sm font-semibold text-[#143c63]"><Icon size={17}/>{label}</div> : <Link
-                key={view}
-                prefetch={false}
-                href={`/sites/${site.id}/weather`}
-                className="flex w-full items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-left text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"
-              ><Icon size={17} />{label}</Link>
-            ) : (
               <button
                 key={view}
                 onClick={() => openSystemView(view)}
@@ -218,18 +203,11 @@ export function SiteInventoryPage({
                 <Icon size={17} />
                 {label}
               </button>
-            ),
           )}
-          <Link href="/glossary" className="flex w-full items-center gap-3 rounded-xl border-l-4 border-transparent px-3 py-2.5 text-left text-sm font-semibold text-[#66758a] hover:bg-[#eef3f8]"><BookOpen size={17}/>Glossary</Link>
         </nav>
         <div className="mt-auto rounded-2xl border border-line bg-white p-3.5">
           <div className="text-xs font-bold">Cloud data saved</div>
           <p className="mt-2 truncate text-[10px] text-muted">{email}</p>
-          <form action="/auth/signout" method="post">
-            <button className="mt-3 text-[10px] font-bold text-brand">
-              Sign out
-            </button>
-          </form>
         </div>
       </aside>
       <main className="min-w-0">
@@ -237,17 +215,17 @@ export function SiteInventoryPage({
           <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-4 px-4 md:px-6">
             <Link href="/dashboard" className="shrink-0"><Logo/></Link>
             <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-36 truncate">{site.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div>{sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{item.name}</Link>)}<Link href="/discovery/new-system" className="mt-3 block rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]">New independent Site</Link></div></details>
-            <div className="min-w-0 flex-1"><div className="eyebrow text-[8px]">{weatherMode ? "Solar weather" : "Site workspace"}</div><div className="mt-1 truncate text-xs font-extrabold">{site.name} <span className="font-medium text-muted">· {site.location}</span></div></div>
-            {!weatherMode && <Link href={`/sites/${site.id}/wattson`} className="hidden h-9 items-center gap-2 rounded-xl bg-brand px-4 text-[11px] font-bold text-white sm:flex"><Zap size={14}/>Ask Wattson</Link>}
-            <Link href="/account" className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted"><Settings2 size={16}/></Link>
+            <div className="hidden min-w-0 flex-1 md:block"><div className="eyebrow text-[8px]">{weatherMode ? "Solar weather" : "Site workspace"}</div><div className="mt-1 truncate text-xs font-extrabold">{site.name} <span className="font-medium text-muted">· {site.location}</span></div></div>
+            <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${site.id}`} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Dashboard</Link><Link href={`/systems?site=${site.id}`} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Systems</Link><UniversalHowToMenu location={site.location} onAsk={askGuide}/><Link href={`/settings?site=${site.id}`} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Settings</Link></nav>
+            <button type="button" onClick={() => setMenu((open) => !open)} className="ml-auto grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>{menu ? <X size={17}/> : <Menu size={18}/>}</button>
           </div>
-          <nav className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-4 py-2 md:px-6">
-            <Link href="/dashboard" className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Dashboard</Link>
-            {!weatherMode && <><Link href={`/sites/${site.id}`} className="rounded-xl bg-[#fff6cf] px-3 py-2 text-[11px] font-bold text-brand">Overview</Link><Link href={`/sites/${site.id}/discovery`} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery</Link><button type="button" onClick={() => openSystemView("design")} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Proposed design</button><button type="button" onClick={() => openSystemView("build")} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build</button><button type="button" onClick={() => openSystemView("system")} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Records</button><Link href={`/sites/${site.id}/weather`} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Solar weather</Link></>}
-            <UniversalHowToMenu location={site.location} onAsk={async (guide, question, recentConversation) => { const response = await fetch("/api/wattson/guide", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: question, siteId: site.id, guide, recentConversation, guideIndex: allHowToGuides.map(({ id, title, group, aliases }) => ({ id, title, group, aliases })) }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable"); return body; }}/>
-            <Link href="/glossary" className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Glossary</Link>
-            <form action="/auth/signout" method="post" className="ml-auto"><button className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Sign out</button></form>
-          </nav>
+          {!weatherMode ? <nav className="mx-auto hidden max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-6 py-1.5 md:flex" aria-label="Site navigation"><Link href={`/sites/${site.id}`} className="rounded-xl bg-[#fff6cf] px-3 py-2 text-[11px] font-bold text-brand">Overview</Link><Link href={`/sites/${site.id}/discovery`} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery</Link><button type="button" onClick={() => openSystemView("design")} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Proposed design</button><button type="button" onClick={() => openSystemView("build")} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build</button><button type="button" onClick={() => openSystemView("system")} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Records</button></nav> : null}
+          {menu ? <nav className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-line bg-white p-3 md:hidden" aria-label="Mobile navigation"><div className="grid gap-1">
+            <Link href={`/dashboard?site=${site.id}`} className="mobile-nav-item">Dashboard</Link><Link href={`/systems?site=${site.id}`} className="mobile-nav-item">Systems</Link>
+            {!weatherMode ? <><Link href={`/sites/${site.id}`} className="mobile-nav-item">Overview</Link><Link href={`/sites/${site.id}/discovery`} className="mobile-nav-item">Discovery</Link><button type="button" onClick={() => { setMenu(false); openSystemView("design"); }} className="mobile-nav-item">Proposed design</button><button type="button" onClick={() => { setMenu(false); openSystemView("build"); }} className="mobile-nav-item">Build</button><button type="button" onClick={() => { setMenu(false); openSystemView("system"); }} className="mobile-nav-item">Records</button></> : null}
+            <div className="rounded-lg text-xs font-bold text-muted"><UniversalHowToMenu location={site.location} onAsk={askGuide}/></div>
+            <Link href={`/settings?site=${site.id}`} className="mobile-nav-item">Settings</Link>
+          </div></nav> : null}
         </header>
         <div className="mx-auto max-w-[1220px] space-y-4 p-4 md:p-6">
           {weatherMode ? (

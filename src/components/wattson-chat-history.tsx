@@ -1,0 +1,45 @@
+"use client";
+
+import { Bot, MessageSquareText, Send, Trash2, X } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
+
+export type WattsonChatSummary = { id: string; kind: "dashboard" | "system"; title: string; context: string; updatedAt: string; messageCount: number; preview: string; href: string; messages: Array<{ role: "user" | "assistant"; content: string; createdAt: string }> };
+
+export function WattsonChatHistory({ initialChats, limit }: { initialChats: WattsonChatSummary[]; limit: number }) {
+  const [chats, setChats] = useState(initialChats); const [selected, setSelected] = useState<WattsonChatSummary>(); const [input, setInput] = useState(""); const [sending, setSending] = useState(false); const [deleting, setDeleting] = useState(""); const [error, setError] = useState("");
+  async function remove(chat: WattsonChatSummary) {
+    if (!window.confirm(`Delete “${chat.title}”? The chat text cannot be recovered. Confirmed facts already saved to the system record, installed equipment and account settings will remain.`)) return;
+    setDeleting(chat.id); setError("");
+    const response = await fetch(`/api/wattson/conversations/${chat.id}?kind=${chat.kind}`, { method: "DELETE" });
+    const body = await response.json();
+    if (response.ok) { setChats((current) => current.filter((item) => item.id !== chat.id)); setSelected((current) => current?.id === chat.id ? undefined : current); } else setError(body.error ?? "Could not delete this conversation.");
+    setDeleting("");
+  }
+  async function send() {
+    const message = input.trim(); if (!message || !selected || sending) return;
+    const createdAt = new Date().toISOString(); const pending = { role: "user" as const, content: message, createdAt };
+    const currentId = selected.id; setInput(""); setSending(true); setError(""); setSelected((chat) => chat ? { ...chat, messages: [...chat.messages, pending], messageCount: chat.messageCount + 1 } : chat);
+    try {
+      const response = await fetch(`/api/wattson/conversations/${selected.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: selected.kind, message }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable.");
+      const reply = { role: "assistant" as const, content: String(body.message), createdAt: new Date().toISOString() };
+      setSelected((chat) => chat?.id === currentId ? { ...chat, messages: [...chat.messages, reply], messageCount: chat.messageCount + 1, preview: reply.content, updatedAt: reply.createdAt } : chat);
+      setChats((items) => items.map((chat) => chat.id === currentId && chat.kind === selected.kind ? { ...chat, messages: [...chat.messages, pending, reply], messageCount: chat.messageCount + 2, preview: reply.content, updatedAt: reply.createdAt } : chat));
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Wattson is unavailable."); }
+    finally { setSending(false); }
+  }
+  return <>
+    <div className="mt-4 flex items-center justify-between rounded-xl border border-line bg-white px-4 py-3"><div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-lg bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-sm">{chats.length} saved chats</strong><p className="text-[11px] text-muted">Up to {limit} conversations per account</p></div></div><span className="text-xs font-bold text-muted">{Math.max(0, limit - chats.length)} available</span></div>
+    {error ? <p className="mt-3 rounded-xl bg-[#fff0eb] p-3 text-xs text-[#913e31]">{error}</p> : null}
+    <div className="mt-4 grid gap-3">{chats.map((chat) => <article key={`${chat.kind}:${chat.id}`} className="card flex min-w-0 items-start gap-3 p-4"><span className={`mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg ${chat.kind === "system" ? "bg-[#fff1bc] text-[#a36a00]" : "bg-[#eaf2fb] text-brand"}`}><MessageSquareText size={17}/></span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-start justify-between gap-2"><div className="min-w-0"><button type="button" onClick={() => setSelected(chat)} className="block max-w-full truncate text-left text-sm font-extrabold hover:text-brand">{chat.title}</button><p className="mt-0.5 text-[11px] font-semibold text-muted">{chat.context} · {chat.messageCount} messages</p></div><time className="text-[10px] text-muted">{new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(chat.updatedAt))}</time></div><p className="mt-2 line-clamp-2 text-[12px] leading-5 text-muted">{chat.preview || "No messages in this conversation yet."}</p><div className="mt-3 flex gap-2"><button type="button" onClick={() => setSelected(chat)} className="inline-flex h-9 items-center gap-2 rounded-lg bg-brand px-3 text-[11px] font-bold text-white">Open chat <MessageSquareText size={13}/></button><button type="button" onClick={() => void remove(chat)} disabled={deleting === chat.id} className="inline-flex h-9 items-center gap-2 rounded-lg border border-[#e5c1b8] px-3 text-[11px] font-bold text-[#9a4937] disabled:opacity-50"><Trash2 size={13}/>{deleting === chat.id ? "Deleting…" : "Delete"}</button></div></div></article>)}
+      {!chats.length ? <div className="card p-8 text-center"><Bot className="mx-auto text-brand"/><h2 className="mt-3 text-base font-extrabold">No saved Wattson chats yet</h2><p className="mt-1 text-xs text-muted">Conversations will appear here after you chat from the dashboard or a system.</p><Link href="/dashboard#wattson" className="mt-4 inline-flex h-10 items-center rounded-lg bg-brand px-4 text-xs font-bold text-white">Ask Wattson</Link></div> : null}
+    </div>
+    {selected ? <div className="fixed inset-0 z-[100] flex items-end justify-center bg-[#0b2740]/50 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={selected.title} onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(undefined); }}><section className="flex h-[calc(100dvh-3rem)] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-line bg-white shadow-2xl sm:h-auto sm:max-h-[86dvh] sm:rounded-2xl"><header className="flex items-center gap-3 border-b border-line bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)] p-4"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand text-white"><Bot size={19}/></span><div className="min-w-0 flex-1"><div className="eyebrow">{selected.context}</div><h2 className="mt-1 truncate text-sm font-extrabold">{selected.title}</h2></div><button type="button" onClick={() => setSelected(undefined)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted" aria-label="Close conversation"><X size={17}/></button></header><div className="thin-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#f8fafc] p-3 sm:min-h-80 sm:p-5">{selected.messages.map((message, index) => <div key={`${message.createdAt}:${index}`} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[92%] rounded-2xl px-4 py-3 text-[13px] leading-5 sm:max-w-[82%] ${message.role === "user" ? "bg-brand text-white" : "border border-line bg-white text-ink"}`}><SimpleMessage content={message.content}/><time className={`mt-2 block text-[10px] ${message.role === "user" ? "text-white/65" : "text-muted"}`}>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(message.createdAt))}</time></div></div>)}{sending ? <p className="text-xs font-semibold text-muted">Wattson is thinking…</p> : null}</div><form onSubmit={(event) => { event.preventDefault(); void send(); }} className="border-t border-line bg-white p-3"><p className="mb-2 text-[11px] leading-4 text-muted">Continue this saved conversation. Facts Wattson records into the system remain even if the thread is later deleted.</p><div className="flex items-end gap-2"><textarea value={input} onChange={(event) => setInput(event.target.value)} rows={2} placeholder="Continue this conversation…" className="field mt-0 min-h-11 flex-1 resize-none py-3 text-[13px]"/><button disabled={!input.trim() || sending} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send to Wattson"><Send size={16}/></button></div></form></section></div> : null}
+  </>;
+}
+
+function SimpleMessage({ content }: { content: string }) {
+  const inline = (text: string) => text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => part.startsWith("**") && part.endsWith("**") ? <strong key={`${index}:${part}`}>{part.slice(2, -2)}</strong> : <span key={`${index}:${part}`}>{part}</span>);
+  return <div className="space-y-2">{content.split(/\r?\n/).map((line, index) => { const value = line.trim(); if (!value) return <div key={index} className="h-1"/>; const bullet = value.match(/^[-*]\s+(.*)$/); return bullet ? <div key={index} className="flex gap-2"><span>•</span><span>{inline(bullet[1])}</span></div> : <p key={index}>{inline(value)}</p>; })}</div>;
+}

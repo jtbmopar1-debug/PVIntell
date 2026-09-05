@@ -1,11 +1,11 @@
 "use client";
 
-import { ArrowRight, Bot, Calculator, ChevronDown, CircleGauge, ClipboardCheck, Cloud, CloudRain, CloudSun, Home, ImagePlus, LayoutDashboard, MapPin, Menu as MenuIcon, Package, RotateCcw, Send, Settings2, Sparkles, Sun, Thermometer, Waypoints, Wind, Wrench, X, Zap } from "lucide-react";
+import { ArrowRight, Bot, Cloud, ImagePlus, MapPin, Menu as MenuIcon, RotateCcw, Send, Sun, Thermometer, Wind, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import { allHowToGuides, UniversalHowToMenu } from "@/components/pvintell-workspace";
+import { BrandLogo } from "@/components/brand-logo";
 import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { formatRainfall, formatTemperature, formatWindSpeed, useUnitPreferences } from "@/preferences/units";
@@ -45,6 +45,7 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
   const router = useRouter();
   const [siteId, setSiteId] = useState(initialSiteId && sites.some((site) => site.id === initialSiteId) ? initialSiteId : sites[0]?.id ?? "");
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [activeConversationId, setActiveConversationId] = useState(conversationId);
   const [input, setInput] = useState("");
   const [attachment, setAttachment] = useState<File>();
   const [sending, setSending] = useState(false);
@@ -107,10 +108,11 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
       if (attachment) bodyData.set("file", attachment);
       if (targetProjectId) bodyData.set("projectId", targetProjectId);
       if (siteId) bodyData.set("siteId", siteId);
-      if (conversationId) bodyData.set("conversationId", conversationId);
+      if (activeConversationId) bodyData.set("conversationId", activeConversationId);
       const response = await fetch("/api/wattson/dashboard", { method: "POST", body: bodyData });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
+      if (typeof body.conversationId === "string") setActiveConversationId(body.conversationId);
       setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: body.message, citations: body.citations, actionUrl: body.actionUrl, actionLabel: body.actionLabel, createdAt: new Date().toISOString() }]);
       setAttachment(undefined);
       if (body.actionUrl) router.push(body.actionUrl);
@@ -143,10 +145,12 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
 
   async function startAgain() {
     if (sending) return;
-    const response = await fetch("/api/wattson/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope: "dashboard" }) });
+    const targetProjectId = siteSystems.length === 1 ? siteSystems[0].id : undefined;
+    const response = await fetch("/api/wattson/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope: "dashboard", siteId: siteId || undefined, projectId: targetProjectId }) });
     const body = await response.json();
     if (!response.ok) { window.alert(body.error ?? "Could not start a new conversation"); return; }
-    setMessages([]); setInput(""); setAttachment(undefined);
+    setActiveConversationId(body.id); setMessages([]); setInput(""); setAttachment(undefined);
+    router.replace(`/dashboard${siteId ? `?site=${siteId}&conversation=${body.id}` : `?conversation=${body.id}`}#wattson`, { scroll: false });
   }
 
   function systemHref(system: SystemSummary, view: string) {
@@ -201,61 +205,24 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
             <div className="truncate text-xs font-extrabold">{selectedSite?.location || profile.location || "Your PVIntell workspace"}</div>
             <div className="mt-0.5 text-[9px] font-semibold text-muted">{localDate}</div>
           </div>
-          <button type="button" onClick={() => setWattsonOpen(true)} className="hidden h-9 items-center gap-2 rounded-xl bg-brand px-4 text-[11px] font-bold text-white sm:flex"><Bot size={14} /> Ask Wattson</button>
-          <Link href="/account" className="hidden size-9 place-items-center rounded-xl border border-line bg-white text-muted md:grid" title={`Settings · ${email}`}><Settings2 size={16} /></Link>
+          <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation">
+            <Link href={`/dashboard${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#fff2b8] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link>
+            <Link href={`/systems${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Systems</Link>
+            <UniversalHowToMenu location={selectedSite?.location ?? profile.location} onAsk={askGuide} />
+            <Link href={`/settings${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Settings</Link>
+          </nav>
           <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>
             {mobileMenuOpen ? <X size={17} /> : <MenuIcon size={18} />}
           </button>
         </div>
 
-        <nav className="mx-auto hidden max-w-[1440px] items-center gap-1 border-t border-line px-6 py-2 md:flex">
-          <Link href="/dashboard" className="shrink-0 rounded-xl bg-[#fff2b8] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link>
-          <NavDropdown label="Plan">
-            <MenuLink href="/discovery/new-system" icon={Sparkles} label="Start a new system" />
-            <MenuButton icon={Home} label="Site overview" onClick={() => selectedSite ? router.push(`/sites/${selectedSite.id}`) : router.push("/discovery/new-system")} />
-            <MenuButton icon={Calculator} label="Proposed design" onClick={() => openSystemView("design")} />
-          </NavDropdown>
-          <NavDropdown label="Build">
-            <MenuButton icon={Wrench} label="Build schedule" onClick={() => openSystemView("build")} />
-            <MenuButton icon={ClipboardCheck} label="Commissioning" onClick={() => openSystemView("commission")} />
-          </NavDropdown>
-          <NavDropdown label="Records">
-            <MenuButton icon={Package} label="Site equipment" onClick={() => openSystemView("equipment")} />
-            <MenuButton icon={LayoutDashboard} label="As-built overview" onClick={() => openSystemView("system")} />
-            <MenuButton icon={Waypoints} label="System schematic" onClick={() => openSystemView("schematic")} />
-            <MenuButton icon={CircleGauge} label="Monitor" onClick={() => openSystemView("monitor")} />
-          </NavDropdown>
-          <button type="button" onClick={() => openSystemView("weather")} className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Solar weather</button>
-          <UniversalHowToMenu location={selectedSite?.location ?? profile.location} onAsk={askGuide} />
-          <Link href="/glossary" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Glossary</Link>
-          <Link href="/account" className="shrink-0 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Settings</Link>
-          <form action="/auth/signout" method="post" className="ml-auto shrink-0"><button className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Sign out</button></form>
-        </nav>
         {mobileMenuOpen ? (
           <nav className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-line bg-white p-3 md:hidden" aria-label="Mobile navigation">
             <div className="grid gap-1">
               <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#fff2b8] px-3 py-2.5 text-xs font-extrabold text-brand">Dashboard</Link>
-              <MobileNavGroup label="Plan">
-                <Link href="/discovery/new-system" className="mobile-nav-item">Start a new system</Link>
-                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); selectedSite ? router.push(`/sites/${selectedSite.id}`) : router.push("/discovery/new-system"); }}>Site overview</button>
-                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("design"); }}>Proposed design</button>
-              </MobileNavGroup>
-              <MobileNavGroup label="Build">
-                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("build"); }}>Build schedule</button>
-                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("commission"); }}>Commissioning</button>
-              </MobileNavGroup>
-              <MobileNavGroup label="Records">
-                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("equipment"); }}>Site equipment</button>
-                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("system"); }}>As-built overview</button>
-                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("schematic"); }}>System schematic</button>
-                <button type="button" className="mobile-nav-item" onClick={() => { setMobileMenuOpen(false); openSystemView("monitor"); }}>Monitor</button>
-              </MobileNavGroup>
-              <button type="button" className="rounded-lg px-3 py-2.5 text-left text-xs font-bold text-muted" onClick={() => { setMobileMenuOpen(false); openSystemView("weather"); }}>Solar weather</button>
+              <Link href={`/systems${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg px-3 py-2.5 text-xs font-bold text-muted">Systems</Link>
               <div className="rounded-lg text-xs font-bold text-muted"><UniversalHowToMenu location={selectedSite?.location ?? profile.location} onAsk={askGuide} /></div>
-              <Link href="/glossary" onClick={() => setMobileMenuOpen(false)} className="rounded-lg px-3 py-2.5 text-xs font-bold text-muted">Glossary</Link>
-              <Link href="/account" onClick={() => setMobileMenuOpen(false)} className="rounded-lg px-3 py-2.5 text-xs font-bold text-muted">Settings</Link>
-              <button type="button" onClick={() => { setMobileMenuOpen(false); setWattsonOpen(true); }} className="rounded-lg bg-brand px-3 py-2.5 text-left text-xs font-bold text-white">Ask Wattson</button>
-              <form action="/auth/signout" method="post"><button className="w-full rounded-lg px-3 py-2.5 text-left text-xs font-bold text-muted">Sign out</button></form>
+              <Link href={`/settings${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg px-3 py-2.5 text-xs font-bold text-muted">Settings</Link>
             </div>
           </nav>
         ) : null}
@@ -288,12 +255,13 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
             <div><div className="eyebrow">Today’s solar conditions</div><h2 className="mt-2 font-display text-xl font-extrabold">The useful numbers at a glance</h2></div>
             {selectedSite ? <button onClick={() => openSystemView("weather")} className="shrink-0 text-[11px] font-bold text-brand">Full forecast →</button> : null}
           </div>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-            <Metric icon={Sun} label="Expected solar today" value={selectedSite ? today ? `${today.expected.toFixed(1)} kWh` : weather.loading ? "Loading…" : "—" : "No site"} detail={selectedSite && today ? `${today.remaining.toFixed(1)} kWh still available · ${today.forecastBasis === "array-geometry" ? "using panel angle" : "basic estimate"}` : selectedSite ? `${selectedSolarKw.toFixed(1)} kW of recorded panels` : "Add a site to begin"} />
-            <Metric icon={CloudSun} label="Best solar hour" value={today?.peak ? new Intl.DateTimeFormat(undefined, { hour: "numeric", timeZone: selectedSite?.timezone }).format(new Date(today.peak.time)) : "—"} detail={today?.peak ? `${Math.round(today.peak.irradiance ?? 0)} W/m² forecast` : "Waiting for site weather"} />
-            <Metric icon={Thermometer} label="Temperature now" value={today?.current?.temperature != null ? formatTemperature(today.current.temperature, units) : "—"} detail={today?.current?.cloudCover != null ? `${Math.round(today.current.cloudCover)}% cloud cover` : "Current local conditions"} />
-            <Metric icon={CloudRain} label="Rain today" value={today ? formatRainfall(today.rain, units) : "—"} detail={today ? `Wind up to ${formatWindSpeed(today.maxWind, units)}` : "Daily forecast total"} />
-            <Metric icon={Waypoints} label="Systems here" value={`${selectedSite ? siteSystems.length : systems.length}`} detail={selectedSite ? `At ${selectedSite.name}` : `${systems.length} across all sites`} />
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+            <Metric emoji="☀️" label="Expected solar today" value={selectedSite ? today ? `${today.expected.toFixed(1)} kWh` : weather.loading ? "Loading…" : "—" : "No site"} detail={selectedSite && today ? `${today.remaining.toFixed(1)} kWh still available · ${today.forecastBasis === "array-geometry" ? "using panel angle" : "basic estimate"}` : selectedSite ? `${selectedSolarKw.toFixed(1)} kW of recorded panels` : "Add a site to begin"} />
+            <Metric emoji="🌤️" label="Best solar hour" value={today?.peak ? new Intl.DateTimeFormat(undefined, { hour: "numeric", timeZone: selectedSite?.timezone }).format(new Date(today.peak.time)) : "—"} detail={today?.peak ? `${Math.round(today.peak.irradiance ?? 0)} W/m² forecast` : "Waiting for site weather"} />
+            <Metric emoji="🌡️" label="Temperature now" value={today?.current?.temperature != null ? formatTemperature(today.current.temperature, units) : "—"} detail={today?.current?.cloudCover != null ? `${Math.round(today.current.cloudCover)}% cloud cover` : "Current local conditions"} />
+            <Metric emoji="🌧️" label="Rain today" value={today ? formatRainfall(today.rain, units) : "—"} detail="Daily forecast total" />
+            <Metric emoji="💨" label="Wind today" value={today ? formatWindSpeed(today.maxWind, units) : "—"} detail={today?.current?.windSpeed != null ? `${formatWindSpeed(today.current.windSpeed, units)} right now` : "Peak forecast speed"} />
+            <Metric emoji="⚡" label="Systems here" value={`${selectedSite ? siteSystems.length : systems.length}`} detail={selectedSite ? `At ${selectedSite.name}` : `${systems.length} across all sites`} />
           </div>
         </section>
 
@@ -336,23 +304,23 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
       </main>
 
       {!wattsonOpen ? (
-        <button id="wattson" type="button" onClick={() => setWattsonOpen(true)} className="fixed bottom-5 right-5 z-50 flex items-center gap-3 rounded-2xl bg-brand px-5 py-4 text-sm font-extrabold text-white shadow-[0_18px_50px_rgba(12,56,91,.35)] transition hover:-translate-y-0.5">
-          <span className="grid size-8 place-items-center rounded-xl bg-white/15"><Bot size={18} /></span>Ask Wattson
-          {messages.length ? <span className="grid size-5 place-items-center rounded-full bg-[#f6c945] text-[9px] text-brand">{messages.length}</span> : null}
+        <button id="wattson" type="button" onClick={() => setWattsonOpen(true)} className="fixed bottom-3 right-3 z-50 flex size-12 items-center justify-center rounded-2xl bg-brand text-white shadow-[0_12px_32px_rgba(12,56,91,.3)] transition hover:-translate-y-0.5 sm:bottom-5 sm:right-5 sm:h-auto sm:w-auto sm:gap-3 sm:px-5 sm:py-4 sm:text-sm sm:font-extrabold">
+          <span className="grid size-8 place-items-center rounded-xl bg-white/15"><Bot size={18} /></span><span className="hidden sm:inline">Ask Wattson</span>
+          {messages.length ? <span className="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-[#f6c945] text-[9px] text-brand sm:static">{messages.length}</span> : null}
         </button>
       ) : (
-        <section id="wattson" className="fixed bottom-3 right-3 z-50 flex h-[min(520px,calc(100vh-1.5rem))] w-[min(380px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-[#b9cad9] bg-white shadow-[0_18px_50px_rgba(9,37,61,.26)]">
-          <div className="flex items-center gap-3 border-b border-line bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)] p-4">
+        <section id="wattson" className="fixed inset-x-0 bottom-0 z-50 flex h-[calc(100dvh-4rem)] w-full flex-col overflow-hidden rounded-t-2xl border border-[#b9cad9] bg-white shadow-[0_18px_50px_rgba(9,37,61,.26)] sm:inset-x-auto sm:bottom-3 sm:right-3 sm:h-[min(520px,calc(100dvh-1.5rem))] sm:w-[min(380px,calc(100vw-1.5rem))] sm:rounded-2xl">
+          <div className="flex items-center gap-2 border-b border-line bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)] p-3 sm:gap-3 sm:p-4">
             <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-brand text-white"><Bot size={19} /></span>
             <div className="min-w-0 flex-1"><div className="eyebrow">Wattson</div><h2 className="mt-1 truncate text-sm font-extrabold">{selectedSite ? selectedSite.name : "Your solar guide"}</h2></div>
             <button type="button" onClick={() => void startAgain()} disabled={sending} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-brand disabled:opacity-40" title="Start a separate chat"><RotateCcw size={14} /></button>
             <button type="button" onClick={() => setWattsonOpen(false)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted" aria-label="Close Wattson"><X size={16} /></button>
           </div>
-          <div ref={chatScrollRef} className="thin-scrollbar min-h-[260px] flex-1 space-y-3 overflow-y-auto p-4">
+          <div ref={chatScrollRef} className="thin-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto p-3 sm:p-4">
             {messages.length ? messages.map((message) => (
               <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-xs leading-5 ${message.role === "user" ? "bg-brand text-white" : "bg-[#edf2f7] text-ink"}`}>
-                  {message.content}
+                <div className={`max-w-[92%] rounded-2xl px-3.5 py-3 text-[13px] leading-5 sm:max-w-[88%] sm:px-4 sm:text-xs ${message.role === "user" ? "bg-brand text-white" : "bg-[#edf2f7] text-ink"}`}>
+                  <SimpleMessage content={message.content} />
                   {message.actionUrl ? <Link href={message.actionUrl} className="mt-3 flex items-center gap-2 font-bold text-brand">{message.actionLabel ?? "Open"}<ArrowRight size={13} /></Link> : null}
                 </div>
               </div>
@@ -383,29 +351,32 @@ export function Dashboard({ profile, sites, systems, solarBySite, solarArraysByS
 }
 
 function Logo() {
-  return <div className="flex items-center gap-3"><span className="grid size-9 place-items-center rounded-[11px] bg-[#f6c945] text-[#143c63]"><Zap size={19} fill="currentColor" /></span><div className="hidden sm:block"><div className="font-display text-[17px] font-extrabold tracking-[-.04em]">PVIntell</div><div className="text-[9px] font-bold uppercase tracking-[.18em] text-muted">Power, made clear</div></div></div>;
+  return <BrandLogo />;
 }
 
-function NavDropdown({ label, children }: { label: string; children: ReactNode }) {
-  return <details className="group relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-1 rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">{label}<ChevronDown size={13} className="transition group-open:rotate-180" /></summary><div className="absolute left-0 top-10 z-50 w-60 rounded-2xl border border-line bg-white p-2 shadow-[0_18px_50px_rgba(9,37,61,.18)]">{children}</div></details>;
-}
-
-function MobileNavGroup({ label, children }: { label: string; children: ReactNode }) {
-  return <details className="group rounded-lg border border-line"><summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-xs font-bold text-muted">{label}<ChevronDown size={14} className="transition group-open:rotate-180" /></summary><div className="grid border-t border-line bg-[#f7f9fb] p-1.5">{children}</div></details>;
-}
-
-function MenuLink({ href, icon: Icon, label }: { href: string; icon: typeof Sun; label: string }) {
-  return <Link href={href} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-bold text-muted hover:bg-[#eef3f8] hover:text-brand"><Icon size={15} />{label}</Link>;
-}
-
-function MenuButton({ icon: Icon, label, onClick }: { icon: typeof Sun; label: string; onClick: () => void }) {
-  return <button type="button" onClick={onClick} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs font-bold text-muted hover:bg-[#eef3f8] hover:text-brand"><Icon size={15} />{label}</button>;
+function SimpleMessage({ content }: { content: string }) {
+  function inline(text: string) {
+    return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) =>
+      part.startsWith("**") && part.endsWith("**")
+        ? <strong key={`${index}:${part}`}>{part.slice(2, -2)}</strong>
+        : <span key={`${index}:${part}`}>{part}</span>,
+    );
+  }
+  const lines = content.split(/\r?\n/);
+  return <div className="space-y-2 whitespace-normal">{lines.map((line, index) => {
+    const trimmed = line.trim();
+    if (!trimmed) return <div key={index} className="h-1" />;
+    const bullet = trimmed.match(/^[-*]\s+(.*)$/);
+    return bullet
+      ? <div key={index} className="flex gap-2"><span aria-hidden="true">•</span><span>{inline(bullet[1])}</span></div>
+      : <p key={index}>{inline(trimmed)}</p>;
+  })}</div>;
 }
 
 function WeatherPill({ icon: Icon, label }: { icon: typeof Sun; label: string }) {
   return <span className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-[11px] font-bold backdrop-blur-sm"><Icon size={14} className="text-[#ffe07b]" />{label}</span>;
 }
 
-function Metric({ icon: Icon, label, value, detail }: { icon: typeof Sun; label: string; value: string; detail: string }) {
-  return <div className="card flex min-h-24 flex-col justify-between p-3"><div className="flex justify-between gap-2"><span className="text-[10px] font-semibold text-muted">{label}</span><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-[#eaf2fb] text-brand"><Icon size={14} /></span></div><div className="mt-2"><div className="font-display text-xl font-extrabold tracking-[-.04em]">{value}</div><div className="mt-0.5 text-[9px] leading-3 text-muted">{detail}</div></div></div>;
+function Metric({ emoji, label, value, detail }: { emoji: string; label: string; value: string; detail: string }) {
+  return <div className="card min-w-0 p-2.5 sm:p-3"><div className="text-[9px] font-semibold leading-4 text-muted">{label}</div><div className="mt-1.5 flex min-w-0 items-center gap-2"><span aria-hidden="true" className="shrink-0 text-base leading-none">{emoji}</span><div className="min-w-0 break-words font-display text-base font-extrabold tracking-[-.035em] sm:text-lg">{value}</div></div><div className="mt-1 truncate text-[8px] leading-3 text-muted" title={detail}>{detail}</div></div>;
 }

@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "PVIntell — Power, made clear",
+    name: "PVIntell — Your solar. Answered.",
     short_name: "PVIntell",
     id: "/",
     description: "Design, understand and manage solar power systems with Wattson.",
@@ -16,7 +16,8 @@ export default function manifest(): MetadataRoute.Manifest {
     shortcuts: [
       { name: "Dashboard", short_name: "Dashboard", url: "/dashboard" },
       { name: "Glossary", short_name: "Glossary", url: "/glossary" },
-      { name: "Settings", short_name: "Settings", url: "/account" },
+      { name: "Account", short_name: "Account", url: "/account" },
+      { name: "Settings", short_name: "Settings", url: "/settings" },
     ],
     icons: [
       { src: "/pwa-icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },

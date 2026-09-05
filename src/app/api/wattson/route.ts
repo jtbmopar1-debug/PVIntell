@@ -7,11 +7,13 @@ import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 import { isNewSystemSetupIntent, startHereLabel, startHereMessage, startHereUrl } from "@/ai/new-system-intent";
 import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
+import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
   projectId: z.uuid(),
   project: z.custom<Project>(),
+  conversationId: z.uuid().optional(),
 });
 
 function proposedArchitectureReply(actions: Array<{ name: string; arguments: unknown }>) {
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
       candidate = {
         message: form.get("message"),
         projectId: form.get("projectId"),
+        conversationId: form.get("conversationId") || undefined,
         project:
           typeof projectText === "string" ? JSON.parse(projectText) : null,
       };
@@ -134,19 +137,19 @@ export async function POST(request: Request) {
     });
   }
 
-  let conversation = await supabase
-    .from("conversations")
-    .select("id")
-    .eq("project_id", parsed.data.projectId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  let conversation = parsed.data.conversationId
+    ? await supabase.from("conversations").select("id,title").eq("project_id", parsed.data.projectId).eq("id", parsed.data.conversationId).maybeSingle()
+    : await supabase.from("conversations").select("id,title").eq("project_id", parsed.data.projectId).order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (conversation.error)
     return Response.json(
       { error: conversation.error.message },
       { status: 400 },
     );
+  if (parsed.data.conversationId && !conversation.data)
+    return Response.json({ error: "That Wattson conversation was not found." }, { status: 404 });
   if (!conversation.data) {
+    if (await userConversationCount(supabase, userId) >= WATTSON_CONVERSATION_LIMIT)
+      return Response.json({ error: `You have reached the ${WATTSON_CONVERSATION_LIMIT}-chat limit. Delete an old chat from Wattson chats before starting another.` }, { status: 409 });
     const created = await supabase
       .from("conversations")
       .insert({
@@ -157,7 +160,7 @@ export async function POST(request: Request) {
       .single();
     if (created.error)
       return Response.json({ error: created.error.message }, { status: 400 });
-    conversation = { ...conversation, data: created.data };
+    conversation = { ...conversation, data: { ...created.data, title: "Wattson project discovery" } };
   }
 
   const conversationId = conversation.data?.id;
@@ -178,6 +181,8 @@ export async function POST(request: Request) {
     });
   if (userInsert.error)
     return Response.json({ error: userInsert.error.message }, { status: 400 });
+  if (!conversation.data?.title || /^Wattson (?:project discovery|conversation)$/i.test(conversation.data.title))
+    await supabase.from("conversations").update({ title: conversationTitle(parsed.data.message) }).eq("id", conversationId);
 
   const recent = await supabase
     .from("chat_messages")
@@ -425,6 +430,7 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   return Response.json({
+    conversationId,
     message,
     provider: structuredContext.provider,
     citations,

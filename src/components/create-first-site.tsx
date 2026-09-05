@@ -1,8 +1,9 @@
 "use client";
 
-import { MapPin, Plus, Zap } from "lucide-react";
+import { MapPin, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { BrandLogo } from "@/components/brand-logo";
 
 export function CreateFirstSite() {
   const router = useRouter();
@@ -35,17 +36,7 @@ export function CreateFirstSite() {
   return (
     <main className="grid min-h-screen place-items-center p-5">
       <div className="w-full max-w-xl">
-        <div className="flex items-center gap-3">
-          <span className="grid size-11 place-items-center rounded-2xl bg-[#f6c945] text-[#143c63]">
-            <Zap size={21} fill="currentColor" />
-          </span>
-          <div>
-            <div className="font-display text-xl font-extrabold">PVIntell</div>
-            <div className="text-[9px] font-bold uppercase tracking-[.18em] text-muted">
-              Power, made clear
-            </div>
-          </div>
-        </div>
+        <BrandLogo />
         <section className="card mt-8 bg-white p-7 md:p-9">
           <span className="grid size-12 place-items-center rounded-2xl bg-[#eaf2fb] text-brand">
             <MapPin size={22} />

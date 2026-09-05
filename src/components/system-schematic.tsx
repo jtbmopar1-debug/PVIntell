@@ -104,7 +104,9 @@ function componentImage(component: ComponentSpec) {
       : `${imageBase}/lifepo4-battery-bank.jpg`;
   if (component.kind === "generator") return `${imageBase}/generator.jpg`;
   if (component.kind === "charger")
-    return `${imageBase}/mppt-charge-controller.jpg`;
+    return identity.includes("mppt") || identity.includes("solar charge")
+      ? `${imageBase}/mppt-charge-controller.jpg`
+      : `${imageBase}/dc-dc-battery-charger-unbranded.png`;
   if (component.kind === "combiner") return `${imageBase}/dc-combiner-box.jpg`;
   if (component.kind === "isolator")
     return identity.includes("ac")
@@ -1072,8 +1074,8 @@ export function SystemSchematic({
     <main className="min-h-screen bg-canvas px-5 py-7 md:px-10">
       <div className="mx-auto max-w-[1280px]">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link href={base} className="inline-flex items-center gap-2 text-xs font-bold text-brand">
-            <ArrowLeft size={15} /> Back to system overview
+          <Link href={`/systems?site=${project.siteId}`} className="inline-flex items-center gap-2 text-xs font-bold text-brand">
+            <ArrowLeft size={15} /> Back to systems
           </Link>
           <div className="relative flex gap-2">
             <button

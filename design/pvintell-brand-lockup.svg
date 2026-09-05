@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 320" role="img" aria-labelledby="title description">
+  <title id="title">PVIntell</title>
+  <desc id="description">PVIntell chrome solar intelligence mark with the tagline Your solar. Answered.</desc>
+  <defs>
+    <linearGradient id="chrome" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fafafa"/><stop offset=".22" stop-color="#aeb3b6"/>
+      <stop offset=".47" stop-color="#f4f4f2"/><stop offset=".72" stop-color="#9da3a6"/>
+      <stop offset="1" stop-color="#e8e9e7"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ff853b"/><stop offset="1" stop-color="#ff5e21"/></linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#54eee3"/><stop offset="1" stop-color="#11bfb8"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#ffe16a"/><stop offset="1" stop-color="#ffb900"/></linearGradient>
+    <pattern id="brush" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M0 1h8M0 5h8" stroke="#fff" stroke-opacity=".13"/></pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#273038" flood-opacity=".3"/></filter>
+  </defs>
+
+  <g transform="translate(28 28) scale(.515625)">
+    <rect x="10" y="10" width="492" height="492" rx="108" fill="url(#chrome)" stroke="#626a6f" stroke-width="10"/>
+    <rect x="24" y="24" width="464" height="464" rx="94" fill="url(#brush)" stroke="#fff" stroke-opacity=".72" stroke-width="5"/>
+    <g filter="url(#shadow)" stroke="#39434a" stroke-width="7" stroke-linejoin="round">
+      <g fill="url(#cyan)"><rect x="239" y="70" width="34" height="77" rx="17"/><rect x="239" y="365" width="34" height="77" rx="17"/><rect x="70" y="239" width="77" height="34" rx="17"/><rect x="365" y="239" width="77" height="34" rx="17"/></g>
+      <path d="M326 178 400 104" fill="none" stroke="url(#gold)" stroke-width="32" stroke-linecap="round"/>
+      <circle cx="414" cy="90" r="31" fill="url(#gold)"/>
+      <circle cx="250" cy="267" r="124" fill="url(#orange)"/>
+      <path d="m326 344 73 43-38-79Z" fill="url(#orange)"/>
+      <path d="m262 177-70 119h65l-15 73 83-125h-66Z" fill="#fff" stroke-width="6"/>
+    </g>
+  </g>
+
+  <text x="338" y="157" fill="#102a45" font-family="Arial, Helvetica, sans-serif" font-size="92" font-weight="800" letter-spacing="-4">PVIntell</text>
+  <text x="344" y="210" fill="#53708c" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" letter-spacing="5">YOUR SOLAR. ANSWERED.</text>
+</svg>
