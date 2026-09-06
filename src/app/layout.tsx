@@ -6,6 +6,7 @@ import { LocalMonitoringProvider } from "@/components/local-monitoring-provider"
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") || "https://pv-intell.vercel.app"),
   title: "PVIntell — Your solar. Answered.",
   description: "AI-first design, commissioning, monitoring, and diagnostics for solar power systems.",
   applicationName: "PVIntell",

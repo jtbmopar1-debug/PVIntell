@@ -22,6 +22,31 @@ export const howToGuideDetails = {
       { question: "Can they be unplugged in sunlight?", answer: "Do not disconnect a PV connector while it is carrying current. Follow the system's shutdown/isolation procedure and the connector manual; PV modules remain voltage sources in light." }
     ]
   },
+  "mounting-flat": {
+    image: "/guides/mounting/flat-roof-tilt-frame-web.jpg",
+    aliases: ["low-slope roof array", "ballasted solar", "tilt-frame array", "flat-roof PV"],
+    whatItIs: "A flat-roof array uses a low-profile frame to hold modules at a designed angle or orientation. The frame may be ballasted, mechanically attached to structure, or use a designed combination of both.",
+    whatItDoes: "It carries module and wind loads into the building while protecting the roof membrane, preserving drainage and leaving safe access for inspection, maintenance and firefighting where required.",
+    usedFor: ["Low-slope homes and garages", "Commercial roofs", "Roofs where panel direction differs from roof slope", "East-west or tilted rows"],
+    types: [
+      { name: "Ballasted frame", image: "/guides/mounting/flat-roof-tilt-frame-web.jpg", imageCredit: "Lucas Braun, Wikimedia Commons", imageSourceUrl: "https://commons.wikimedia.org/wiki/File:Rooftop_Photovoltaic_Array.jpg", imageLicense: "CC BY-SA 3.0", description: "A linked frame uses calculated ballast and friction pads rather than relying only on roof penetrations.", bestFor: "A verified roof whose structure, membrane and wind design support the complete distributed and point loads.", watchFor: "Ballast is engineered by roof zone; copying block counts from another roof can overload the structure or fail in uplift." },
+      { name: "Mechanically attached tilt frame", image: "/guides/mounting/roof-rack-installation-web.jpg", imageCredit: "Alfred Twu, Wikimedia Commons", imageSourceUrl: "https://commons.wikimedia.org/wiki/File:PV_solar_roof_mount_and_rack.jpg", imageLicense: "CC0", description: "Anchors transfer loads to confirmed building structure and use a roof-system-approved flashing or seal.", bestFor: "Roofs where attachments are permitted and the structural load path can be proven.", watchFor: "A waterproof surface is not automatically structural; every penetration needs the exact compatible weather detail." },
+      { name: "Hybrid ballasted and attached system", image: "/guides/mounting/solar-rail-profiles.svg", description: "Calculated ballast and selected structural attachments work together as one engineered system.", bestFor: "Layouts that need lower ballast or controlled movement in high-load roof zones.", watchFor: "Do not alter attachment or ballast quantities independently; both are part of the same design." }
+    ],
+    questions: [
+      { question: "Can I sit panels on concrete blocks?", answer: "Not as an improvised arrangement. The complete frame, ballast, roof friction, wind zones, panel loads and structural capacity must be designed together, with pads and restraint approved for the membrane." },
+      { question: "Will ballast damage the roof?", answer: "It can if point loads, incompatible pads, trapped water, abrasion or membrane movement are ignored. The roof maker, structural design and mounting manual must agree on the interface." },
+      { question: "How much space should rows have?", answer: "Set spacing from the Site latitude, row height and tilt, the hours and seasons that matter, maintenance access, drains, roof edges, fire paths and the structural layout. There is no universal gap." },
+      { question: "Can panels lie completely flat?", answer: "Only when the exact module, mounting and roof design allow it. Very low tilt can reduce self-cleaning, hold dirt or water at frame edges and change yield and maintenance needs." },
+      { question: "Where can cables run?", answer: "In supported UV-rated containment kept above the membrane and away from water paths, sharp edges, loose ballast and hot surfaces. Connectors must not lie on the roof." }
+    ],
+    buy: ["One engineered flat-roof mounting family", "Compatible membrane protection pads and approved attachments or ballast", "Matched module clamps, bonding parts and cable supports", "Walkway or access provisions required by the roof and local design"],
+    tools: ["Current roof drawings and structural assessment", "Roof membrane identification and compatibility information", "Site wind, snow and seismic design data", "Layout, calibrated torque and ballast-verification tools", "Drain, edge and access-path survey"],
+    before: ["Confirm roof structure, deck, insulation and membrane type and condition", "Map drains, gutters, plant, skylights, edges, fire/access paths and shaded areas", "Check distributed loads, point loads, uplift and sliding in every roof zone", "Confirm membrane warranty and approved pads, flashings or attachments", "Model row spacing and self-shading against the Site's seasonal energy goal"],
+    steps: ["Survey and photograph the roof, structure, membrane, drainage and obstructions", "Lay out the engineered rows, access paths and roof zones", "Place only the specified protection pads, frames, attachments and ballast", "Align and link frames in the manufacturer's sequence", "Install modules within their approved clamp zones and torque schedule", "Fit bonding and support every cable and connector clear of the membrane", "Verify ballast or attachment quantities by roof zone", "Record hidden interfaces, final loads, torque and the as-built layout"],
+    checks: ["The roof can carry the verified final load", "Every roof zone matches the engineered ballast or attachment schedule", "Membrane, drainage and movement joints remain protected", "Required edge setbacks and access paths remain clear", "No connector, cable or sharp part touches the roof", "The as-built array and load record match what was installed"],
+    source: "Use the exact selected mounting and module manuals, the roof-system requirements and a Site-specific structural and wind design. The linked Schletter material is a product-family example, not a universal ballast schedule."
+  },
   "mounting-ground": {
     image: "/guides/mounting/manufactured-metal-ground-rack.png",
     aliases: ["ground array", "ground rack", "fixed-tilt frame", "solar table", "backyard solar frame", "pole and rail mount"],
@@ -99,7 +124,11 @@ export const howToGuideDetails = {
     image: "/guides/panels/dc-power-optimiser.png"
   },
   microinverters: {
-    image: "/guides/panels/rooftop-microinverter.png"
+    image: "/guides/panels/rooftop-microinverter.png",
+    types: [
+      { name: "Rooftop microinverter", image: "/guides/panels/microinverter-installed-web.jpg", imageCredit: "Maury Markowitz, Wikimedia Commons", imageSourceUrl: "https://commons.wikimedia.org/wiki/File:Enphase_M190.jpg", imageLicense: "CC BY-SA 3.0", description: "A module-level inverter fixed beneath the array, with its DC inputs, AC branch connection and bonding arrangement visible before the panel covers it.", bestFor: "Showing the real mounting and service context that a product-only picture misses.", watchFor: "This is an older example, not a wiring template. Use the selected current product's rail attachment, trunk cable, caps, branch limits and bonding instructions." },
+      { name: "Current product form", image: "/guides/panels/rooftop-microinverter.png", description: "Modern units vary in connector, trunk-cable, grounding and communications arrangements.", bestFor: "Recognising the component in a proposed system or equipment record.", watchFor: "Similar-looking units are not interchangeable; verify module input limits and the complete supported AC branch family." }
+    ]
   },
   controller: {
     aliases: ["Solar regulator", "Charge regulator", "MPPT controller", "Solar charge controller"],

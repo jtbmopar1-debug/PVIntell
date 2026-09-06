@@ -84,7 +84,7 @@ export const expandedHowToGuides = [
     group: "Mounting systems and hardware",
     id: "mount-direct-attach",
     title: "Rail-less and direct-attach mounts",
-    image: "/schematic-components/roof-mounting-system.jpg",
+    image: "/guides/mounting/roof-rack-installation-web.jpg",
     summary: "Attach modules with a tested direct-mount family only when its roof, module frame and structural load tables all match.",
     keywords: ["railless", "rail free", "direct mount", "mini rail", "short rail", "roof foot"],
     whatItIs: "A direct-attach or short-rail system replaces long rails with small tested attachment points beneath module clamp zones.",

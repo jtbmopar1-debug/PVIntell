@@ -155,7 +155,7 @@ export const componentHowToGuides = [
     group: "Mounting systems and hardware",
     id: "carport-pergola-canopy",
     title: "Solar carport, pergola or canopy",
-    image: "/schematic-components/roof-mounting-system.jpg",
+    image: "/guides/mounting/manufactured-metal-ground-rack.png",
     summary: "Design the supporting structure, waterproofing, vehicle/public clearance and cable protection as one building—not as panels added later.",
     keywords: ["solar carport", "solar pergola", "canopy", "patio solar", "shade structure", "waterproof panels"],
     whatItIs: "A freestanding or building-attached structure where the solar array may also provide shade or shelter.",

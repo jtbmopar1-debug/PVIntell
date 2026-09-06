@@ -643,7 +643,7 @@ export function PVIntellWorkspace({
         </div>
       </aside>
       <main className="min-w-0">
-        <header className="sticky top-0 z-50 border-b border-line bg-[rgba(248,250,252,.98)]">
+        <header className="system-workspace-header sticky top-0 z-50 border-b border-line bg-[rgba(248,250,252,.98)]">
           <div className="mx-auto flex h-[64px] max-w-[1440px] items-center gap-4 px-4 md:px-6">
             <Link href="/dashboard" className="shrink-0"><Logo /></Link>
             {cloud && <WattsonHeaderAction siteId={initialSite.id}/>} 
