@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   applicationName: "PVIntell",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, statusBarStyle: "default", title: "PVIntell" },
-  icons: { icon: "/pwa-icon.svg", apple: "/pwa-icon-192.png" },
+  icons: { icon: "/brand/pvintell-mark.png", apple: "/pwa-icon-192.png" },
 };
 
 export const viewport: Viewport = {

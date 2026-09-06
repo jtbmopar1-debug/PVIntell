@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Bot, Cloud, ImagePlus, MapPin, Menu as MenuIcon, RotateCcw, Send, Sun, Thermometer, Wind, X, Zap } from "lucide-react";
+import { ArrowRight, Bot, Cloud, ImagePlus, Menu as MenuIcon, RotateCcw, Send, Sun, Thermometer, Wind, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -217,14 +217,6 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
         <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-3 px-4 md:px-6">
           <Link href="/dashboard" className="shrink-0"><Logo /></Link>
           <WattsonHeaderAction siteId={siteId}/>
-          {sites.length ? (
-            <label className="ml-auto flex items-center gap-2 rounded-xl border border-line bg-[#f6f9fc] px-3 py-2 text-[11px] font-bold text-brand md:ml-3">
-              <MapPin size={13} />
-              <select value={siteId} onChange={(event) => setSiteId(event.target.value)} className="max-w-36 bg-transparent outline-none" aria-label="Selected site">
-                {sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
-              </select>
-            </label>
-          ) : null}
           <div className="hidden min-w-0 flex-1 md:block">
             <div className="truncate text-xs font-extrabold">{selectedSite?.location || profile.location || "Your PVIntell workspace"}</div>
             <div className="mt-0.5 text-[9px] font-semibold text-muted">{localDate}</div>
@@ -235,7 +227,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             <Link href={`/how-to${siteId ? `?site=${siteId}` : ""}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link>
             <Link href={`/settings${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link>
           </nav>
-          <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>
+          <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="ml-auto grid size-9 shrink-0 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>
             {mobileMenuOpen ? <X size={17} /> : <MenuIcon size={18} />}
           </button>
         </div>

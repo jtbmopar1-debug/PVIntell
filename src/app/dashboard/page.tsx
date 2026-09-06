@@ -12,7 +12,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   if (claims.error || typeof userId !== "string") redirect("/login");
   const { site: requestedSiteId, conversation: requestedConversationId, start, wattson } = await searchParams;
   const [profile, siteRows, systemRows, conversation, discoveryDraftRows] = await Promise.all([
-    supabase.from("profiles").select("display_name,home_location,timezone,onboarding_status,onboarding_assessment").eq("id", userId).single(),
+    supabase.from("profiles").select("display_name,home_location,timezone,onboarding_status,onboarding_assessment,dashboard_default_site_id,dashboard_default_system_id").eq("id", userId).single(),
     supabase.from("sites").select("id,name,location,latitude,longitude,timezone,location_source,location_confirmed").eq("owner_id", userId).order("created_at"),
     supabase.from("projects").select("id,site_id,name,mode,phase").eq("owner_id", userId).order("created_at"),
     requestedConversationId
@@ -65,5 +65,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     const href = system.phase === "discover" ? `/sites/${system.siteId}/discovery` : `/systems?site=${system.siteId}`;
     return [system.id, href];
   }));
-  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} discoveryDrafts={(discoveryDraftRows.data ?? []).map((draft) => ({ id: draft.id, status: draft.status, questionId: draft.question_id, answers: (draft.answers ?? {}) as Record<string, string | number | string[]>, updatedAt: draft.updated_at }))} connectedSystemIds={(activeConnections.data ?? []).map((connection) => connection.project_id)} resumeHrefs={resumeHrefs} solarBySite={solarBySite} solarArraysBySite={solarArraysBySite} initialMessages={messages} conversationId={conversation.data?.id} initialSiteId={requestedSiteId ?? conversation.data?.site_id ?? undefined} autoStartProposal={start === "proposal" || wattson === "open"} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
+  const defaultSystemSiteId = systems.find((system) => system.id === profile.data.dashboard_default_system_id)?.siteId;
+  const initialSiteId = requestedSiteId ?? (requestedConversationId ? conversation.data?.site_id ?? undefined : undefined) ?? defaultSystemSiteId ?? profile.data.dashboard_default_site_id ?? conversation.data?.site_id ?? undefined;
+  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} discoveryDrafts={(discoveryDraftRows.data ?? []).map((draft) => ({ id: draft.id, status: draft.status, questionId: draft.question_id, answers: (draft.answers ?? {}) as Record<string, string | number | string[]>, updatedAt: draft.updated_at }))} connectedSystemIds={(activeConnections.data ?? []).map((connection) => connection.project_id)} resumeHrefs={resumeHrefs} solarBySite={solarBySite} solarArraysBySite={solarArraysBySite} initialMessages={messages} conversationId={conversation.data?.id} initialSiteId={initialSiteId} autoStartProposal={start === "proposal" || wattson === "open"} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
 }

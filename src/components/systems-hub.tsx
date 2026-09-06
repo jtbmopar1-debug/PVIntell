@@ -12,6 +12,7 @@ type SystemsHubProps = {
   systems: SystemSummary[];
   drafts: Array<{ id: string; siteId?: string; name: string; status: string; questionId?: string | null }>;
   selectedSiteId?: string;
+  defaultSystemId?: string;
 };
 
 const operationalPhases = new Set(["monitor", "diagnose", "maintain", "explain"]);
@@ -44,9 +45,11 @@ const discoveryActions = [
   ["financials", "Financials", "Costs, purchases, rebates and buy-back.", WalletCards],
 ] as const;
 
-export function SystemsHub({ sites, systems, drafts, selectedSiteId }: SystemsHubProps) {
+export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSystemId }: SystemsHubProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [savingDefault, setSavingDefault] = useState(false);
+  const [dashboardDefaultSystemId, setDashboardDefaultSystemId] = useState(defaultSystemId);
   const selectedSite = sites.find((site) => site.id === selectedSiteId) ?? sites[0];
   const visibleSystems = selectedSite ? systems.filter((system) => system.siteId === selectedSite.id) : systems;
   const visibleDrafts = selectedSite ? drafts.filter((draft) => !draft.siteId || draft.siteId === selectedSite.id) : drafts;
@@ -60,11 +63,21 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId }: SystemsHu
     if (!response.ok) { window.alert(body.error ?? "Could not delete this item."); return; }
     router.refresh();
   }
+  async function setDashboardDefault(systemId: string, checked: boolean) {
+    if (savingDefault) return;
+    setSavingDefault(true);
+    const response = await fetch("/api/account/dashboard-system", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ systemId: checked ? systemId : null }) });
+    const body = await response.json();
+    setSavingDefault(false);
+    if (!response.ok) { window.alert(body.error ?? "Could not update the dashboard default."); return; }
+    setDashboardDefaultSystemId(checked ? systemId : undefined);
+    router.refresh();
+  }
   return <div className="min-h-screen bg-canvas text-ink">
     <header className="sticky top-0 z-40 border-b border-line bg-white/98 shadow-sm">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-3 px-4 md:px-6">
         <Link href={`/dashboard${siteQuery}`} className="shrink-0"><BrandLogo/></Link>
-        {sites.length ? <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-[#f6f9fc] px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-36 truncate">{selectedSite?.name}</span></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl">{sites.map((site) => <Link key={site.id} href={`/systems?site=${site.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === selectedSite?.id ? "bg-[#fff2b8] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{site.name}</Link>)}</div></details> : null}
+        {sites.length ? <details className="relative hidden shrink-0 md:block"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-[#f6f9fc] px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-36 truncate">{selectedSite?.name}</span></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl">{sites.map((site) => <Link key={site.id} href={`/systems?site=${site.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === selectedSite?.id ? "bg-[#fff2b8] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{site.name}</Link>)}</div></details> : null}
         <div className="hidden min-w-0 flex-1 md:block"><div className="truncate text-xs font-extrabold">{selectedSite?.location ?? "Your systems"}</div><div className="mt-0.5 text-[9px] font-semibold text-muted">{localDate}</div></div>
         <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation">
           <Link href={`/dashboard${siteQuery}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link>
@@ -74,7 +87,7 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId }: SystemsHu
         </nav>
         <button type="button" onClick={() => setMenuOpen((open) => !open)} className="ml-auto grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={menuOpen ? "Close navigation" : "Open navigation"}>{menuOpen ? <X size={17}/> : <Menu size={18}/>}</button>
       </div>
-      {menuOpen ? <nav className="grid gap-1 border-t border-line p-3 md:hidden"><Link href={`/dashboard${siteQuery}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Dashboard</Link><Link href={`/systems${siteQuery}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link><Link href={`/how-to${siteQuery}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">How to</Link><Link href={`/settings${siteQuery}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link></nav> : null}
+      {menuOpen ? <nav className="grid gap-1 border-t border-line p-3 md:hidden"><Link href={`/dashboard${siteQuery}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Dashboard</Link><Link href={`/systems${siteQuery}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link><Link href={`/how-to${siteQuery}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">How to</Link><Link href={`/settings${siteQuery}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link>{sites.length > 1 ? <div className="mt-2 border-t border-line pt-2"><div className="px-2 pb-1 text-[9px] font-extrabold uppercase tracking-[.14em] text-muted">Choose Site</div>{sites.map((site) => <Link key={site.id} href={`/systems?site=${site.id}`} className={`block rounded-lg px-3 py-2 text-xs font-bold ${site.id === selectedSite?.id ? "bg-[#eaf2fb] text-brand" : "text-muted"}`}>{site.name}</Link>)}</div> : null}</nav> : null}
     </header>
 
     <main className="mx-auto max-w-[1180px] p-4 pb-20 md:p-5">
@@ -90,7 +103,7 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId }: SystemsHu
           return <article key={system.id} className="card overflow-hidden">
             <div className={`flex flex-wrap items-center justify-between gap-2 border-b border-line p-3 ${installed ? "bg-[linear-gradient(105deg,#eef7f2,#ffffff)]" : "bg-[linear-gradient(105deg,#eef5fc,#fff8d9)]"}`}>
               <div className="flex items-center gap-3"><span className={`grid size-11 place-items-center rounded-2xl ${installed ? "bg-[#dff3e8] text-[#20724b]" : "bg-[#fff0a9] text-brand"}`}>{installed ? <Activity size={20}/> : <Sparkles size={20}/>}</span><div><h2 className="font-display text-lg font-extrabold">{system.name}</h2><p className="mt-1 text-[10px] font-bold uppercase tracking-[.1em] text-muted">{installed ? "Installed · commissioned" : `Active project · ${system.phase}`} · {system.projectType}</p></div></div>
-              <div className="flex items-center gap-2"><Link href={actionHref(system, installed ? "overview" : system.phase === "discover" ? "setup" : "proposed-schematic")} className="flex items-center gap-2 text-[11px] font-bold text-brand">Open system <ArrowRight size={14}/></Link><button type="button" onClick={() => void remove("system", system.id, system.name)} className="grid size-8 place-items-center rounded-lg border border-[#e7b7af] text-[#a7442d]" aria-label={`Delete ${system.name}`}><Trash2 size={14}/></button></div>
+              <div className="flex flex-wrap items-center justify-end gap-2"><label className="flex min-h-8 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-muted"><input type="checkbox" checked={dashboardDefaultSystemId === system.id} disabled={savingDefault} onChange={(event) => void setDashboardDefault(system.id, event.target.checked)} className="size-3.5 accent-[#1768a6]"/>Dashboard default</label><Link href={actionHref(system, installed ? "overview" : system.phase === "discover" ? "setup" : "proposed-schematic")} className="flex items-center gap-2 text-[11px] font-bold text-brand">Open system <ArrowRight size={14}/></Link><button type="button" onClick={() => void remove("system", system.id, system.name)} className="grid size-8 place-items-center rounded-lg border border-[#e7b7af] text-[#a7442d]" aria-label={`Delete ${system.name}`}><Trash2 size={14}/></button></div>
             </div>
             <div className={`grid gap-2 p-2 sm:grid-cols-2 ${installed ? "lg:grid-cols-5" : "lg:grid-cols-3"}`}>
               {actions.map(([id, title, detail, Icon]) => { const complete = system.completedAreas?.includes(id); return <Link key={id} href={actionHref(system, id)} className={`group flex min-h-14 items-center gap-2.5 rounded-lg border px-2.5 py-2 ${complete ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-line bg-white hover:border-[#8ab0d2] hover:bg-[#f8fbfe]"}`}><span className={`grid size-8 shrink-0 place-items-center rounded-lg ${complete ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#eaf2fb] text-brand"}`}>{complete ? <CheckCircle2 size={16}/> : <Icon size={15}/>}</span><span className="min-w-0"><strong className="block text-[11px] leading-4">{title}</strong><span className="block truncate text-[9px] leading-4 text-muted">{complete ? "Complete" : detail}</span></span><ArrowRight size={12} className="ml-auto shrink-0 text-[#9aabba] group-hover:text-brand"/></Link>; })}

@@ -1,7 +1,7 @@
 import Image from "next/image";
 
 export function BrandMark({ className = "size-9" }: { className?: string }) {
-  return <Image src="/brand/pvintell-mark-compact.svg" alt="" aria-hidden="true" width={48} height={48} className={`${className} shrink-0`}/>;
+  return <Image src="/brand/pvintell-mark.png" alt="" aria-hidden="true" width={256} height={256} className={`${className} shrink-0 rounded-[22%]`}/>;
 }
 
 export function BrandLogo({ compact = false, inverse = false }: { compact?: boolean; inverse?: boolean }) {
