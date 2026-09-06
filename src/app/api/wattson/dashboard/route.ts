@@ -13,6 +13,7 @@ const schema = z.object({
   projectId: z.uuid().optional(),
   siteId: z.uuid().optional(),
   conversationId: z.uuid().optional(),
+  weatherContext: z.string().max(100000).optional(),
 });
 const questionToDiscoveryKey: Record<string, string> = {
   panel_location: "proposed_panel_location",
@@ -95,6 +96,13 @@ function actionProjectId(action: WattsonActionRequest) {
   return typeof value === "string" ? value : undefined;
 }
 
+function friendlyMonitoringReferences(message: string, systems: Array<{ id: string; name: string }>) {
+  return message.replace(/\[([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]/gi, (_match, id: string) => {
+    const system = systems.find((item) => item.id.toLowerCase() === id.toLowerCase());
+    return system ? `(${system.name} live monitoring)` : "(PVIntell live monitoring)";
+  });
+}
+
 function proposedArchitectureReply(actions: WattsonActionRequest[]) {
   const action = actions.find((item) => item.name === "record_design_preference");
   if (!action?.arguments || typeof action.arguments !== "object") return null;
@@ -134,12 +142,17 @@ export async function POST(request: Request) {
   let imageFile: File | undefined;
   if (request.headers.get("content-type")?.includes("multipart/form-data")) {
     const form = await request.formData();
-    candidate = { message: form.get("message"), projectId: form.get("projectId") || undefined, siteId: form.get("siteId") || undefined, conversationId: form.get("conversationId") || undefined };
+    candidate = { message: form.get("message"), projectId: form.get("projectId") || undefined, siteId: form.get("siteId") || undefined, conversationId: form.get("conversationId") || undefined, weatherContext: form.get("weatherContext") || undefined };
     const file = form.get("file");
     if (file instanceof File) imageFile = file;
   } else candidate = await request.json();
   const parsed = schema.safeParse(candidate);
   if (!parsed.success) return Response.json({ error: "Enter a message for Wattson." }, { status: 400 });
+  let selectedSiteWeather: unknown;
+  if (parsed.data.weatherContext) {
+    try { selectedSiteWeather = JSON.parse(parsed.data.weatherContext); }
+    catch { return Response.json({ error: "The displayed weather forecast could not be read." }, { status: 400 }); }
+  }
   if (imageFile && (!new Set(["image/jpeg", "image/png", "image/webp"]).has(imageFile.type) || !imageFile.size || imageFile.size > 8 * 1024 * 1024))
     return Response.json({ error: "Use a JPEG, PNG or WebP image smaller than 8 MB." }, { status: 400 });
   const supabase = await createClient();
@@ -249,10 +262,11 @@ export async function POST(request: Request) {
         userAssessment: profile.data.onboarding_assessment ?? {},
         userTimezone: profile.data.timezone,
         selectedSiteDiscovery: selectedSiteBrief ?? undefined,
+        selectedSiteWeather,
         inventoryLabelCapture: inventoryCapture,
         sites: (sites.data ?? []).map((site) => ({ ...site, unassignedEquipment: (siteEquipment.data ?? []).filter((item) => item.site_id === site.id && !item.assigned_project_id) })),
         connectedSiteSystems: connectedSystems,
-        scope: "Dashboard Wattson is a general solar and electrical assistant with selected-Site awareness. Answer the user's actual question directly first, whether it is general, educational, comparative, diagnostic or specific to a recorded Site/system. Use the selected Site and its complete installed component, PV-array/string, load, assumption and connection records whenever the question concerns that Site, performance or improvement; do not make the user remind you what is already mounted. connectedSiteSystems may include map_latitude, map_longitude, location_mode and map_location_updated_at. A static system position is installation context. A mobile system position is only the user's last saved guide position: state that limitation when location materially affects the answer and never imply that a boat, vehicle or movable system is permanently there. For azimuth, tilt, yield or expansion questions, explicitly compare the recorded existing arrays with the location-based ideal and distinguish improving the existing installation from proposing a separate new array. Do not force an unrelated Site context onto a genuinely general question. A hypothetical design question is not a request to create a system. Never start system discovery, create a workspace, or redirect to Start here from dashboard chat; the dedicated Start a new system flow owns that job. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update an existing system record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If a requested Site-specific action has an unclear target only after checking the records, ask one focused question instead of taking an action.",
+        scope: "Dashboard Wattson is a general solar and electrical assistant with selected-Site awareness. Answer the user's actual question directly first, whether it is general, educational, comparative, diagnostic or specific to a recorded Site/system. selectedSiteWeather is the exact full five-day hourly forecast currently available to PVIntell, including timestamps, timezone, irradiance, cloud cover, precipitation, wind, temperature and UV. For weather, solar-yield, charge-timing or day-specific questions such as ‘on Wednesday’, filter those timestamped hours in the supplied site timezone and use them rather than inventing a general weather narrative. Mention when the forecast was fetched when freshness matters. Explicitly distinguish measured monitoring readings from forecast values. Use the selected Site and its complete installed component, PV-array/string, load, assumption and connection records whenever the question concerns that Site, performance or improvement; do not make the user remind you what is already mounted. connectedSiteSystems may include map_latitude, map_longitude, location_mode and map_location_updated_at. A static system position is installation context. A mobile system position is only the user's last saved guide position: state that limitation when location materially affects the answer and never imply that a boat, vehicle or movable system is permanently there. For azimuth, tilt, yield or expansion questions, explicitly compare the recorded existing arrays with the location-based ideal and distinguish improving the existing installation from proposing a separate new array. Do not force an unrelated Site context onto a genuinely general question. A hypothetical design question is not a request to create a system. Never start system discovery, create a workspace, or redirect to Start here from dashboard chat; the dedicated Start a new system flow owns that job. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update an existing system record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If a requested Site-specific action has an unclear target only after checking the records, ask one focused question instead of taking an action.",
       },
       image,
       allowActions: true,
@@ -428,7 +442,7 @@ export async function POST(request: Request) {
       }
       autonomousContinuation = continuation.message.trim() || undefined;
     }
-    let message = autonomousContinuation ?? result.message.trim();
+    let message = friendlyMonitoringReferences(autonomousContinuation ?? result.message.trim(), connectedSystems);
     const architectureReply = appliedActions.some((action) => action.type === "design_preference_updated")
       ? proposedArchitectureReply(result.actions)
       : null;

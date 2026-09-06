@@ -32,6 +32,24 @@ export interface SystemSummary {
   completedAreas?: string[];
 }
 
+export type FinancialEntryType = "purchase" | "other_cost" | "rebate" | "buyback" | "other_income";
+
+export interface FinancialEntry {
+  id: string;
+  type: FinancialEntryType;
+  date: string;
+  description: string;
+  amount: number;
+  vendor?: string;
+  notes?: string;
+}
+
+export interface SystemFinancialsState {
+  currency: string;
+  entries: FinancialEntry[];
+  updatedAt?: string;
+}
+
 export interface SiteEquipment {
   id: string;
   siteId: string;

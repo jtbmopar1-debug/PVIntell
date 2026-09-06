@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import type { ReactNode } from "react";
 import Script from "next/script";
 import { ServiceWorkerRegister } from "@/components/service-worker-register";
 import { LocalMonitoringProvider } from "@/components/local-monitoring-provider";
@@ -18,7 +19,7 @@ export const viewport: Viewport = {
   colorScheme: "light dark",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full"><LocalMonitoringProvider>{children}</LocalMonitoringProvider><ServiceWorkerRegister /><Script id="pvintell-theme" strategy="beforeInteractive">{`(function(){try{var t=localStorage.getItem('pvintell:theme:v1')==='dark'?'dark':'light';document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t}catch(e){}})()`}</Script></body>

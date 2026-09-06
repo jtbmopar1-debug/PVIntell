@@ -1,6 +1,6 @@
 "use client";
 
-import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Minus, Plus, RotateCcw, Save, Sun, X } from "lucide-react";
+import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Eye, EyeOff, Minus, Plus, RotateCcw, Save, Sun, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState, type DragEvent } from "react";
@@ -286,6 +286,7 @@ function ProposedSchematic({ projectName, gridConnected, design, reviewed, onTog
 
 function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onRedesign, wattsonHref }: { draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>; design: DesignCalculatorState; systemName: string; onChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string }) {
   const [zoom, setZoom] = useState(1);
+  const [showConnectionLabels, setShowConnectionLabels] = useState(true);
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const [selectedConnectionKey, setSelectedConnectionKey] = useState<string>();
   const [routeLength, setRouteLength] = useState(0);
@@ -431,7 +432,7 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
     return `M ${fromCentre} ${from.y + 122} C ${fromCentre} ${from.y + 185}, ${toCentre} ${to.y - 65}, ${toCentre} ${to.y}`;
   };
 
-  return <div className="mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 gap-1"><button type="button" onClick={tidyLayout} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={addItem} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">+ Add item</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div><div className="thin-scrollbar overflow-auto overscroll-contain">
+  return <div className="mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><button type="button" onClick={tidyLayout} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={addItem} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">+ Add item</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div><div className="thin-scrollbar overflow-auto overscroll-contain">
     {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5"><div className="eyebrow">Full component specification</div><dl className="mt-3 grid gap-3 sm:grid-cols-2">{selectedNodeSpecs.map(([label, value]) => <div key={label} className="rounded-xl border border-line bg-[#f7fafc] p-3"><dt className="text-[9px] font-bold uppercase tracking-[.12em] text-muted">{label}</dt><dd className="mt-1 text-xs font-extrabold">{value}</dd></div>)}</dl><Link href={`${overviewHref}#tech-${selectedNode.id}`} className="mt-4 flex h-11 items-center justify-center rounded-xl border border-brand px-3 text-center text-xs font-bold text-brand">Edit full specification in System Overview</Link><button type="button" onClick={removeSelectedNode} className="mt-2 h-9 w-full rounded-lg border border-[#e7b7af] text-[10px] font-bold text-[#a7442d]">Delete this item</button></div>, componentModalTarget) : null}
     <div className="w-[1120px] origin-top-left" style={{ zoom }}>
     <div className="flex min-w-[1120px] items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted"><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery cable</span><span><b className="text-[#d99500]">Gold</b> = power to the building</span><span><b className="text-[#25875a]">Green</b> = safety earth</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
@@ -446,7 +447,7 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
           return <path key={`${connection.from}:${connection.to}`} d={pathFor(connection.from, connection.to)} fill="none" stroke={colour} strokeWidth="4"/>;
         })}
       </svg>
-      {connections.map((connection) => {
+      {showConnectionLabels && connections.map((connection) => {
         const from = byId.get(connection.from);
         const to = byId.get(connection.to);
         if (!from || !to) return null;

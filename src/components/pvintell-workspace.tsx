@@ -653,7 +653,7 @@ export function PVIntellWorkspace({
               <div className="mt-1 truncate text-xs font-extrabold">{project.name} <span className="font-medium text-muted">· {project.location} · {project.systemVoltage > 0 ? `${project.systemVoltage} V` : "voltage to confirm"} · {project.projectType}</span></div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {cloud && <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><UniversalHowToMenu location={initialSite.location} onAsk={askGuide}/><Link href={`/settings?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>}
+              {cloud && <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><Link href={`/how-to?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link><Link href={`/settings?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>}
               <button type="button" onClick={() => setMenu((open) => !open)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>{menu ? <X size={17}/> : <Menu size={18}/>}</button>
               </div>
             </div>
@@ -680,7 +680,7 @@ export function PVIntellWorkspace({
               <button type="button" onClick={() => { setView("equipment"); setMenu(false); }} className="mobile-nav-item">Site equipment</button>
               {monitorOnly ? <button type="button" onClick={() => { setView("monitor"); setMenu(false); }} className="mobile-nav-item">Monitor</button> : null}</> : null}
               <div className="my-1 border-t border-line" />
-              <div className="rounded-lg text-xs font-bold text-muted"><UniversalHowToMenu location={initialSite.location} onAsk={askGuide}/></div>
+              <Link href={`/how-to?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">How to</Link>
               <Link href={`/settings?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link>
             </div></nav> : null}
          </header>

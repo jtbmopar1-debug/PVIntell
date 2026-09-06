@@ -257,7 +257,7 @@ export async function POST(request: Request) {
       latitude,
       longitude,
       timezone,
-      location_source: "map",
+      location_source: "search",
       location_confirmed: true,
     }).select("id").single();
     if (created.error) return Response.json({ error: created.error.message }, { status: 400 });

@@ -36,7 +36,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     { href: "/account", title: "Account & location", detail: "Identity, password, Sites and system map positions", icon: UserRound },
     { href: "/onboarding?edit=1", title: "Onboarding answers", detail: "Review how Wattson adapts to your experience, situation and goals", icon: CircleHelp },
     { href: "/settings/preferences", title: "Preferences", detail: "Measurement units and installable app settings", icon: SlidersHorizontal },
-    { href: "/settings/tools", title: "Tools", detail: "Cable sizing, voltage drop and future calculators", icon: Calculator },
+    { href: `/settings/tools${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Tools", detail: "Solar finances, azimuth, panel tilt, cable sizing and voltage drop", icon: Calculator },
     { href: "/settings/connections", title: "Connections", detail: "Match monitoring devices and services to systems", icon: Link2 },
     { href: weatherHref, title: "Solar weather", detail: weatherSite ? `Forecast and production outlook · ${weatherSite.name}` : "Forecast and production outlook", icon: CloudSun },
     { href: "/glossary", title: "Glossary", detail: "Plain-language solar, battery and electrical terms", icon: BookOpen },

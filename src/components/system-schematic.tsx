@@ -23,7 +23,7 @@ import {
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type {
   ComponentSpec,
   Project,
@@ -32,7 +32,7 @@ import type {
   SystemConnection,
 } from "@/domain/models";
 import { BrandLogo } from "@/components/brand-logo";
-import { allHowToGuides, UniversalHowToMenu } from "@/components/pvintell-workspace";
+import { allHowToGuides } from "@/components/pvintell-workspace";
 
 type DiagramNode = {
   id: string;
@@ -177,6 +177,7 @@ function NodeCard({
   onConnectionStart,
   onConnectionDrop,
   onMoveStart,
+  onMoveEnd,
 }: {
   node: DiagramNode;
   x: number;
@@ -185,8 +186,11 @@ function NodeCard({
   onConnectionStart: (node: DiagramNode) => void;
   onConnectionDrop: (node: DiagramNode) => void;
   onMoveStart: (node: DiagramNode) => void;
+  onMoveEnd?: (node: DiagramNode, clientX: number, clientY: number, svg: SVGSVGElement) => void;
 }) {
   const router = useRouter();
+  const pointerStart = useRef<{ x: number; y: number } | undefined>(undefined);
+  const suppressClick = useRef(false);
   return (
     <foreignObject x={x} y={y} width={nodeSize.width} height={nodeSize.height}>
       <button
@@ -197,7 +201,26 @@ function NodeCard({
           event.dataTransfer.setData("text/pvintell-move-node", node.id);
           onMoveStart(node);
         }}
-        onClick={() => node.href && router.push(node.href)}
+        onPointerDown={(event) => {
+          if (event.pointerType === "mouse") return;
+          pointerStart.current = { x: event.clientX, y: event.clientY };
+          suppressClick.current = false;
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerUp={(event) => {
+          const start = pointerStart.current;
+          const svg = event.currentTarget.closest("svg") as SVGSVGElement | null;
+          if (start && svg && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) {
+            suppressClick.current = true;
+            onMoveStart(node);
+            onMoveEnd?.(node, event.clientX, event.clientY, svg);
+          }
+          pointerStart.current = undefined;
+        }}
+        onClick={(event) => {
+          if (suppressClick.current) { event.preventDefault(); suppressClick.current = false; return; }
+          if (node.href) router.push(node.href);
+        }}
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => {
           if (!connectingFrom) return;
@@ -205,7 +228,7 @@ function NodeCard({
           event.stopPropagation();
           onConnectionDrop(node);
         }}
-        className={`relative flex h-full w-full flex-col items-center rounded-2xl border bg-transparent px-2 py-1 text-center transition hover:-translate-y-0.5 hover:bg-white/55 ${node.proposed ? "border-dashed border-[#8db4d8]" : "border-transparent"} ${connectingFrom === node.id ? "border-[#f6c945] bg-[#fff9df] ring-2 ring-[#f6c945]/35" : ""} ${node.href ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
+        className={`relative flex h-full w-full touch-none flex-col items-center rounded-2xl border bg-transparent px-2 py-1 text-center transition hover:-translate-y-0.5 hover:bg-white/55 ${node.proposed ? "border-dashed border-[#8db4d8]" : "border-transparent"} ${connectingFrom === node.id ? "border-[#f6c945] bg-[#fff9df] ring-2 ring-[#f6c945]/35" : ""} ${node.href ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
       >
         {node.proposed && <span className="absolute left-1 top-1 z-10 rounded-full bg-[#fff6cf] px-2 py-1 text-[8px] font-extrabold uppercase tracking-wide text-[#8b6512]">Proposed</span>}
         <span
@@ -422,6 +445,7 @@ export function SystemSchematic({
   const [, setMovingNode] = useState<DiagramNode>();
   const [layoutMessage, setLayoutMessage] = useState("");
   const [showConnectionLabels, setShowConnectionLabels] = useState(false);
+  const [canvasZoom, setCanvasZoom] = useState(1);
   const [positionOverrides, setPositionOverrides] = useState<
     Record<string, { x: number; y: number }>
   >(() =>
@@ -926,6 +950,15 @@ export function SystemSchematic({
     }
   }
 
+  function moveNodeFromPointer(node: DiagramNode, clientX: number, clientY: number, svg: SVGSVGElement) {
+    const bounds = svg.getBoundingClientRect();
+    void moveNode(
+      node.id,
+      (clientX - bounds.left) * (1100 / bounds.width) - nodeSize.width / 2,
+      (clientY - bounds.top) * (canvasHeight / bounds.height) - nodeSize.height / 2,
+    );
+  }
+
   async function tidyLayout() {
     const positions = Array.from(diagram.positions.entries()).map(
       ([nodeRef, position]) => ({ nodeRef, ...position }),
@@ -1090,7 +1123,7 @@ export function SystemSchematic({
           <Link href="/dashboard" className="shrink-0"><BrandLogo /></Link>
           <Link href={`${base}?view=wattson`} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-2xl bg-brand px-4 text-[11px] font-extrabold text-white"><Zap size={18}/>Ask Wattson</Link>
           <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{site.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div>{sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{item.name}</Link>)}</div></details>
-          <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><UniversalHowToMenu location={site.location} onAsk={askGuide}/><Link href={`/settings?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>
+          <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><Link href={`/how-to?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link><Link href={`/settings?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>
         </div>
       </header>
     <main className="px-5 py-7 md:px-10">
@@ -1203,11 +1236,11 @@ export function SystemSchematic({
               {adding && <div className="absolute right-0 top-11 z-30 w-[min(92vw,500px)] rounded-2xl border border-line bg-white p-3 text-left normal-case tracking-normal shadow-2xl"><div className="px-1 pb-3"><div className="eyebrow">Component library</div><input value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search pictures and equipment" className="field mt-2"/></div><div className="thin-scrollbar grid max-h-[460px] grid-cols-2 gap-2 overflow-y-auto pr-1">{visibleAssets.map((asset) => <button key={asset.fileName} type="button" onClick={() => router.push(`${base}/equipment/new?type=${asset.type}&name=${encodeURIComponent(asset.label)}&image=${encodeURIComponent(asset.url)}&returnTo=${schematicReturn}`)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={asset.url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-cover"/><span className="line-clamp-3">{asset.label}</span></button>)}</div>{!visibleAssets.length && <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures.</p>}<button type="button" onClick={() => router.push(`${base}/equipment/new?type=other&name=Other%20equipment&returnTo=${schematicReturn}`)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line py-2.5 text-xs font-bold text-brand"><Plus size={14}/>Add without a library picture</button></div>}
             </div>
           </div>
-          <div className="thin-scrollbar overflow-x-auto bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
+          <div className="flex items-center justify-end gap-1 border-b border-line bg-white px-3 py-2"><span className="mr-1 text-[9px] font-bold text-muted">Zoom</span><button type="button" onClick={() => setCanvasZoom((value) => Math.max(.45, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line" aria-label="Zoom out">−</button><button type="button" onClick={() => setCanvasZoom(1)} className="h-8 min-w-12 rounded-lg border border-line px-2 text-[9px] font-bold" aria-label="Reset zoom">{Math.round(canvasZoom * 100)}%</button><button type="button" onClick={() => setCanvasZoom((value) => Math.min(1.4, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line" aria-label="Zoom in">+</button></div>
+          <div className="thin-scrollbar overflow-auto touch-pan-x bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
             <svg
               viewBox={`0 0 1100 ${canvasHeight}`}
-              className="min-w-[1000px]"
-              style={{ height: canvasHeight }}
+              style={{ width: 1100 * canvasZoom, height: canvasHeight * canvasZoom }}
               role="img"
               aria-label={`${project.name} system connection schematic`}
               onDragOver={(event) => event.preventDefault()}
@@ -1258,19 +1291,19 @@ export function SystemSchematic({
               ))}
               {diagram.sourceNodes.map((node) => {
                 const position = displayPositions.get(node.id)!;
-                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} />;
+                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
               })}
               {diagram.inverterNodes.map((node) => {
                 const position = displayPositions.get(node.id)!;
-                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} />;
+                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
               })}
-              <NodeCard node={diagram.outputNode} {...displayPositions.get(diagram.outputNode.id)!} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} />
+              <NodeCard node={diagram.outputNode} {...displayPositions.get(diagram.outputNode.id)!} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />
               {diagram.accessoryNodes.map((node) => {
                 const position = displayPositions.get(node.id)!;
-                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} />;
+                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
               })}
               {diagram.earthNode && (
-                <NodeCard node={diagram.earthNode} {...displayPositions.get(diagram.earthNode.id)!} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} />
+                <NodeCard node={diagram.earthNode} {...displayPositions.get(diagram.earthNode.id)!} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />
               )}
             </svg>
           </div>

@@ -4,8 +4,8 @@ import { ArrowRight, Bot, Cloud, ImagePlus, MapPin, Menu as MenuIcon, RotateCcw,
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { allHowToGuides, UniversalHowToMenu } from "@/components/pvintell-workspace";
 import { BrandLogo } from "@/components/brand-logo";
+import { LocalDevFooter } from "@/components/localdev-footer";
 import { WattsonHeaderAction } from "@/components/wattson-header-action";
 import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
@@ -92,6 +92,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
       maxWind: summary.maxWind,
       forecastBasis: summary.forecastBasis,
       fetchedAt: weather.data.fetchedAt,
+      hours: summary.hours,
     };
   }, [forecastNow, forecastSite, selectedSolarArrays, selectedSolarKw, weather.data]);
 
@@ -131,6 +132,19 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
       if (targetProjectId) bodyData.set("projectId", targetProjectId);
       if (siteId) bodyData.set("siteId", siteId);
       if (activeConversationId) bodyData.set("conversationId", activeConversationId);
+      if (today && weather.data) bodyData.set("weatherContext", JSON.stringify({
+        site: weather.data.site,
+        fetchedAt: today.fetchedAt,
+        expectedSolarKwh: today.expected,
+        remainingSolarKwh: today.remaining,
+        forecastBasis: today.forecastBasis,
+        rainMm: today.rain,
+        maxWind: today.maxWind,
+        peak: today.peak,
+        current: today.current,
+        hours: today.hours,
+        allForecastHours: weather.data.hours,
+      }));
       const response = await fetch("/api/wattson/dashboard", { method: "POST", body: bodyData });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
@@ -195,24 +209,6 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
     router.push(`/settings/connections${siteId ? `?site=${siteId}` : ""}`);
   }
 
-  async function askGuide(guide: (typeof allHowToGuides)[number], question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) {
-    if (!selectedSite) return { message: `${guide.whatItIs ?? guide.summary}\n\n${guide.whatItDoes ?? "Open the guide for the full step-by-step instructions."}` };
-    const response = await fetch("/api/wattson/guide", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        message: question,
-        siteId: selectedSite.id,
-        guide,
-        recentConversation,
-        guideIndex: allHowToGuides.map(({ id, title, group, aliases }) => ({ id, title, group, aliases })),
-      }),
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
-    return body;
-  }
-
   const localDate = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long", timeZone: weather.data?.site.timezone ?? forecastSite.timezone }).format(new Date());
 
   return (
@@ -220,7 +216,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
       <header className="sticky top-0 z-40 border-b border-[#cfdbe6] bg-white/98 shadow-sm">
         <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-3 px-4 md:px-6">
           <Link href="/dashboard" className="shrink-0"><Logo /></Link>
-          <WattsonHeaderAction onClick={() => setWattsonOpen(true)}/>
+          <WattsonHeaderAction siteId={siteId}/>
           {sites.length ? (
             <label className="ml-auto flex items-center gap-2 rounded-xl border border-line bg-[#f6f9fc] px-3 py-2 text-[11px] font-bold text-brand md:ml-3">
               <MapPin size={13} />
@@ -236,7 +232,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
           <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation">
             <Link href={`/dashboard${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link>
             <Link href={`/systems${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link>
-            <UniversalHowToMenu location={selectedSite?.location ?? profile.location} onAsk={askGuide} />
+            <Link href={`/how-to${siteId ? `?site=${siteId}` : ""}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link>
             <Link href={`/settings${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link>
           </nav>
           <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>
@@ -249,7 +245,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             <div className="grid gap-1">
               <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Dashboard</Link>
               <Link href={`/systems${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link>
-              <div className="rounded-lg text-xs font-bold text-muted"><UniversalHowToMenu location={selectedSite?.location ?? profile.location} onAsk={askGuide} /></div>
+              <Link href={`/how-to${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">How to</Link>
               <Link href={`/settings${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link>
             </div>
           </nav>
@@ -265,7 +261,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             <div>
               <div className="text-[10px] font-extrabold uppercase tracking-[.2em] text-[#ffe07b]">Today at {selectedSite?.name ?? weather.data?.site.location ?? profile.location ?? "your region"}</div>
               <h1 className="mt-2 max-w-xl font-display text-2xl font-extrabold tracking-[-.045em] md:text-[34px]">Good to see you{profile.displayName ? `, ${profile.displayName}` : ""}.</h1>
-              <p className="mt-2 max-w-xl text-xs leading-5 text-white/80">Your weather, solar outlook and next useful actions—without digging through the rest of the system.</p>
+              <p className="mt-2 max-w-xl text-xs font-semibold leading-5 text-white/90">Your solar system, made easier to build, understand and manage.</p>
             </div>
             <div className="mt-4 flex flex-wrap gap-1.5">
               <WeatherPill icon={Sun} label={today?.current?.irradiance != null ? `${Math.round(today.current.irradiance)} W/m² now` : "Solar data pending"} />
@@ -294,7 +290,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
         </section>
 
         <div>
-          <section className="card p-4 md:p-5">
+          <section className="dashboard-actions card p-4 md:p-5">
             <div className="eyebrow">Let’s get started</div>
             <div className={`mt-5 grid gap-4 ${connectedSiteSystems.length ? "md:grid-cols-3" : "sm:grid-cols-2"}`}>
               {nextSteps.map((step) => (
@@ -308,10 +304,11 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
           </section>
         </div>
       </main>
+      <LocalDevFooter />
 
       {wattsonOpen ? (
         <section id="wattson" className="fixed inset-x-0 bottom-0 z-50 flex h-[calc(100dvh-4rem)] w-full flex-col overflow-hidden rounded-t-2xl border border-[#b9cad9] bg-white shadow-[0_18px_50px_rgba(9,37,61,.26)] sm:inset-x-auto sm:bottom-3 sm:right-3 sm:h-[min(520px,calc(100dvh-1.5rem))] sm:w-[min(380px,calc(100vw-1.5rem))] sm:rounded-2xl">
-          <div className="flex items-center gap-2 border-b border-line bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)] p-3 sm:gap-3 sm:p-4">
+          <div className="wattson-panel-header flex items-center gap-2 border-b border-line bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)] p-3 sm:gap-3 sm:p-4">
             <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-brand text-white"><Bot size={19} /></span>
             <div className="min-w-0 flex-1"><div className="eyebrow">Wattson</div><h2 className="mt-1 truncate text-sm font-extrabold">{selectedSite ? selectedSite.name : "Your solar guide"}</h2></div>
             <button type="button" onClick={() => void startAgain()} disabled={sending} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-brand disabled:opacity-40" title="Start a separate chat"><RotateCcw size={14} /></button>
@@ -320,19 +317,19 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
           <div ref={chatScrollRef} className="thin-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto p-3 sm:p-4">
             {messages.length ? messages.map((message) => (
               <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[92%] rounded-2xl px-3.5 py-3 text-[13px] leading-5 sm:max-w-[88%] sm:px-4 sm:text-xs ${message.role === "user" ? "bg-brand text-white" : "bg-[#edf2f7] text-ink"}`}>
-                  <SimpleMessage content={message.content} />
+                <div className={`max-w-[92%] rounded-2xl px-3.5 py-3 text-[13px] leading-5 sm:max-w-[88%] sm:px-4 sm:text-xs ${message.role === "user" ? "bg-brand text-white" : "wattson-assistant-message bg-[#edf2f7] text-ink"}`}>
+                  <SimpleMessage content={friendlyMonitoringReferences(message.content, systems)} />
                   {message.actionUrl ? <Link href={message.actionUrl} className="mt-3 flex items-center gap-2 font-bold text-brand">{message.actionLabel ?? "Open"}<ArrowRight size={13} /></Link> : null}
                 </div>
               </div>
-            )) : <div className="rounded-2xl bg-[#edf2f7] p-4 text-xs leading-5">Hi{profile.displayName ? ` ${profile.displayName}` : ""}. Ask me about this site, your system, or what to do next.</div>}
+            )) : <div className="wattson-assistant-message rounded-2xl bg-[#edf2f7] p-4 text-xs leading-5">Hi{profile.displayName ? ` ${profile.displayName}` : ""}. Ask me about this site, your system, or what to do next.</div>}
             {sending ? <div className="text-xs text-muted">Wattson is thinking…</div> : null}
           </div>
           <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="border-t border-line p-3">
             {attachment ? <div className="mb-2 flex items-center gap-2 rounded-xl bg-[#edf2f7] px-3 py-2 text-[10px] font-semibold text-muted"><ImagePlus size={14} /><span className="min-w-0 flex-1 truncate">{attachment.name}</span><button type="button" onClick={() => setAttachment(undefined)} aria-label="Remove attached image"><X size={13} /></button></div> : null}
             <div className="grid grid-cols-[max-content_minmax(0,1fr)_2.75rem] items-end gap-2 sm:flex">
               <label className="col-start-1 row-start-2 inline-flex h-11 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-line bg-white px-3 text-[11px] font-bold text-brand sm:row-start-1" title="Add a bill, label, site or roof photo"><ImagePlus size={17} /><span>Add / take photo</span><input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" disabled={sending} onChange={(event) => setAttachment(event.target.files?.[0])} /></label>
-              <textarea rows={3} value={input} onChange={(event) => setInput(event.target.value)} className="field col-span-3 row-start-1 mt-0 min-h-16 w-full resize-none py-3 text-base leading-6 sm:col-span-1 sm:min-h-[44px] sm:flex-1 sm:text-xs sm:leading-5" placeholder="Ask Wattson…" />
+              <textarea rows={3} value={input} onChange={(event) => setInput(event.target.value)} className="field wattson-composer-input col-span-3 row-start-1 mt-0 min-h-16 w-full resize-none py-3 leading-6 sm:col-span-1 sm:min-h-[44px] sm:flex-1 sm:leading-5" placeholder="Ask Wattson…" />
               <button disabled={(!input.trim() && !attachment) || sending} className="col-start-3 row-start-2 grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40 sm:row-start-1"><Send size={16} /></button>
             </div>
           </form>
@@ -353,6 +350,13 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
 
 function Logo() {
   return <BrandLogo />;
+}
+
+function friendlyMonitoringReferences(content: string, systems: SystemSummary[]) {
+  return content.replace(/\[([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\]/gi, (_match, id: string) => {
+    const system = systems.find((item) => item.id.toLowerCase() === id.toLowerCase());
+    return system ? `(${system.name} live monitoring)` : "(PVIntell live monitoring)";
+  });
 }
 
 function SimpleMessage({ content }: { content: string }) {
