@@ -73,7 +73,7 @@ async function fetchAndCache(
   const existing = requests.get(requestKey);
   if (existing) return existing;
   const pending = (async () => {
-    const response = await fetch(`/api/weather/solar?siteId=${siteId}`);
+    const response = await fetch(siteId === "profile-region" ? "/api/weather/solar?regional=1" : `/api/weather/solar?siteId=${siteId}`);
     const body = await response.json();
     if (!response.ok)
       throw new Error(body.error ?? "Could not load solar weather");
@@ -99,8 +99,11 @@ async function fetchAndCache(
 }
 
 export function useSolarWeather(site: Site) {
-  const hasLocation =
-    typeof site.latitude === "number" && typeof site.longitude === "number";
+  const regional = site.id === "profile-region" && Boolean(site.location.trim());
+  const approximateRegion = site.id !== "profile-region" && site.location.trim() !== "" && site.location !== "Location not set" && (typeof site.latitude !== "number" || typeof site.longitude !== "number");
+  const hasLocation = regional || approximateRegion || (typeof site.latitude === "number" && typeof site.longitude === "number");
+  const cacheLatitude = regional || approximateRegion ? 0 : site.latitude;
+  const cacheLongitude = regional || approximateRegion ? 0 : site.longitude;
   const [data, setData] = useState<SolarWeatherPayload>();
   const [loading, setLoading] = useState(hasLocation);
   const [error, setError] = useState("");
@@ -113,8 +116,8 @@ export function useSolarWeather(site: Site) {
     const cached = readCache(
       site.id,
       site.timezone,
-      site.latitude,
-      site.longitude,
+      cacheLatitude,
+      cacheLongitude,
     );
     if (cached) {
       setData(cached);
@@ -130,8 +133,8 @@ export function useSolarWeather(site: Site) {
         await fetchAndCache(
           site.id,
           site.timezone,
-          site.latitude as number,
-          site.longitude as number,
+          cacheLatitude as number,
+          cacheLongitude as number,
         ),
       );
     } catch (problem) {
@@ -143,12 +146,12 @@ export function useSolarWeather(site: Site) {
     } finally {
       setLoading(false);
     }
-  }, [hasLocation, site.id, site.latitude, site.longitude, site.timezone]);
+  }, [cacheLatitude, cacheLongitude, hasLocation, site.id, site.timezone]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadDaily(), 0);
     const midnightWatcher = window.setInterval(() => {
-      if (!readCache(site.id, site.timezone, site.latitude, site.longitude))
+      if (!readCache(site.id, site.timezone, cacheLatitude, cacheLongitude))
         void loadDaily();
     }, 60_000);
     const syncTabs = (event: StorageEvent) => {
@@ -156,8 +159,8 @@ export function useSolarWeather(site: Site) {
       const cached = readCache(
         site.id,
         site.timezone,
-        site.latitude,
-        site.longitude,
+        cacheLatitude,
+        cacheLongitude,
       );
       if (cached) {
         setData(cached);
@@ -171,7 +174,7 @@ export function useSolarWeather(site: Site) {
       window.clearInterval(midnightWatcher);
       window.removeEventListener("storage", syncTabs);
     };
-  }, [loadDaily, site.id, site.latitude, site.longitude, site.timezone]);
+  }, [cacheLatitude, cacheLongitude, loadDaily, site.id, site.timezone]);
 
   return { data, loading, error, hasLocation, loadDaily };
 }

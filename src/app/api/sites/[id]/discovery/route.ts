@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { createClient } from "@/lib/supabase/server";
 
 const answersSchema = z.record(z.string(), z.union([z.string().max(4000), z.number(), z.array(z.string().max(100)).min(1).max(20)]));
@@ -59,20 +58,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     completed_at: new Date().toISOString(),
   });
   if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-  const conversation = await context.supabase.from("user_conversations").insert({
-    owner_id: context.userId,
-    site_id: id,
-    title: "Site discovery review",
-  }).select("id").single();
-  if (conversation.error) return Response.json({ error: conversation.error.message }, { status: 400 });
-  const handoff = await context.supabase.from("user_chat_messages").insert({
-    conversation_id: conversation.data.id,
-    role: "assistant",
-    content: changed
-      ? "I’ve saved the updated Site discovery brief. I’m now revising the affected proposed design so you can see exactly what changed and what still needs checking."
-      : "Your Site discovery is complete. I’m now turning its confirmed answers into the first proposed system outline; nothing will be treated as purchased or installed.",
-    structured_context: { kind: "site_discovery_review", siteId: id, affectedDesigns: changed ? systems.data.length : 0 },
-  });
-  if (handoff.error) return Response.json({ error: handoff.error.message }, { status: 400 });
-  return Response.json({ saved: true, affectedDesigns: changed ? systems.data.length : 0, reviewUrl: `/dashboard?site=${id}&conversation=${conversation.data.id}&start=proposal#wattson` });
+  if (systems.data.length) {
+    const advanced = await context.supabase.from("projects").update({ phase: "design" }).eq("site_id", id).eq("owner_id", context.userId).eq("phase", "discover");
+    if (advanced.error) return Response.json({ error: advanced.error.message }, { status: 400 });
+  }
+  const designUrl = systems.data.length === 1 ? `/sites/${id}/systems/${systems.data[0].id}/design/schematic` : `/sites/${id}`;
+  return Response.json({ saved: true, affectedDesigns: changed ? systems.data.length : 0, designUrl });
 }

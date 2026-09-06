@@ -16,6 +16,7 @@ const answerSchema = z.object({
 const requestSchema = z.object({
   answers: answerSchema,
   completed: z.boolean().optional(),
+  editing: z.boolean().optional(),
 });
 
 export async function PUT(request: Request) {
@@ -28,15 +29,16 @@ export async function PUT(request: Request) {
   if (claims.error || typeof userId !== "string")
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   const completed = Boolean(parsed.data.completed);
+  const remainsCompleted = completed || Boolean(parsed.data.editing);
   const update = await supabase
     .from("profiles")
     .update({
       display_name: parsed.data.answers.displayName || null,
       home_location: parsed.data.answers.location || null,
       timezone: parsed.data.answers.timezone || "UTC",
-      onboarding_status: completed ? "completed" : "in_progress",
+      onboarding_status: remainsCompleted ? "completed" : "in_progress",
       onboarding_assessment: parsed.data.answers,
-      onboarding_completed_at: completed ? new Date().toISOString() : null,
+      onboarding_completed_at: remainsCompleted ? new Date().toISOString() : null,
     })
     .eq("id", userId);
   if (update.error)

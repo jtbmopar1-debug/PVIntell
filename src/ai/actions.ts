@@ -65,12 +65,16 @@ const designPreferenceSchema = z.object({
 });
 const discoveryKey = z.enum([
   "utility_relationship",
+  "ac_phase_arrangement",
+  "nominal_ac_voltage",
   "primary_outcome",
   "current_energy_use",
   "bill_evidence",
   "backup_preference",
   "outage_essential_loads",
   "backup_duration",
+  "generator_requirement",
+  "generator_details",
   "heavy_or_surge_loads",
   "cooking_energy",
   "water_heating_energy",

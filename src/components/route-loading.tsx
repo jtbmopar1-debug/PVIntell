@@ -1,0 +1,3 @@
+export function RouteLoading({ label = "Loading PVIntell…" }: { label?: string }) {
+  return <main className="min-h-screen bg-canvas p-4 md:p-6"><div className="mx-auto max-w-6xl animate-pulse"><div className="h-3 w-24 rounded bg-[#dce6ee]"/><div className="mt-5 h-8 w-56 rounded-lg bg-[#dce6ee]"/><div className="mt-3 h-3 w-72 max-w-full rounded bg-[#e5ecf2]"/><div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{Array.from({ length: 4 }, (_, index) => <div key={index} className="card h-24 bg-white p-4"><div className="h-2 w-20 rounded bg-[#dce6ee]"/><div className="mt-5 h-5 w-28 rounded bg-[#e5ecf2]"/></div>)}</div><div className="card mt-5 h-56 bg-white p-5"><span className="text-xs font-semibold text-muted">{label}</span></div></div></main>;
+}

@@ -69,5 +69,5 @@ export default async function SchematicPage({
       type: assetType(fileName),
       url: `/schematic-components/${encodeURIComponent(fileName)}`,
     }));
-  return <SystemSchematic project={workspace.project} schematicAssets={schematicAssets} />;
+  return <SystemSchematic project={workspace.project} site={workspace.site} sites={workspace.sites} schematicAssets={schematicAssets} />;
 }

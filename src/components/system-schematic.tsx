@@ -3,11 +3,13 @@
 import {
   ArrowLeft,
   BatteryCharging,
+  ChevronDown,
   CircleAlert,
   Eye,
   EyeOff,
   Fuel,
   Home,
+  MapPin,
   Plus,
   PlugZap,
   Save,
@@ -26,8 +28,11 @@ import type {
   ComponentSpec,
   Project,
   PVArray,
+  Site,
   SystemConnection,
 } from "@/domain/models";
+import { BrandLogo } from "@/components/brand-logo";
+import { allHowToGuides, UniversalHowToMenu } from "@/components/pvintell-workspace";
 
 type DiagramNode = {
   id: string;
@@ -390,12 +395,20 @@ export type SchematicAsset = {
 
 export function SystemSchematic({
   project,
+  site,
+  sites,
   schematicAssets = [],
 }: {
   project: Project;
+  site: Site;
+  sites: Site[];
   schematicAssets?: SchematicAsset[];
 }) {
   const router = useRouter();
+  async function askGuide(guide: (typeof allHowToGuides)[number], question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) {
+    const response = await fetch("/api/wattson/guide", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: question, siteId: site.id, guide, recentConversation, guideIndex: allHowToGuides.map(({ id, title, group, aliases }) => ({ id, title, group, aliases })) }) });
+    const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable"); return body;
+  }
   const [selected, setSelected] = useState<ConnectionDetail>();
   const [connectingFrom, setConnectingFrom] = useState<DiagramNode>();
   const [draftEnds, setDraftEnds] = useState<{
@@ -1071,13 +1084,22 @@ export function SystemSchematic({
             : "na";
 
   return (
-    <main className="min-h-screen bg-canvas px-5 py-7 md:px-10">
+    <div className="min-h-screen bg-canvas">
+      <header className="sticky top-0 z-50 border-b border-line bg-[rgba(248,250,252,.98)]">
+        <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-3 px-4 md:px-6">
+          <Link href="/dashboard" className="shrink-0"><BrandLogo /></Link>
+          <Link href={`${base}?view=wattson`} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-2xl bg-brand px-4 text-[11px] font-extrabold text-white"><Zap size={18}/>Ask Wattson</Link>
+          <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{site.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div>{sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{item.name}</Link>)}</div></details>
+          <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><UniversalHowToMenu location={site.location} onAsk={askGuide}/><Link href={`/settings?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>
+        </div>
+      </header>
+    <main className="px-5 py-7 md:px-10">
       <div className="mx-auto max-w-[1280px]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link href={`/systems?site=${project.siteId}`} className="inline-flex items-center gap-2 text-xs font-bold text-brand">
             <ArrowLeft size={15} /> Back to systems
           </Link>
-          <div className="relative flex gap-2">
+          <div className="hidden">
             <button
               type="button"
               onClick={() => void tidyLayout()}
@@ -1100,9 +1122,6 @@ export function SystemSchematic({
             >
               <Plus size={14} /> Add item
             </button>
-            <Link href={`${base}?view=wattson`} className="inline-flex h-10 items-center gap-2 rounded-xl bg-brand px-4 text-xs font-bold text-white">
-              <Zap size={14} /> Ask Wattson
-            </Link>
             {adding && (
               <div className="absolute right-0 top-12 z-30 w-[min(92vw,500px)] rounded-2xl border border-line bg-white p-3 shadow-2xl">
                 <div className="px-1 pb-3">
@@ -1175,10 +1194,14 @@ export function SystemSchematic({
         </div>
 
         <section className="card overflow-hidden">
-          <div className="flex items-center gap-5 border-b border-line bg-[#fff9df] px-5 py-3 text-[9px] font-bold uppercase tracking-[.1em] text-muted">
-            <span>Sources and storage</span>
-            <span className="ml-auto">Inverter / charger</span>
-            <span className="ml-auto">AC distribution</span>
+          <div className="flex flex-wrap items-center gap-3 border-b border-line bg-[#fff9df] px-4 py-3">
+            <div className="flex flex-1 items-center gap-5 text-[9px] font-bold uppercase tracking-[.1em] text-muted"><span>Sources and storage</span><span className="ml-auto hidden md:inline">Inverter / charger</span><span className="ml-auto hidden md:inline">AC distribution</span></div>
+            <div className="relative flex flex-wrap gap-2">
+              <button type="button" onClick={() => void tidyLayout()} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><WandSparkles size={13}/>Tidy layout</button>
+              <button type="button" onClick={() => setShowConnectionLabels((value) => !value)} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button>
+              <button type="button" onClick={() => setAdding((value) => !value)} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/>Add item</button>
+              {adding && <div className="absolute right-0 top-11 z-30 w-[min(92vw,500px)] rounded-2xl border border-line bg-white p-3 text-left normal-case tracking-normal shadow-2xl"><div className="px-1 pb-3"><div className="eyebrow">Component library</div><input value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search pictures and equipment" className="field mt-2"/></div><div className="thin-scrollbar grid max-h-[460px] grid-cols-2 gap-2 overflow-y-auto pr-1">{visibleAssets.map((asset) => <button key={asset.fileName} type="button" onClick={() => router.push(`${base}/equipment/new?type=${asset.type}&name=${encodeURIComponent(asset.label)}&image=${encodeURIComponent(asset.url)}&returnTo=${schematicReturn}`)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={asset.url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-cover"/><span className="line-clamp-3">{asset.label}</span></button>)}</div>{!visibleAssets.length && <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures.</p>}<button type="button" onClick={() => router.push(`${base}/equipment/new?type=other&name=Other%20equipment&returnTo=${schematicReturn}`)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line py-2.5 text-xs font-bold text-brand"><Plus size={14}/>Add without a library picture</button></div>}
+            </div>
           </div>
           <div className="thin-scrollbar overflow-x-auto bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
             <svg
@@ -1406,5 +1429,6 @@ export function SystemSchematic({
         </div>
       )}
     </main>
+    </div>
   );
 }

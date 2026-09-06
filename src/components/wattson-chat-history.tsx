@@ -41,5 +41,5 @@ export function WattsonChatHistory({ initialChats, limit }: { initialChats: Watt
 
 function SimpleMessage({ content }: { content: string }) {
   const inline = (text: string) => text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) => part.startsWith("**") && part.endsWith("**") ? <strong key={`${index}:${part}`}>{part.slice(2, -2)}</strong> : <span key={`${index}:${part}`}>{part}</span>);
-  return <div className="space-y-2">{content.split(/\r?\n/).map((line, index) => { const value = line.trim(); if (!value) return <div key={index} className="h-1"/>; const bullet = value.match(/^[-*]\s+(.*)$/); return bullet ? <div key={index} className="flex gap-2"><span>•</span><span>{inline(bullet[1])}</span></div> : <p key={index}>{inline(value)}</p>; })}</div>;
+  return <div className="space-y-2">{content.split(/\r?\n/).map((line, index) => { const value = line.trim(); if (!value) return <div key={index} className="h-1"/>; if (value.startsWith("Discovery topic:")) return <div key={index} className="border-b border-line pb-2 text-[10px] font-extrabold uppercase tracking-[.12em] text-brand">{value.slice("Discovery topic:".length).trim()}</div>; const bullet = value.match(/^[-*]\s+(.*)$/); return bullet ? <div key={index} className="flex gap-2"><span>•</span><span>{inline(bullet[1])}</span></div> : <p key={index}>{inline(value)}</p>; })}</div>;
 }

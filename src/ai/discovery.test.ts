@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { confirmedPrimaryOutcome, confirmedUtilityRelationship, discoveryGuidance, nextRequiredDiscoveryQuestion, userExpressesUncertainty, userIsAskingDiscoveryQuestion, workspaceProjectType } from "./discovery";
+import { visibleDiscoveryQuestions } from "../discovery/new-system";
 
 const utilityQuestion = [{
   role: "assistant",
@@ -44,6 +45,8 @@ describe("Wattson discovery interpretation", () => {
   it("keeps architecture behind the basic energy and site discovery gate", () => {
     const settings = { designDiscovery: {
       utility_relationship: { value: "Connected to public electricity" },
+      ac_phase_arrangement: { value: "single_phase" },
+      nominal_ac_voltage: { value: "230 V" },
       primary_outcome: { value: "Reduce imported electricity and power costs" },
     } };
     expect(nextRequiredDiscoveryQuestion(settings)?.[0]).toBe("current_energy_use");
@@ -52,7 +55,7 @@ describe("Wattson discovery interpretation", () => {
       "heavy_or_surge_loads", "building_type", "property_authority",
       "proposed_panel_location", "usable_solar_space", "panel_area_dimensions",
       "panel_area_constraints", "orientation_and_pitch", "shading", "structure_condition",
-      "expected_expansion", "delivery_approach",
+      "generator_requirement", "expected_expansion", "delivery_approach",
     ].map((key) => ({ name: "record_design_discovery", arguments: { key, value: "confirmed" } }));
     expect(nextRequiredDiscoveryQuestion(settings, pending)).toBeNull();
   });
@@ -60,6 +63,8 @@ describe("Wattson discovery interpretation", () => {
   it("teaches the backup choice before asking for essential loads", () => {
     const settings = { designDiscovery: {
       utility_relationship: { value: "Connected to public electricity" },
+      ac_phase_arrangement: { value: "single_phase" },
+      nominal_ac_voltage: { value: "230 V" },
       primary_outcome: { value: "Reduce electricity use/cost and improve resilience" },
       current_energy_use: { value: "800 kWh per month" },
     } };
@@ -74,5 +79,14 @@ describe("Wattson discovery interpretation", () => {
     expect(discoveryGuidance("backup_preference")).toContain("Outage backup means");
     expect(userIsAskingDiscoveryQuestion("what is a surge load?")).toBe(true);
     expect(userIsAskingDiscoveryQuestion("essentials only")).toBe(false);
+  });
+
+  it("only offers more workshop tools when earlier answers establish workshop context", () => {
+    const cabinOptions = visibleDiscoveryQuestions({ building_type: "cabin_mobile", everyday_needs: ["lighting", "fridge_freezer"] })
+      .find((question) => question.id === "future_changes")?.options;
+    const workshopOptions = visibleDiscoveryQuestions({ building_type: "shed_workshop", everyday_needs: ["tools"] })
+      .find((question) => question.id === "future_changes")?.options;
+    expect(cabinOptions?.some((option) => option.value === "workshop")).toBe(false);
+    expect(workshopOptions?.some((option) => option.value === "workshop")).toBe(true);
   });
 });

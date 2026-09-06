@@ -1,10 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
 import { GuidedNewSystem } from "@/components/guided-new-system";
 import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { createClient } from "@/lib/supabase/server";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 
-export default async function NewSystemDiscoveryPage({ searchParams }: { searchParams: Promise<{ edit?: string; stage?: string }> }) {
+export default async function NewSystemDiscoveryPage({ searchParams }: { searchParams: Promise<{ edit?: string; stage?: string; draft?: string; new?: string }> }) {
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
@@ -14,8 +15,12 @@ export default async function NewSystemDiscoveryPage({ searchParams }: { searchP
   if (profile.data.onboarding_status !== "completed") redirect("/onboarding");
   const sites = await supabase.from("sites").select("id,name").eq("owner_id", userId).order("created_at");
   if (sites.error) throw new Error(sites.error.message);
-  const { edit, stage } = await searchParams;
+  const { edit, stage, draft, new: startNew } = await searchParams;
+  if (startNew === "1") redirect(`/discovery/new-system?draft=${randomUUID()}`);
   let editAnswers: DiscoveryAnswers | undefined;
+  let draftAnswers: DiscoveryAnswers | undefined;
+  let draftQuestionId: string | undefined;
+  let draftConversationId: string | undefined;
   let returnUrl: string | undefined;
   if (edit) {
     const project = await supabase.from("projects").select("id,site_id").eq("id", edit).eq("owner_id", userId).maybeSingle();
@@ -25,6 +30,13 @@ export default async function NewSystemDiscoveryPage({ searchParams }: { searchP
     editAnswers = (questionnaire.data?.answers ?? {}) as DiscoveryAnswers;
     returnUrl = `/sites/${project.data.site_id}/systems/${project.data.id}`;
   }
+  if (draft && !edit) {
+    const savedDraft = await supabase.from("discovery_drafts").select("answers,question_id,conversation_id").eq("id", draft).eq("owner_id", userId).maybeSingle();
+    if (savedDraft.error) throw new Error(savedDraft.error.message);
+    draftAnswers = (savedDraft.data?.answers ?? {}) as DiscoveryAnswers;
+    draftQuestionId = savedDraft.data?.question_id ?? undefined;
+    draftConversationId = savedDraft.data?.conversation_id ?? undefined;
+  }
   const assessment = (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers & { guidedNewSystem?: { answers?: DiscoveryAnswers; questionId?: string } };
-  return <GuidedNewSystem profile={assessment} sites={sites.data ?? []} initialAnswers={editAnswers ?? assessment.guidedNewSystem?.answers ?? {}} initialQuestionId={edit ? undefined : assessment.guidedNewSystem?.questionId} existingSystemId={edit} returnUrl={returnUrl} stageFilter={stage === "site" ? "site" : undefined}/>;
+  return <GuidedNewSystem profile={assessment} sites={sites.data ?? []} initialAnswers={editAnswers ?? draftAnswers ?? assessment.guidedNewSystem?.answers ?? {}} initialQuestionId={edit ? undefined : draftQuestionId ?? assessment.guidedNewSystem?.questionId} discoveryDraftId={draft} initialDiscoveryConversationId={draftConversationId} existingSystemId={edit} returnUrl={returnUrl} stageFilter={stage === "site" ? "site" : undefined}/>;
 }

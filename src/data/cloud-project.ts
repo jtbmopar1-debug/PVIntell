@@ -198,7 +198,7 @@ export async function createSystem(
             : "off_grid",
       phase: "discover",
       system_voltage: systemVoltage ?? null,
-      settings: { autonomyDays: 2, peakSunHours: 4.2, priorities: [], startingGoal: startingGoal || null },
+      settings: { autonomyDays: 2, peakSunHours: 4.2, priorities: [], startingGoal: startingGoal || null, goal: startingGoal || null },
     })
     .select("id")
     .single();
@@ -239,36 +239,30 @@ export async function loadSiteWorkspace(
     (system) => system.site_id === siteId && system.id === requestedSystemId,
   );
   if (!selected) throw new Error("Power system not found");
-  return loadWorkspace(supabase, selected.id, requestedConversationId);
+  return loadWorkspace(supabase, selected.id, requestedConversationId, workspace);
 }
 
 export async function loadWorkspace(
   supabase: SupabaseClient,
   requestedSystemId?: string,
   requestedConversationId?: string,
+  prefetchedWorkspace?: Awaited<ReturnType<typeof ensureWorkspace>>,
 ) {
-  const workspace = await ensureWorkspace(supabase);
+  const workspace = prefetchedWorkspace ?? await ensureWorkspace(supabase);
   const rowSummary =
     workspace.systems.find((system) => system.id === requestedSystemId) ??
     workspace.systems[0];
-  const rowResult = await supabase
-    .from("projects")
-    .select("*")
-    .eq("id", rowSummary.id)
-    .single();
+  const [rowResult, equipmentResult] = await Promise.all([
+    supabase.from("projects").select("*").eq("id", rowSummary.id).single(),
+    supabase.from("site_equipment").select("*").eq("site_id", rowSummary.site_id).order("created_at"),
+  ]);
   if (rowResult.error) throw rowResult.error;
+  if (equipmentResult.error) throw equipmentResult.error;
   const row = rowResult.data;
   const siteRow =
     workspace.sites.find((item) => item.id === row.site_id) ??
     workspace.sites[0];
   const site = mapSite(siteRow);
-  const equipmentResult = await supabase
-    .from("site_equipment")
-    .select("*")
-    .eq("site_id", site.id)
-    .order("created_at");
-  if (equipmentResult.error) throw equipmentResult.error;
-
   const [
     loads,
     assumptions,
@@ -406,7 +400,7 @@ export async function loadWorkspace(
     projectType: projectType(row.mode),
     phase: row.phase,
     location: site.location,
-    goal: String(settings.goal ?? ""),
+    goal: String(settings.goal ?? settings.startingGoal ?? row.description ?? ""),
     priorities: Array.isArray(settings.priorities)
       ? settings.priorities.map(String)
       : [],
@@ -415,6 +409,9 @@ export async function loadWorkspace(
     peakSunHours: Number(settings.peakSunHours ?? 4.2),
     designCalculator: settings.designCalculator && typeof settings.designCalculator === "object"
       ? settings.designCalculator as Project["designCalculator"]
+      : undefined,
+    designDiscovery: settings.designDiscovery && typeof settings.designDiscovery === "object"
+      ? settings.designDiscovery as Project["designDiscovery"]
       : undefined,
     loads: (loads.data ?? []).map((load) => ({
       id: load.id,

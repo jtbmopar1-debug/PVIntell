@@ -1,17 +1,23 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Bot, Check, CircleHelp, Plus, Ruler, Save, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Check, CircleHelp, LoaderCircle, LocateFixed, MapPin, Plus, Ruler, Save, Search, Send, Sparkles, Trash2, X } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FormattedChatMessage } from "@/components/formatted-chat-message";
 import { discoveryStages, helpForExperience, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers, type DiscoveryQuestion } from "@/discovery/new-system";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 
-export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestionId, existingSystemId, siteDiscoveryId, returnUrl, stageFilter }: {
+const EditableSiteMap = dynamic(() => import("@/components/editable-site-map"), { ssr: false });
+
+export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestionId, discoveryDraftId, initialDiscoveryConversationId, existingSystemId, siteDiscoveryId, returnUrl, stageFilter }: {
   profile: OnboardingAnswers;
   sites: Array<{ id: string; name: string }>;
   initialAnswers: DiscoveryAnswers;
   initialQuestionId?: string;
+  discoveryDraftId?: string;
+  initialDiscoveryConversationId?: string;
   existingSystemId?: string;
   /** A Site owns one combined Site + System discovery brief. */
   siteDiscoveryId?: string;
@@ -20,11 +26,16 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
 }) {
   const router = useRouter();
   const [answers, setAnswers] = useState<DiscoveryAnswers>(initialAnswers);
-  const questionsFor = (values: DiscoveryAnswers) => visibleDiscoveryQuestions(values).filter((item) => (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name"));
+  const combinedInitialSetup = !stageFilter && !siteDiscoveryId;
+  const questionsFor = (values: DiscoveryAnswers) => visibleDiscoveryQuestions(values).filter((item) => (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"));
   const initialQuestions = questionsFor(initialAnswers);
   const [index, setIndex] = useState(() => Math.max(0, initialQuestions.findIndex((question) => question.id === initialQuestionId)));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [helpQuestion, setHelpQuestion] = useState<DiscoveryQuestion>();
+  const [discoveryConversationId, setDiscoveryConversationId] = useState<string | undefined>(initialDiscoveryConversationId);
+  const [returningToReview, setReturningToReview] = useState(false);
+  const [buildingProposal, setBuildingProposal] = useState(false);
   const questions = useMemo(() => questionsFor(answers), [answers, stageFilter, siteDiscoveryId]);
   const reviewing = index >= questions.length;
   const question = reviewing ? undefined : questions[Math.min(index, questions.length - 1)];
@@ -33,14 +44,23 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     const value = answers[item.id];
     return value !== undefined && value !== "" && (!Array.isArray(value) || value.length > 0);
   }).length;
-  const currentAnswerComplete = question ? discoveryAnswerComplete(question.id, answers[question.id]) : true;
+  const newSiteLocationComplete = typeof answers.site_latitude === "number" && typeof answers.site_longitude === "number";
+  const currentAnswerComplete = question ? discoveryAnswerComplete(question.id, answers[question.id]) && !(question.id === "system_name" && combinedInitialSetup && (answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete) : true;
+  const incompleteQuestions = questions.filter((item) => !discoveryAnswerComplete(item.id, answers[item.id])
+    || (item.id === "site_name" && sites.length > 0 && !answers.site_id)
+    || (item.id === "system_name" && combinedInitialSetup && (!answers.site_name || (sites.length > 0 && !answers.site_id) || ((answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete))));
+
+  function returnToQuestion(questionId: string) {
+    const targetIndex = questions.findIndex((item) => item.id === questionId);
+    if (targetIndex >= 0) { setReturningToReview(true); setIndex(targetIndex); }
+  }
 
   async function save(nextAnswers: DiscoveryAnswers, nextQuestionId?: string) {
     setSaving(true); setError("");
     try {
       const response = await fetch(siteDiscoveryId ? `/api/sites/${siteDiscoveryId}/discovery` : "/api/discovery/new-system", {
         method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ answers: nextAnswers, questionId: nextQuestionId }),
+        body: JSON.stringify({ draftId: discoveryDraftId, answers: nextAnswers, questionId: nextQuestionId }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not save discovery");
@@ -63,13 +83,27 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
         delete next.storage_supply_source_off_grid;
         delete next.storage_supply_source_grid;
       }
+      if (question.id === "battery_chemistry" && value !== "custom_home_built") delete next.custom_battery_assessment;
       return next;
     });
+  }
+
+  function openDiscoveryHelp(activeQuestion: DiscoveryQuestion) {
+    if (answers[activeQuestion.id] === unknownAnswer) {
+      setAnswers((current) => ({ ...current, [activeQuestion.id]: "" }));
+    }
+    setHelpQuestion(activeQuestion);
   }
 
   async function next() {
     if (!question) return;
     const nextQuestions = questionsFor(answers);
+    if (returningToReview) {
+      await save(answers);
+      setReturningToReview(false);
+      setIndex(nextQuestions.length);
+      return;
+    }
     const nextIndex = Math.min(index + 1, nextQuestions.length);
     await save(answers, nextQuestions[nextIndex]?.id);
     setIndex(nextIndex);
@@ -82,16 +116,16 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   }
 
   async function complete() {
-    setSaving(true); setError("");
+    setSaving(true); setBuildingProposal(true); setError("");
     try {
       const response = await fetch(siteDiscoveryId ? `/api/sites/${siteDiscoveryId}/discovery` : "/api/discovery/new-system", {
-        method: siteDiscoveryId || existingSystemId ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(siteDiscoveryId ? { answers } : existingSystemId ? { projectId: existingSystemId, answers } : { answers }),
+        method: siteDiscoveryId || existingSystemId ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(siteDiscoveryId ? { answers } : existingSystemId ? { projectId: existingSystemId, answers } : { draftId: discoveryDraftId, answers }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not complete discovery");
-      router.push(siteDiscoveryId ? (body.reviewUrl ?? returnUrl ?? "/dashboard#wattson") : (returnUrl ?? body.reviewUrl));
+      router.push(body.designUrl ?? returnUrl ?? (siteDiscoveryId ? `/sites/${siteDiscoveryId}` : "/dashboard"));
       router.refresh();
-    } catch (problem) { setError(problem instanceof Error ? problem.message : "Could not complete discovery"); setSaving(false); }
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Could not complete discovery"); setSaving(false); setBuildingProposal(false); }
   }
 
   async function deleteSite() {
@@ -119,6 +153,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
           <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-brand text-white"><Sparkles size={18}/></span><div><div className="eyebrow">Guided setup</div><div className="mt-1 text-sm font-extrabold">{siteDiscoveryId ? "Site discovery" : "New system discovery"}</div></div></div>
           <div className="mt-5 space-y-2">{discoveryStages.map((stage, position) => { const active=position===stageIndex; const done=position<stageIndex; const available=questions.some((item)=>item.stage===stage.id); return <button type="button" key={stage.id} onClick={() => goToStage(stage.id)} disabled={!available || saving} className={`w-full rounded-xl border p-3 text-left transition hover:border-brand disabled:cursor-not-allowed disabled:opacity-45 ${active?"border-brand bg-[#edf5fd]":done?"border-[#b8ddc8] bg-[#f1faf5]":"border-line bg-white"}`}><div className="flex items-center gap-2"><span className={`grid size-6 place-items-center rounded-full text-[10px] font-bold ${done?"bg-[#dff2e6] text-[#17603b]":active?"bg-brand text-white":"bg-[#edf1f5] text-muted"}`}>{done?<Check size={12}/>:position+1}</span><strong className="text-xs">{stage.label}</strong></div><p className="mt-2 text-[10px] leading-4 text-muted">{stage.description}</p></button>})}</div>
           <div className="mt-5"><div className="flex justify-between text-[10px] font-bold"><span>Progress</span><span>{answered}/{questions.length}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[#e6edf4]"><div className="h-full rounded-full bg-[#f6c945] transition-all" style={{width:`${questions.length ? Math.round(answered/questions.length*100) : 0}%`}}/></div></div>
+          {answered === questions.length && !reviewing ? <button type="button" onClick={() => { setReturningToReview(false); setIndex(questions.length); }} disabled={saving} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white disabled:opacity-40"><Check size={15}/>Review completed discovery</button> : null}
           {siteDiscoveryId && <button type="button" onClick={() => void deleteSite()} disabled={saving} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-[#efb6a7] px-3 py-2.5 text-xs font-bold text-[#b9412b] hover:bg-[#fff1ed] disabled:opacity-40"><Trash2 size={15}/>Delete Site and discovery</button>}
         </aside>
 
@@ -129,42 +164,53 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
             profile={profile}
             sites={sites}
             selectedSiteId={typeof answers.site_id === "string" ? answers.site_id : ""}
+            siteName={typeof answers.site_name === "string" ? answers.site_name : ""}
+            siteLocationAnswers={answers}
             panelLocations={Array.isArray(answers.panel_location) ? answers.panel_location : []}
             panelAreaDimensions={answers.panel_area_dimensions}
             setAnswer={setAnswer}
             setSite={(siteId, siteName) => setAnswers((current) => ({ ...current, site_id: siteId, site_name: siteName }))}
-          /> : <Review answers={answers} questions={questions}/>} 
+            setSiteLocation={(location) => setAnswers((current) => ({ ...current, ...location }))}
+            onAskWattson={() => openDiscoveryHelp(question)}
+          /> : <Review answers={answers} questions={questions} onSelectQuestion={returnToQuestion}/>}
           {siteDiscoveryId && <div className="mt-4 rounded-xl border border-[#f1ce71] bg-[#fff9df] p-3 text-xs leading-5 text-[#725800]">This is the complete brief for this Site, including its proposed system. Saving changes flags every proposed design at this Site for review; nothing is silently overwritten.</div>}
           {error && <div className="mt-4 rounded-xl border border-[#efb6a7] bg-[#fff1ed] p-3 text-xs text-[#9b3f2c]">{error}</div>}
-          <div className="mt-5 flex items-center justify-between gap-3"><button type="button" onClick={() => void back()} disabled={index===0 || saving} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold disabled:opacity-40"><ArrowLeft size={15}/>Back</button>{reviewing?<button type="button" onClick={() => void complete()} disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40"><Bot size={16}/>{siteDiscoveryId ? "Save and continue with Wattson" : "Save and review with Wattson"}</button>:question?<button type="button" onClick={() => void next()} disabled={!currentAnswerComplete || (question.id==="site_name" && sites.length>0 && !answers.site_id) || saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">Continue<ArrowRight size={15}/></button>:null}</div>
+          <div className="mt-5 flex items-center justify-between gap-3"><button type="button" onClick={() => returningToReview ? (setReturningToReview(false), setIndex(questions.length)) : void back()} disabled={(!returningToReview && index===0) || saving} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold disabled:opacity-40"><ArrowLeft size={15}/>{returningToReview ? "Back to review" : "Back"}</button>{reviewing?<button type="button" onClick={() => incompleteQuestions.length ? returnToQuestion(incompleteQuestions[0].id) : void complete()} disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{incompleteQuestions.length ? <CircleHelp size={16}/> : null}{incompleteQuestions.length ? `Complete ${incompleteQuestions.length} missing answer${incompleteQuestions.length === 1 ? "" : "s"}` : "Save and build proposal"}</button>:question?<button type="button" onClick={() => void next()} disabled={!currentAnswerComplete || (question.id==="site_name" && sites.length>0 && !answers.site_id) || (question.id==="system_name" && combinedInitialSetup && (!answers.site_name || (sites.length>0 && !answers.site_id))) || saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{returningToReview ? "Save answer and return to review" : "Continue"}<ArrowRight size={15}/></button>:null}</div>
         </main>
       </div>
     </div>
+    {helpQuestion ? <DiscoveryHelpDialog question={helpQuestion} discoveryAnswers={answers} conversationId={discoveryConversationId} discoveryDraftId={discoveryDraftId} onConversation={setDiscoveryConversationId} onSafetyDecision={(decision) => setAnswers((current) => ({ ...current, custom_battery_assessment: decision }))} siteId={siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined)} projectId={existingSystemId} onClose={() => setHelpQuestion(undefined)}/> : null}
+    {buildingProposal ? <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#f3f6fa]/95 p-6 backdrop-blur-sm"><div className="card w-full max-w-lg p-8 text-center shadow-2xl"><span className="mx-auto grid size-16 place-items-center rounded-2xl bg-[#eaf2fb] text-brand"><LoaderCircle className="animate-spin" size={30}/></span><div className="eyebrow mt-6">Discovery complete</div><h2 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">Building your system proposal…</h2><p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted">Wattson is turning your confirmed requirements into the proposed system page. Nothing is being marked as purchased or installed.</p></div></div> : null}
   </div>;
 }
 
-function QuestionCard({ question, value, profile, sites, selectedSiteId, panelLocations, panelAreaDimensions, setAnswer, setSite }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; sites: Array<{ id: string; name: string }>; selectedSiteId: string; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void }) {
+function QuestionCard({ question, value, profile, sites, selectedSiteId, siteName, siteLocationAnswers, panelLocations, panelAreaDimensions, setAnswer, setSite, setSiteLocation, onAskWattson }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; sites: Array<{ id: string; name: string }>; selectedSiteId: string; siteName: string; siteLocationAnswers: DiscoveryAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void; setSiteLocation: (location: DiscoveryAnswers) => void; onAskWattson: () => void }) {
   const unknown = value === unknownAnswer;
   const choices = question.type === "choice" || question.type === "multi_choice";
+  const needsLocalAuthorityCheck = question.id === "panel_location" && Array.isArray(value) && value.some((item) => ["ground", "fence", "wall_facade", "carport_pergola"].includes(item));
+  if (question.id === "system_name") {
+    return <SystemSetupQuestionCard sites={sites} selectedSiteId={selectedSiteId} siteName={siteName} defaultRegion={String(profile.location ?? "")} siteLocationAnswers={siteLocationAnswers} value={value} setAnswer={setAnswer} setSite={setSite} setSiteLocation={setSiteLocation} onAskWattson={onAskWattson}/>;
+  }
   if (question.id === "site_name" && sites.length > 0) {
     return <SiteQuestionCard question={question} profile={profile} sites={sites} selectedSiteId={selectedSiteId} value={value} setSite={setSite}/>;
   }
   if (question.id === "panel_area_dimensions") {
-    return <PanelDimensionsCard question={question} profile={profile} panelLocations={panelLocations} value={value} setAnswer={setAnswer}/>;
+    return <PanelDimensionsCard question={question} profile={profile} panelLocations={panelLocations} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "orientation_and_pitch") {
-    return <OrientationCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer}/>;
+    return <OrientationCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "panel_area_constraints") {
-    return <PanelObstructionsCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer}/>;
+    return <PanelObstructionsCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "structure_condition") {
-    return <StructureConditionCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer}/>;
+    return <StructureConditionCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
-    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const nextValues=option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];return <button key={option.value} type="button" onClick={()=>setAnswer(question.type==="multi_choice"?nextValues:option.value)} className={`rounded-2xl border p-4 text-left transition ${selected?"border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><button type="button" onClick={()=>setAnswer(unknown?"":unknownAnswer)} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${unknown?"bg-[#fff3bd] text-[#725800]":"border border-line text-muted"}`}><CircleHelp size={15}/>{unknown?"I’ll answer this now":"I don’t know"}</button>{unknown&&<span className="text-[11px] text-muted">This will be added to Wattson’s review list.</span>}</div>
+    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const nextValues=option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const captureExisting=option.value==="existing"&&["panel_construction_interest","architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition ${selected?"border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
+      {needsLocalAuthorityCheck && <p className="mt-4 rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[11px] leading-5 text-[#765918]">Ground, fence, wall and canopy arrays might be restricted or require planning, building or other consent. Check with the relevant local authority before purchasing equipment or starting work.</p>}
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help now, then return and answer this question.</span></div>
     </div>
   </section>;
 }
@@ -175,7 +221,9 @@ type StructureCondition = { id: string; name: string; material: string; age: str
 type PanelObstruction = { id: string; areaId: string; kind: string; lengthM: string; widthM: string };
 
 function discoveryAnswerComplete(questionId: string, value: string | number | string[] | undefined) {
-  if (value === unknownAnswer) return true;
+  const unresolvedValues = new Set([unknownAnswer, "unknown", "not_checked", "not_decided", "undecided", "unknown_chemistry"]);
+  if (typeof value === "string" && unresolvedValues.has(value)) return false;
+  if (Array.isArray(value) && value.some((item) => unresolvedValues.has(item))) return false;
   if (value === undefined || value === "" || (Array.isArray(value) && value.length === 0)) return false;
   if (questionId === "panel_area_dimensions" && typeof value === "string") {
     try {
@@ -236,12 +284,13 @@ function panelAreas(value: string | number | string[] | undefined, locations: st
   }));
 }
 
-function PanelDimensionsCard({ question, profile, panelLocations, value, setAnswer }: {
+function PanelDimensionsCard({ question, profile, panelLocations, value, setAnswer, onAskWattson }: {
   question: DiscoveryQuestion;
   profile: OnboardingAnswers;
   panelLocations: string[];
   value: string | number | string[] | undefined;
   setAnswer: (value: string | number | string[]) => void;
+  onAskWattson: () => void;
 }) {
   const [showMeasureHelp, setShowMeasureHelp] = useState(false);
   const unknown = value === unknownAnswer;
@@ -271,7 +320,7 @@ function PanelDimensionsCard({ question, profile, panelLocations, value, setAnsw
         </div>;
       })}
       {!unknown && <button type="button" onClick={() => saveAreas([...areas, { id: `area-${Date.now()}`, name: `Panel area ${areas.length + 1}`, lengthM: "", widthM: "" }])} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 text-xs font-bold text-brand"><Plus size={15}/>Add another panel area</button>}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={() => setAnswer(unknown ? "" : unknownAnswer)} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${unknown ? "bg-[#fff3bd] text-[#725800]" : "border border-line text-muted"}`}><CircleHelp size={15}/>{unknown ? "I’ll enter measurements" : "I don’t know"}</button>{unknown && <span className="text-[11px] text-muted">Wattson can ask for measurements or a site photo later.</span>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Wattson can help you measure or identify what a useful photo should show.</span></div>
     </div>
     {showMeasureHelp && <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-[#10233a]/55 p-4" onMouseDown={() => setShowMeasureHelp(false)}>
       <div role="dialog" aria-modal="true" aria-labelledby="measure-area-title" className="my-auto w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
@@ -293,12 +342,12 @@ function PanelDimensionsCard({ question, profile, panelLocations, value, setAnsw
 const directionOptions = [
   ["north", "North (0°)"], ["north_east", "North-east (45°)"], ["east", "East (90°)"],
   ["south_east", "South-east (135°)"], ["south", "South (180°)"], ["south_west", "South-west (225°)"],
-  ["west", "West (270°)"], ["north_west", "North-west (315°)"], ["flat", "Flat / no facing direction"], ["unknown", "I don’t know"],
+  ["west", "West (270°)"], ["north_west", "North-west (315°)"], ["flat", "Flat / no facing direction"],
 ] as const;
 
 const slopeOptions = [
   ["flat", "Flat (0–5°)"], ["low", "Low slope (6–20°)"], ["medium", "Medium slope (21–35°)"],
-  ["steep", "Steep (36–60°)"], ["very_steep", "Very steep (61–89°)"], ["vertical", "Vertical (90°)"], ["unknown", "I don’t know"],
+  ["steep", "Steep (36–60°)"], ["very_steep", "Very steep (61–89°)"], ["vertical", "Vertical (90°)"],
 ] as const;
 
 function panelOrientations(value: string | number | string[] | undefined, areas: PanelArea[]): PanelOrientation[] {
@@ -319,13 +368,14 @@ function panelOrientations(value: string | number | string[] | undefined, areas:
   return areas.map((area) => ({ id: area.id, name: area.name, direction: "", slope: "" }));
 }
 
-function OrientationCard({ question, profile, panelLocations, panelAreaDimensions, value, setAnswer }: {
+function OrientationCard({ question, profile, panelLocations, panelAreaDimensions, value, setAnswer, onAskWattson }: {
   question: DiscoveryQuestion;
   profile: OnboardingAnswers;
   panelLocations: string[];
   panelAreaDimensions: string | number | string[] | undefined;
   value: string | number | string[] | undefined;
   setAnswer: (value: string | number | string[]) => void;
+  onAskWattson: () => void;
 }) {
   const unknown = value === unknownAnswer;
   const areas = panelAreas(panelAreaDimensions, panelLocations);
@@ -342,10 +392,10 @@ function OrientationCard({ question, profile, panelLocations, panelAreaDimension
     <div className="space-y-3 p-6 md:p-8">
       {!unknown && orientations.map((area) => <div key={area.id} className="grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 md:grid-cols-[1.2fr_1fr_1fr] md:items-end">
         <div><span className="text-[10px] font-bold uppercase tracking-[.12em] text-muted">Panel area</span><div className="mt-2 text-sm font-extrabold">{area.name}</div></div>
-        <label className="space-y-1.5 text-xs font-bold"><span>Facing direction</span><select value={area.direction} onChange={(event) => update(area.id, "direction", event.target.value)} className="field mt-0"><option value="">Choose direction</option>{directionOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
+        <label className="space-y-1.5 text-xs font-bold"><span>Facing direction</span><select value={area.direction} onChange={(event) => update(area.id, "direction", event.target.value)} className="field mt-0"><option value="">Choose direction</option>{area.id.startsWith("ground-") ? <option value="open">Open — direction can be selected or suggested</option> : null}{directionOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
         <label className="space-y-1.5 text-xs font-bold"><span>Existing surface slope</span><select value={area.slope} onChange={(event) => update(area.id, "slope", event.target.value)} className="field mt-0"><option value="">Choose slope</option>{slopeOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
       </div>)}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={() => setAnswer(unknown ? "" : unknownAnswer)} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${unknown ? "bg-[#fff3bd] text-[#725800]" : "border border-line text-muted"}`}><CircleHelp size={15}/>{unknown ? "I’ll choose the options" : "I don’t know any of these"}</button>{unknown && <span className="text-[11px] text-muted">Wattson can help identify direction and slope from measurements or photos later.</span>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Wattson can help identify direction and slope now.</span></div>
     </div>
   </section>;
 }
@@ -362,7 +412,7 @@ function panelObstructions(value: string | number | string[] | undefined): Panel
   return [];
 }
 
-function PanelObstructionsCard({ question, profile, panelLocations, panelAreaDimensions, value, setAnswer }: { question: DiscoveryQuestion; profile: OnboardingAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; value: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void }) {
+function PanelObstructionsCard({ question, profile, panelLocations, panelAreaDimensions, value, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; value: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
   const unknown = value === unknownAnswer;
   const areas = panelAreas(panelAreaDimensions, panelLocations);
   const items = panelObstructions(value);
@@ -380,7 +430,7 @@ function PanelObstructionsCard({ question, profile, panelLocations, panelAreaDim
       {!unknown && items.filter((item) => item.kind !== "none").map((item) => <div key={item.id} className="grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 md:grid-cols-[1.2fr_1.35fr_1fr_1fr_auto] md:items-end"><label className="space-y-1.5 text-xs font-bold"><span>Panel area</span><select value={item.areaId} onChange={(event) => update(item.id, "areaId", event.target.value)} className="field mt-0">{areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}</select></label><label className="space-y-1.5 text-xs font-bold"><span>Obstruction</span><select value={item.kind} onChange={(event) => update(item.id, "kind", event.target.value)} className="field mt-0"><option value="">Choose type</option>{obstructionTypes.map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select></label><label className="space-y-1.5 text-xs font-bold"><span>Length (m)</span><input type="number" min="0" step="0.1" value={item.lengthM} onChange={(event) => update(item.id, "lengthM", event.target.value)} className="field mt-0"/></label><label className="space-y-1.5 text-xs font-bold"><span>Width (m)</span><input type="number" min="0" step="0.1" value={item.widthM} onChange={(event) => update(item.id, "widthM", event.target.value)} className="field mt-0"/></label><button type="button" onClick={() => save(items.filter((entry) => entry.id !== item.id))} className="rounded-lg border border-line p-2 text-muted hover:text-[#b9412b]" aria-label="Remove obstruction"><Trash2 size={15}/></button></div>)}
       {!unknown && items.some((item) => item.kind === "none") && <div className="rounded-xl bg-[#f1faf5] p-4 text-xs font-semibold text-[#17603b]">No known obstructions recorded. This can be changed later.</div>}
       {!unknown && <div className="flex flex-wrap items-center gap-3"><button type="button" onClick={add} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 text-xs font-bold text-brand"><Plus size={15}/>Add obstruction</button><button type="button" onClick={() => save([{ id: "none", areaId: "", kind: "none", lengthM: "", widthM: "" }])} className="rounded-xl border border-line px-4 py-2.5 text-xs font-bold text-muted">No known obstructions</button>{total > 0 && <span className="text-xs font-semibold text-muted">Known area to exclude: {total.toFixed(1)} m²</span>}</div>}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={() => setAnswer(unknown ? "" : unknownAnswer)} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${unknown ? "bg-[#fff3bd] text-[#725800]" : "border border-line text-muted"}`}><CircleHelp size={15}/>{unknown ? "I’ll record these later" : "I don’t know"}</button>{unknown && <span className="text-[11px] text-muted">Wattson will keep usable panel area unconfirmed until it is measured.</span>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help identifying and measuring obstructions before continuing.</span></div>
     </div>
   </section>;
 }
@@ -390,18 +440,28 @@ const structureMaterialOptions = [
   ["tile", "Tile roof"], ["shingle", "Shingle roof"], ["membrane", "Flat membrane roof"],
   ["concrete", "Concrete roof or slab"], ["timber", "Timber structure"], ["steel", "Steel structure or frame"],
   ["wall", "Wall or façade"], ["fence", "Fence or vertical screen"], ["ground", "Ground area — frame not selected"],
-  ["mobile", "Vehicle, boat or movable surface"], ["other", "Other / not listed"], ["unknown", "I don’t know"],
+  ["mobile", "Vehicle, boat or movable surface"], ["other", "Other / not listed"],
 ] as const;
 
 const structureAgeOptions = [
   ["new", "New or under 5 years"], ["5_15", "About 5–15 years"], ["16_30", "About 16–30 years"],
-  ["over_30", "More than 30 years"], ["not_built", "Not built or not applicable"], ["unknown", "I don’t know"],
+  ["over_30", "More than 30 years"], ["not_built", "Not built or not applicable"],
 ] as const;
 
 const structureConditionOptions = [
   ["good", "Good — no known damage"], ["serviceable", "Weathered but serviceable"],
   ["repair_needed", "Repairs may be needed"], ["replacement_planned", "Replacement or rebuilding is planned"],
-  ["not_checked", "Not inspected / I don’t know"],
+] as const;
+
+const groundSurfaceOptions = [
+  ["grass", "Grass or pasture"], ["bare_soil", "Bare soil or dirt"],
+  ["gravel", "Gravel or compacted aggregate"], ["cleared", "Cleared or prepared area"],
+  ["concrete_paved", "Concrete or paved area"], ["rocky", "Rocky ground"],
+] as const;
+
+const groundConditionOptions = [
+  ["firm_dry", "Firm and generally dry"], ["soft_wet", "Soft or wet ground"],
+  ["flood_prone", "Flood-prone or poor drainage"], ["rough_obstructed", "Rough or obstructed"],
 ] as const;
 
 function structureConditions(value: string | number | string[] | undefined, areas: PanelArea[]): StructureCondition[] {
@@ -412,23 +472,24 @@ function structureConditions(value: string | number | string[] | undefined, area
         const saved = parsed.filter((item): item is StructureCondition => Boolean(item && typeof item === "object" && "id" in item && "name" in item));
         if (saved.length) return areas.map((area) => {
           const match = saved.find((item) => item.id === area.id || item.name === area.name);
-          return match ? { id: area.id, name: area.name, material: String(match.material ?? ""), age: String(match.age ?? ""), condition: String(match.condition ?? "") } : { id: area.id, name: area.name, material: "", age: "", condition: "" };
+          return match ? { id: area.id, name: area.name, material: String(match.material ?? ""), age: area.id.startsWith("ground-") ? "not_applicable" : String(match.age ?? ""), condition: String(match.condition ?? "") } : { id: area.id, name: area.name, material: "", age: area.id.startsWith("ground-") ? "not_applicable" : "", condition: "" };
         });
       }
     } catch {
       // Older free-text answers are replaced by the structured selectors below.
     }
   }
-  return areas.map((area) => ({ id: area.id, name: area.name, material: "", age: "", condition: "" }));
+  return areas.map((area) => ({ id: area.id, name: area.name, material: "", age: area.id.startsWith("ground-") ? "not_applicable" : "", condition: "" }));
 }
 
-function StructureConditionCard({ question, profile, panelLocations, panelAreaDimensions, value, setAnswer }: {
+function StructureConditionCard({ question, profile, panelLocations, panelAreaDimensions, value, setAnswer, onAskWattson }: {
   question: DiscoveryQuestion;
   profile: OnboardingAnswers;
   panelLocations: string[];
   panelAreaDimensions: string | number | string[] | undefined;
   value: string | number | string[] | undefined;
   setAnswer: (value: string | number | string[]) => void;
+  onAskWattson: () => void;
 }) {
   const unknown = value === unknownAnswer;
   const areas = panelAreas(panelAreaDimensions, panelLocations);
@@ -437,13 +498,104 @@ function StructureConditionCard({ question, profile, panelLocations, panelAreaDi
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
     <div className="space-y-3 p-6 md:p-8">
-      {!unknown && structures.map((area) => <div key={area.id} className="grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 lg:grid-cols-[1.1fr_1.4fr_1fr_1.2fr] lg:items-end">
+      {!unknown && structures.map((area) => { const groundArea = area.id.startsWith("ground-"); return <div key={area.id} className={`grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 lg:items-end ${groundArea ? "lg:grid-cols-[1.1fr_1.4fr_1.2fr]" : "lg:grid-cols-[1.1fr_1.4fr_1fr_1.2fr]"}`}>
         <div><span className="text-[10px] font-bold uppercase tracking-[.12em] text-muted">Possible area</span><div className="mt-2 text-sm font-extrabold">{area.name}</div></div>
-        <label className="space-y-1.5 text-xs font-bold"><span>Surface or support type</span><select value={area.material} onChange={(event) => update(area.id, "material", event.target.value)} className="field mt-0"><option value="">Choose type</option>{structureMaterialOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
-        <label className="space-y-1.5 text-xs font-bold"><span>Approximate age</span><select value={area.age} onChange={(event) => update(area.id, "age", event.target.value)} className="field mt-0"><option value="">Choose age</option>{structureAgeOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
-        <label className="space-y-1.5 text-xs font-bold"><span>Current condition</span><select value={area.condition} onChange={(event) => update(area.id, "condition", event.target.value)} className="field mt-0"><option value="">Choose condition</option>{structureConditionOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
-      </div>)}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={() => setAnswer(unknown ? "" : unknownAnswer)} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold ${unknown ? "bg-[#fff3bd] text-[#725800]" : "border border-line text-muted"}`}><CircleHelp size={15}/>{unknown ? "I’ll choose the options" : "I don’t know any of these"}</button>{unknown && <span className="text-[11px] text-muted">The supporting structure can be inspected and recorded later.</span>}</div>
+        <label className="space-y-1.5 text-xs font-bold"><span>{groundArea ? "Ground surface" : "Surface or support type"}</span><select value={area.material} onChange={(event) => update(area.id, "material", event.target.value)} className="field mt-0"><option value="">Choose type</option>{(groundArea ? groundSurfaceOptions : structureMaterialOptions).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
+        {!groundArea && <label className="space-y-1.5 text-xs font-bold"><span>Approximate age</span><select value={area.age} onChange={(event) => update(area.id, "age", event.target.value)} className="field mt-0"><option value="">Choose age</option>{structureAgeOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>}
+        <label className="space-y-1.5 text-xs font-bold"><span>{groundArea ? "Ground condition" : "Current condition"}</span><select value={area.condition} onChange={(event) => update(area.id, "condition", event.target.value)} className="field mt-0"><option value="">Choose condition</option>{(groundArea ? groundConditionOptions : structureConditionOptions).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
+      </div>; })}
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Wattson can explain what to inspect and what evidence is useful.</span></div>
+    </div>
+  </section>;
+}
+
+type LocationMatch = { name: string; label: string; latitude: number; longitude: number; timezone: string };
+
+function NewSiteLocation({ siteName, defaultRegion, initial, onChange }: { siteName: string; defaultRegion: string; initial: DiscoveryAnswers; onChange: (location: DiscoveryAnswers) => void }) {
+  const initialMatch = typeof initial.site_latitude === "number" && typeof initial.site_longitude === "number" ? { name: siteName || "Pinned Site", label: String(initial.site_location || siteName || "Pinned Site"), latitude: initial.site_latitude, longitude: initial.site_longitude, timezone: String(initial.site_timezone || "UTC") } : undefined;
+  const [query, setQuery] = useState(initialMatch?.label ?? defaultRegion);
+  const [matches, setMatches] = useState<LocationMatch[]>([]);
+  const [selected, setSelected] = useState<LocationMatch | undefined>(initialMatch);
+  const [searching, setSearching] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState("");
+  const [saveToAccount, setSaveToAccount] = useState(initial.save_as_account_location === "yes");
+
+  function updateLocation(match: LocationMatch) {
+    setSelected(match); setMatches([]); setQuery(match.label); setLocationError("");
+    onChange({ site_location: match.label, site_latitude: match.latitude, site_longitude: match.longitude, site_timezone: match.timezone, save_as_account_location: saveToAccount ? "yes" : "no" });
+  }
+
+  async function searchLocation() {
+    if (query.trim().length < 2) return;
+    setSearching(true); setLocationError("");
+    try {
+      const response = await fetch(`/api/location/search?q=${encodeURIComponent(query.trim())}`);
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not search for that location.");
+      setMatches(body.results ?? []);
+      if (!(body.results ?? []).length) setLocationError("No matching locations were found. Try a nearby town, postcode or full address.");
+    } catch (problem) { setLocationError(problem instanceof Error ? problem.message : "Could not search for that location."); }
+    finally { setSearching(false); }
+  }
+
+  function useDeviceLocation() {
+    if (!navigator.geolocation) { setLocationError("Location access is not available on this device."); return; }
+    setLocating(true); setLocationError("");
+    navigator.geolocation.getCurrentPosition(({ coords }) => {
+      updateLocation({ name: siteName || "Pinned Site", label: siteName || "Pinned device location", latitude: coords.latitude, longitude: coords.longitude, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" });
+      setLocating(false);
+    }, () => { setLocationError("PVIntell could not access this device’s location. Search for the property instead."); setLocating(false); }, { enableHighAccuracy: true, timeout: 12_000 });
+  }
+
+  function movePin(_: string, latitude: number, longitude: number) {
+    if (!selected) return;
+    updateLocation({ ...selected, latitude, longitude });
+  }
+
+  return <div className="mt-4 rounded-2xl border border-line bg-[#fbfcfe] p-4">
+    <div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><MapPin size={17}/></span><div><strong className="text-sm">Pinpoint the new Site</strong><p className="mt-1 text-[11px] leading-5 text-muted">Search for the property or use this device, then drag the pin to the exact installation position. This sets the Site’s solar coordinates and timezone.</p></div></div>
+    <div className="mt-4 flex gap-2"><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchLocation(); } }} className="field mt-0" placeholder="Address, town, postcode or region"/><button type="button" onClick={() => void searchLocation()} disabled={searching || query.trim().length < 2} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40">{searching ? <LoaderCircle className="animate-spin" size={17}/> : <Search size={17}/>}</button></div>
+    <button type="button" onClick={useDeviceLocation} disabled={locating} className="mt-2 flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold disabled:opacity-40"><LocateFixed size={14}/>{locating ? "Finding this device…" : "Use this device’s location"}</button>
+    {matches.length ? <div className="mt-3 overflow-hidden rounded-xl border border-line bg-white">{matches.map((match) => <button key={`${match.latitude}:${match.longitude}`} type="button" onClick={() => updateLocation(match)} className="block w-full border-b border-line px-4 py-3 text-left text-xs last:border-0 hover:bg-[#edf5fd]"><strong>{match.name}</strong><span className="mt-1 block text-[11px] text-muted">{match.label}</span></button>)}</div> : null}
+    {locationError ? <p className="mt-3 text-[11px] text-[#a9442f]">{locationError}</p> : null}
+    {selected ? <><div className="relative mt-4 h-64 overflow-hidden rounded-xl border border-line bg-[#dfe9ee]"><EditableSiteMap points={[{ id: "new-site", name: siteName || selected.name, latitude: selected.latitude, longitude: selected.longitude, kind: "site" }]} activeId="new-site" center={[selected.latitude, selected.longitude]} onSelect={() => undefined} onMove={movePin}/><div className="absolute bottom-3 left-3 z-[500] rounded-lg bg-white/95 px-3 py-2 text-[10px] font-semibold shadow">Click or drag the pin to refine the position</div></div><div className="mt-3 text-[11px] text-muted"><strong className="text-ink">Pinned:</strong> {selected.latitude.toFixed(6)}, {selected.longitude.toFixed(6)} · {selected.timezone}</div><label className="mt-3 flex cursor-pointer items-start gap-2 text-[11px] leading-5"><input type="checkbox" checked={saveToAccount} onChange={(event) => { const checked = event.target.checked; setSaveToAccount(checked); onChange({ save_as_account_location: checked ? "yes" : "no" }); }} className="mt-1"/><span>Also use this as my account’s home location. Leave this off when the Site is somewhere else.</span></label></> : null}
+  </div>;
+}
+
+function SystemSetupQuestionCard({ sites, selectedSiteId, siteName, defaultRegion, siteLocationAnswers, value, setAnswer, setSite, setSiteLocation, onAskWattson }: {
+  sites: Array<{ id: string; name: string }>;
+  selectedSiteId: string;
+  siteName: string;
+  defaultRegion: string;
+  siteLocationAnswers: DiscoveryAnswers;
+  value: string | number | string[] | undefined;
+  setAnswer: (value: string | number | string[]) => void;
+  setSite: (siteId: string, siteName: string) => void;
+  setSiteLocation: (location: DiscoveryAnswers) => void;
+  onAskWattson: () => void;
+}) {
+  return <section className="card overflow-hidden bg-white">
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8">
+      <div className="eyebrow">Discovery</div>
+      <h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">Let’s set up your new power system</h1>
+      <div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4">
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span>
+        <div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">A simple system name and its Site keep every design, equipment record and future monitoring connection attached to the right place.</p></div>
+      </div>
+    </div>
+    <div className="space-y-6 p-6 md:p-8">
+      <label className="block"><span className="text-sm font-extrabold">What should we call this power setup?</span><span className="mt-1 block text-[11px] leading-5 text-muted">For example, House solar, Main home or Workshop.</span><input type="text" value={String(value ?? "")} onChange={(event) => setAnswer(event.target.value)} className="field mt-3" placeholder="Power system name"/></label>
+      <div className="border-t border-line pt-6">
+        <div className="text-sm font-extrabold">Where will this power system be located?</div>
+        <p className="mt-1 text-[11px] leading-5 text-muted">Choose an existing Site, or name a new Site if this is at a different property or location.</p>
+        {sites.length ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {sites.map((site) => { const selected = selectedSiteId === site.id; return <button key={site.id} type="button" onClick={() => setSite(site.id, site.name)} className={`rounded-2xl border p-4 text-left transition ${selected ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{site.name}</strong>{selected && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Add this power system to the existing Site.</p></button>; })}
+          <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">Create a new Site</strong>{selectedSiteId === "__new__" && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Use this for a different property or location.</p></button>
+        </div> : null}
+        {(!sites.length || selectedSiteId === "__new__") && <><input type="text" value={siteName} onChange={(event) => setSite("__new__", event.target.value)} className="field mt-3" placeholder="Site name, e.g. River Views"/><NewSiteLocation siteName={siteName} defaultRegion={defaultRegion} initial={siteLocationAnswers} onChange={setSiteLocation}/></>}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help choosing clear names or deciding which Site this belongs to.</span></div>
     </div>
   </section>;
 }
@@ -484,13 +636,74 @@ function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, set
   </section>;
 }
 
-function Review({ answers, questions }: { answers: DiscoveryAnswers; questions: DiscoveryQuestion[] }) {
-  const unknowns=questions.filter((question)=>answers[question.id]===unknownAnswer);
-  return <section className="card overflow-hidden bg-white"><div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">Review</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">Ready for Wattson</h1><p className="mt-2 text-sm leading-6 text-muted">Confirmed answers will form the design brief. Unknown items remain visibly unresolved for Wattson to explain or revisit.</p></div><div className="grid gap-3 p-6 md:grid-cols-2 md:p-8">{questions.map((question)=><div key={question.id} className="rounded-2xl border border-line p-4"><div className="text-[10px] font-bold uppercase tracking-[.12em] text-muted">{question.stage}</div><div className="mt-2 text-xs font-bold">{question.title}</div><div className={`mt-2 text-xs ${answers[question.id]===unknownAnswer?"text-[#8a6400]":"text-muted"}`}>{answerLabel(question,answers[question.id])}</div></div>)}</div>{unknowns.length>0&&<div className="mx-6 mb-6 flex items-start gap-3 rounded-2xl bg-[#fff6cf] p-4 text-xs leading-5 text-[#725800] md:mx-8 md:mb-8"><CircleHelp className="mt-0.5 shrink-0" size={16}/><div><strong>{unknowns.length} item{unknowns.length===1?"":"s"} for Wattson to revisit.</strong><p className="mt-1">Nothing has been guessed or treated as confirmed.</p></div></div>}</section>;
+type DiscoveryHelpMessage = { role: "user" | "assistant"; content: string };
+
+function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: existingConversationId, discoveryDraftId, onConversation, onSafetyDecision, siteId, projectId, onClose }: { question: DiscoveryQuestion; discoveryAnswers: DiscoveryAnswers; conversationId?: string; discoveryDraftId?: string; onConversation: (conversationId: string) => void; onSafetyDecision: (decision: string) => void; siteId?: string; projectId?: string; onClose: () => void }) {
+  const selectedAnswer = discoveryAnswers[question.id];
+  const existingEquipment = selectedAnswer === "existing" || (Array.isArray(selectedAnswer) && selectedAnswer.includes("existing"));
+  const equipmentName = question.id === "dc_system_voltage" ? "battery" : question.id === "architecture_preference" ? "inverter" : question.id === "panel_construction_interest" ? "solar panels" : "equipment";
+  const customBatteryAssessment = question.id === "battery_chemistry" && selectedAnswer === "custom_home_built";
+  const compareModuleArrangements = question.id === "module_level_electronics" && Array.isArray(selectedAnswer) && selectedAnswer.includes("compare");
+  const existingModuleEquipment = question.id === "module_level_electronics" && Array.isArray(selectedAnswer) && selectedAnswer.includes("existing_mixed");
+  const openingMessage = compareModuleArrangements
+    ? "Let’s compare the three arrangements for this Site: a standard string inverter, DC optimisers with a compatible string inverter, and microinverters. I’ll use the recorded roof directions, shading, array areas, monitoring needs, service access, expansion plans and local constraints. I’ll explain the electrical, practical, maintenance and cost trade-offs, then recommend the best fit rather than leaving the comparison open-ended."
+    : existingModuleEquipment
+      ? "Let’s identify the existing or mixed panel-level equipment you want considered for this build. Send the exact panel, optimiser, microinverter and main-inverter makes and models, plus label photos or manufacturer documents where available. I’ll verify voltage, current, power, connector, string or branch, communications and firmware compatibility. Nothing will be treated as compatible merely because the connectors fit or the brands appear related."
+      : customBatteryAssessment
+    ? "Before a custom or home-built battery can remain in this build, we need a significant evidence review. I’ll work through its source and history; exact cell chemistry and series/parallel configuration; nominal and maximum voltage; capacity; BMS, contactors, pre-charge and isolation monitoring; fusing and disconnects; enclosure, condition and thermal management; charge/discharge limits; inverter compatibility; and available test or inspection evidence. I will ask for one evidence item at a time. When the review is complete I’ll clearly recommend either retaining it or NOT using it. You make the final choice, but missing safety-critical evidence will keep it marked unverified. First: is this a purpose-built custom pack, or does it use salvaged modules or a complete pack from a vehicle or other system?"
+    : existingEquipment
+    ? `Let’s identify the ${equipmentName} you want considered for this build. Send the make and model, the rating-label specifications, or a clear photo of the label. I’ll assess compatibility rather than assume it belongs in the design. If it is unsuitable or the evidence is insufficient, I’ll say so and explain why.`
+    : `Let’s work only on this question: “${question.title}” What part would you like me to explain or help you identify?`;
+  const [messages, setMessages] = useState<DiscoveryHelpMessage[]>([{ role: "assistant", content: openingMessage }]);
+  const [conversationId, setConversationId] = useState<string | undefined>(existingConversationId);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const messageListRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const messageList = messageListRef.current;
+    if (!messageList) return;
+    const frame = requestAnimationFrame(() => { messageList.scrollTop = messageList.scrollHeight; });
+    return () => cancelAnimationFrame(frame);
+  }, [messages, sending, error]);
+
+  async function send() {
+    const message = input.trim();
+    if (!message || sending) return;
+    const nextMessages = [...messages, { role: "user" as const, content: message }];
+    setMessages(nextMessages); setInput(""); setSending(true); setError("");
+    try {
+      const response = await fetch("/api/wattson/discovery-help", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message, conversationId, discoveryDraftId, siteId, projectId, discoveryAnswers, question: { id: question.id, title: question.title, stage: question.stage, help: question.noviceHelp, options: question.options }, recentConversation: nextMessages.slice(-8) }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable.");
+      setConversationId(body.conversationId);
+      onConversation(body.conversationId);
+      if (typeof body.safetyDecision === "string") onSafetyDecision(body.safetyDecision);
+      setMessages((current) => [...current, { role: "assistant", content: String(body.message) }]);
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Wattson is unavailable."); }
+    finally { setSending(false); }
+  }
+
+  return <div className="fixed inset-0 z-[100] flex items-end justify-center bg-[#0b2740]/55 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={`Discovery help: ${question.title}`}>
+    <section className="flex h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-line bg-white shadow-2xl sm:h-[min(720px,88dvh)] sm:rounded-3xl">
+      <header className="flex items-center gap-3 border-b border-line bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)] p-4"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-brand text-white"><Bot size={20}/></span><div className="min-w-0 flex-1"><div className="eyebrow">Discovery chat</div><h2 className="mt-1 truncate text-sm font-extrabold">{question.title}</h2></div><button type="button" onClick={onClose} className="grid size-10 place-items-center rounded-xl border border-line bg-white text-muted" aria-label="Close discovery help"><X size={18}/></button></header>
+      <div ref={messageListRef} className="thin-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#f8fafc] p-4">{messages.map((item, index) => <div key={index} className={`flex ${item.role === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-[13px] leading-5 ${item.role === "user" ? "bg-brand text-white" : "border border-line bg-white"}`}><FormattedChatMessage content={item.content}/></div></div>)}{sending ? <p className="text-xs font-semibold text-muted">Wattson is thinking…</p> : null}{error ? <p className="rounded-xl bg-[#fff0eb] p-3 text-xs text-[#913e31]">{error}</p> : null}</div>
+      <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="border-t border-line bg-white p-3"><p className="mb-2 text-[11px] leading-4 text-muted">This subject stays separate from your main chats and is saved in Wattson chats.</p><div className="flex items-end gap-2"><textarea value={input} onChange={(event) => setInput(event.target.value)} rows={2} placeholder="Tell Wattson what you need to understand…" className="field mt-0 min-h-12 flex-1 resize-none py-3 text-[16px]"/><button disabled={!input.trim() || sending} className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send"><Send size={18}/></button></div><button type="button" onClick={onClose} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-brand bg-white text-xs font-extrabold text-brand"><ArrowLeft size={15}/>Back to questions</button></form>
+    </section>
+  </div>;
+}
+
+function Review({ answers, questions, onSelectQuestion }: { answers: DiscoveryAnswers; questions: DiscoveryQuestion[]; onSelectQuestion: (questionId: string) => void }) {
+  const incomplete=questions.filter((question)=>!discoveryAnswerComplete(question.id, answers[question.id]));
+  return <section className="card overflow-hidden bg-white"><div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">Review</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">{incomplete.length ? "Complete your discovery" : "Ready for Wattson"}</h1><p className="mt-2 text-sm leading-6 text-muted">{incomplete.length ? `${incomplete.length} visible question${incomplete.length === 1 ? " is" : "s are"} still unanswered. Select any highlighted card to complete it before Wattson prepares the design.` : "Every visible question has been answered. These confirmed answers will form the design brief."}</p></div><div className="grid gap-3 p-6 md:grid-cols-2 md:p-8">{questions.map((question)=>{const missing=!discoveryAnswerComplete(question.id, answers[question.id]);return <button type="button" key={question.id} onClick={()=>onSelectQuestion(question.id)} className={`rounded-2xl border p-4 text-left transition hover:border-brand ${missing?"border-[#e7b43b] bg-[#fff9df] ring-1 ring-[#f1ce71]":"border-line bg-white"}`}><div className={`text-[10px] font-bold uppercase tracking-[.12em] ${missing?"text-[#8a6400]":"text-muted"}`}>{question.stage}{missing?" · Answer required":""}</div><div className="mt-2 text-xs font-bold">{question.title}</div><div className={`mt-2 text-xs ${missing?"font-bold text-[#8a6400]":"text-muted"}`}>{answerLabel(question,answers[question.id])}</div></button>})}</div></section>;
 }
 
 function answerLabel(question: DiscoveryQuestion, value: string | number | string[] | undefined) {
-  if (value===unknownAnswer) return "I don’t know yet";
+  if (value===unknownAnswer || value==="unknown" || value==="not_checked" || value==="not_decided" || value==="undecided" || value==="unknown_chemistry") return "Answer required";
   if (value===undefined || value==="") return "Not answered";
   if (typeof value === "string" && ["panel_area_dimensions", "orientation_and_pitch", "structure_condition", "panel_area_constraints"].includes(question.id)) {
     try {
@@ -500,6 +713,7 @@ function answerLabel(question: DiscoveryQuestion, value: string | number | strin
         if (question.id === "panel_area_dimensions") return `${name}: ${String(row.lengthM ?? "?")} m × ${String(row.widthM ?? "?")} m`;
         if (question.id === "orientation_and_pitch") return `${name}: ${String(row.direction ?? "unknown direction").replaceAll("_", " ")}, ${String(row.slope ?? "unknown slope").replaceAll("_", " ")}`;
         if (question.id === "panel_area_constraints") return row.kind === "none" ? "No known obstructions" : `${String(row.kind ?? "obstruction").replaceAll("_", " ")}: ${String(row.lengthM ?? "?")} m × ${String(row.widthM ?? "?")} m`;
+        if (String(row.id ?? "").startsWith("ground-")) return `${name}: ${String(row.material ?? "unknown ground surface").replaceAll("_", " ")}, ${String(row.condition ?? "unknown condition").replaceAll("_", " ")}`;
         return `${name}: ${String(row.material ?? "unknown support").replaceAll("_", " ")}, ${String(row.age ?? "unknown age").replaceAll("_", " ")}, ${String(row.condition ?? "unknown condition").replaceAll("_", " ")}`;
       }).join("; ");
     } catch { return "Needs structured details"; }

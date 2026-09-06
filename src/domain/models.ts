@@ -29,6 +29,7 @@ export interface SystemSummary {
   name: string;
   projectType: ProjectType;
   phase: LifecyclePhase;
+  completedAreas?: string[];
 }
 
 export interface SiteEquipment {
@@ -126,8 +127,8 @@ export interface DesignCalculatorState {
     createdAt: string;
     architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
     flow: string[];
-    nodes?: Array<{ id: string; label: string; detail: string; image: string; x: number; y: number }>;
-    connections?: Array<{ from: string; to: string; label: string; kind: "solar-dc" | "battery-dc" | "ac" | "earth" }>;
+    nodes?: Array<{ id: string; label: string; detail: string; image: string; x: number; y: number; installed?: boolean; installedRecordId?: string; notes?: string; authorityCheck?: boolean }>;
+    connections?: Array<{ from: string; to: string; label: string; kind: "solar-dc" | "battery-dc" | "ac" | "earth"; lengthM?: number; lengthBasis?: "estimated" | "measured"; cableSizeMm2?: number; protectionAmps?: number; notes?: string; authorityCheck?: boolean; configured?: boolean }>;
     panelCount?: number;
     panelWatts?: number;
     pvStrings?: number;
@@ -147,6 +148,8 @@ export interface DesignCalculatorState {
   expansionPath?: string;
   nextValidation?: string;
   panelType?: "bifacial" | "monofacial" | "other" | "not_selected";
+  /** User-confirmed candidate mounting locations carried through from discovery. */
+  mountingLocations?: string[];
   panelWatts?: number;
   panelCount?: number;
   pvStrings?: number;
@@ -256,6 +259,7 @@ export interface Project {
   schematicPositions: SchematicPosition[];
   overviewCardOrder: OverviewCardOrder[];
   designCalculator?: DesignCalculatorState;
+  designDiscovery?: Record<string, { value?: string; confidence?: string; recordedAt?: string }>;
   pvArrays: PVArray[];
   installationSteps: InstallationStep[];
   commissioning: CommissioningMeasurement[];

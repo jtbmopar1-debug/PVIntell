@@ -76,11 +76,15 @@ export function userIsAskingDiscoveryQuestion(message: string) {
 export function discoveryGuidance(key: string) {
   const guidance: Record<string, string> = {
     current_energy_use: "If this is an existing powered building, a bill or monitoring total in kWh gives us a useful starting point. If it is new or has no usage history, say so and we’ll design from the lights, outlets, tools, pumps and other equipment you intend to use.",
+    ac_phase_arrangement: "AC phase arrangement and voltage are separate facts. Tell me whether the Site is single-phase, split-phase, three-phase, DC-only, or not yet known. A meter, switchboard label, supply document or existing inverter label may help; do not open electrical enclosures to find it.",
+    nominal_ac_voltage: "Tell me the nominal AC supply or required output voltage shown by reliable Site or equipment information. Common families include 100 V, 110–120 V, 200–240 V, 380–415 V three-phase and 440–480 V three-phase, but Wattson should not infer the answer from country alone.",
     backup_preference: "Outage backup means a battery powers chosen parts of the home when public electricity fails. Essentials-only usually covers things such as the fridge, a few lights, internet and perhaps a water pump; most-of-home backup is larger and more expensive. Which sounds closer: no backup, essentials only, or most of the home?",
     outage_essential_loads: "An essential load is simply something you do not want to lose during a blackout. Common examples are refrigeration, basic lighting, internet, a water or sewage pump, medical equipment and selected outlets. Which of those matter at your home?",
     backup_duration: "Backup duration is how long the battery should carry those items before the grid returns or solar recharges it. A few hours covers short cuts, overnight covers a longer outage, and one or more days needs substantially more storage. What duration would make sense for you?",
-    cooking_energy: "Cooking can be a major electrical load, but LPG, gas or wood cooking may use little electricity. Tell me which methods are used: electric oven, electric or induction cooktop, LPG/gas, wood, or another method. More than one is fine.",
-    water_heating_energy: "Water heating is often one of a home’s largest energy uses. Tell me whether it uses an electric cylinder, heat pump, instant electric heater, LPG/gas, solar hot water, a wood-fire wetback, or a combination.",
+    generator_requirement: "Generator supply is an explicit choice, not an automatic part of backup. Tell me whether a generator already exists, is planned, should only be allowed for later, is not wanted, or is still undecided.",
+    generator_details: "If a generator is included, its real output and interface matter. A label photo can help identify continuous/surge power, voltage, phase, fuel, start method and any ATS or remote-start connection without guessing.",
+    cooking_energy: "Cooking can be a major electrical load, but LPG, gas or wood cooking may use little electricity. Tell me which methods are used: electric oven, electric or induction cooktop, air fryer, microwave, LPG/gas, or wood. More than one is fine.",
+    water_heating_energy: "Water heating is often one of a home’s largest energy uses. Tell me whether it uses an electric hot-water cylinder (also called an HWC, storage water heater or geyser in some regions), heat pump, instant electric heater, LPG/gas, solar hot water, a wood-fire wetback, or a combination.",
     space_heating_energy: "Winter heating can materially change the solar and battery design. Tell me whether the building uses heat pumps, direct electric heaters, wood, LPG/gas, a boiler, or no fixed heating. More than one is fine.",
     heavy_or_surge_loads: "Some appliances need a lot of power or a brief starting surge, which affects inverter size even if they do not run for long. Examples include ovens, electric water heating, heat pumps, pumps, welders, large tools and EV chargers. Which of those—if any—does the home use?",
     building_type: "Building type affects roof access, shared ownership and what mounting options are realistic. Examples are a detached house, townhouse, apartment/unit, shed, workshop or farm building. Which best describes this property?",
@@ -135,20 +139,24 @@ export function nextRequiredDiscoveryQuestion(
   const wantsNoBackup = /\b(?:no|none|do not want|don'?t want)\b/i.test(backupPreference);
   const wantsWholeHomeBackup = /\b(?:whole|entire|all)\b/i.test(backupPreference);
   const steps = [
+    ["ac_phase_arrangement", "What AC phase arrangement is available or required at this Site: single-phase, split-phase, three-phase, DC-only, or not yet known?"],
+    ...(!/dc only/i.test(valueOf("ac_phase_arrangement")) ? [["nominal_ac_voltage", "What nominal AC supply or inverter-output voltage is required? Use a meter, switchboard, supply document or equipment label if available rather than guessing."]] : []),
     ["current_energy_use", "Does this project have existing electricity use to measure? A recent bill or monitoring total is useful; if it is a new or unpowered building, tell me that instead."],
     ...(isNewUnmeteredProject ? [["everyday_needs", "Because this is a new project with no usage history, what should it power day to day—for example lights, outlets, tools, pumps, refrigeration or other equipment?"]] : []),
     ...(needsGridBackup ? [
       ["backup_preference", "Because you chose outage backup, a battery could keep either a few essentials running—such as the fridge, lights and internet—or supply most of the home, which costs more. Would you want no outage backup, essentials only, or most of the home?"],
       ...(!wantsNoBackup && !wantsWholeHomeBackup ? [["outage_essential_loads", "Which essentials should stay on in a blackout? Common examples are refrigeration, a few lights, internet, a water pump or medical equipment."]] : []),
       ...(!wantsNoBackup ? [["backup_duration", "Roughly how long should the chosen backup loads run without public electricity—a few hours, overnight, or longer?"]] : []),
-    ] : isOffGrid ? [["backup_duration", "When solar or a generator is not available, how much stored-energy reserve would you like—a few hours, overnight, about a day or several days?"]] : []),
+    ] : isOffGrid ? [["backup_duration", "When the available energy sources cannot meet demand, how much stored-energy reserve would you like—a few hours, overnight, about a day or several days?"]] : []),
+    ["generator_requirement", "Should this system include an existing or planned generator supply, prepare for one later, exclude generator supply, or leave that decision open?"],
+    ...(/existing|planned|provision[_ ]only/i.test(valueOf("generator_requirement")) ? [["generator_details", "What is known about the generator: make/model, fuel, continuous and surge output, voltage/phase, start method and any ATS or remote-start connection?"]] : []),
     ...(isShedOrWorkshop ? [
       ["heavy_or_surge_loads", "Which larger tools, motors or appliances might run at the same time in the shed—for example a compressor, saw, welder, pump, heater or chest freezer?"],
       ["space_heating_energy", "Will the shed have any heating, such as an electric heater, heat pump, wood fire or none?"],
     ] : [
       ["cooking_energy", "How is cooking done at this property—electric oven or cooktop, induction, LPG/gas, wood, or a combination?"],
-      ["water_heating_energy", "How is water heated—an electric cylinder, heat pump, instant electric, LPG/gas, solar hot water, wood wetback, or a combination?"],
-      ["space_heating_energy", "How is the building heated—heat pump, direct electric heating, wood, LPG/gas, a boiler, no heating, or another method?"],
+      ["water_heating_energy", "How is water heated—an electric cylinder/HWC/geyser, heat pump, instant electric, LPG/gas, solar hot water, wood wetback, or a combination?"],
+      ["space_heating_energy", "How is the building heated—heat pump, direct electric heating, wood, LPG/gas, a boiler, or no fixed heating?"],
       ["heavy_or_surge_loads", "What are the largest appliances or tools that may run at the same time, such as an oven, water heater, pump, welder or EV charger?"],
     ]),
     ["building_type", "What kind of building is this—for example a detached house, townhouse, apartment, shed or farm building?"],

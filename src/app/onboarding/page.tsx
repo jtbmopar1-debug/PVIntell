@@ -3,7 +3,7 @@ import { OnboardingAssessment } from "@/components/onboarding-assessment";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { createClient } from "@/lib/supabase/server";
 
-export default async function OnboardingPage() {
+export default async function OnboardingPage({ searchParams }: { searchParams: Promise<{ edit?: string }> }) {
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
@@ -14,10 +14,12 @@ export default async function OnboardingPage() {
     .eq("id", userId)
     .single();
   if (profile.error) throw profile.error;
-  if (profile.data.onboarding_status === "completed") redirect("/dashboard");
+  const editing = (await searchParams).edit === "1";
+  if (profile.data.onboarding_status === "completed" && !editing) redirect("/dashboard");
   const saved = (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers;
   return (
     <OnboardingAssessment
+      editing={editing}
       initialAnswers={{
         ...saved,
         displayName: saved.displayName || profile.data.display_name || "",

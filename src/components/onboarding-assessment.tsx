@@ -1,12 +1,19 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Bot, Check, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Check, LoaderCircle, LocateFixed, Search, ShieldCheck, Sparkles } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { BrandLogo } from "@/components/brand-logo";
 
 type MultiKey = "history" | "currentSituation" | "goals";
+type RegionMatch = { name: string; label: string; latitude: number; longitude: number; timezone: string };
+
+function worldwideTimezones(current?: string) {
+  let zones: string[] = [];
+  try { zones = Intl.supportedValuesOf("timeZone"); } catch { zones = ["UTC", "Pacific/Auckland", "Australia/Sydney", "Asia/Singapore", "Europe/London", "America/New_York", "America/Los_Angeles"]; }
+  return current && !zones.includes(current) ? [current, ...zones] : zones;
+}
 
 const historyChoices = [
   "No previous solar work",
@@ -32,36 +39,66 @@ const goalChoices = [
   "Improve reliability or running cost",
 ];
 
-export function OnboardingAssessment({ initialAnswers }: { initialAnswers: OnboardingAnswers }) {
+export function OnboardingAssessment({ initialAnswers, editing = false }: { initialAnswers: OnboardingAnswers; editing?: boolean }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState<OnboardingAnswers>(initialAnswers);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [regionMatches, setRegionMatches] = useState<RegionMatch[]>([]);
+  const [searchingRegion, setSearchingRegion] = useState(false);
+  const [locatingRegion, setLocatingRegion] = useState(false);
+  const [regionLater, setRegionLater] = useState(false);
+  const [timezoneLater, setTimezoneLater] = useState(false);
+  const timezones = useMemo(() => worldwideTimezones(answers.timezone), [answers.timezone]);
 
   useEffect(() => {
-    if (answers.timezone) return;
+    if (answers.timezone || timezoneLater) return;
     const detection = window.setTimeout(() => setAnswers((current) => ({
       ...current,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     })), 0);
     return () => window.clearTimeout(detection);
-  }, [answers.timezone]);
+  }, [answers.timezone, timezoneLater]);
 
   const ready = useMemo(() => {
-    if (step === 0) return Boolean(answers.displayName?.trim() && answers.location?.trim() && answers.timezone);
+    if (step === 0) return Boolean(answers.displayName?.trim() && (answers.location?.trim() || regionLater) && (answers.timezone || timezoneLater));
     if (step === 1) return Boolean(answers.experience);
     if (step === 2) return Boolean(answers.electricalConfidence);
     if (step === 3) return Boolean(answers.history?.length);
     if (step === 4) return Boolean(answers.currentSituation?.length);
     return Boolean(answers.goals?.length);
-  }, [answers, step]);
+  }, [answers, regionLater, step, timezoneLater]);
 
   function toggle(key: MultiKey, value: string) {
     setAnswers((current) => {
       const values = current[key] ?? [];
       return { ...current, [key]: values.includes(value) ? values.filter((item) => item !== value) : [...values, value] };
     });
+  }
+
+  async function searchRegion() {
+    const query = answers.location?.trim() ?? "";
+    if (query.length < 2) return;
+    setSearchingRegion(true); setError("");
+    try {
+      const response = await fetch(`/api/location/search?q=${encodeURIComponent(query)}`);
+      const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Could not search regions.");
+      setRegionMatches(body.results ?? []);
+      if (!(body.results ?? []).length) setError("No matching region was found. Try a nearby town or a region and country.");
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Could not search regions."); } finally { setSearchingRegion(false); }
+  }
+  function chooseRegion(match: RegionMatch) { setAnswers((current) => ({ ...current, location: match.label, timezone: match.timezone })); setRegionLater(false); setTimezoneLater(false); setRegionMatches([]); setError(""); }
+  function useMyRegion() {
+    if (!navigator.geolocation) { setError("Location access is not available on this device."); return; }
+    setLocatingRegion(true); setError("");
+    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+      try {
+        const response = await fetch(`/api/location/reverse?latitude=${coords.latitude}&longitude=${coords.longitude}`);
+        const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Could not identify this region.");
+        setAnswers((current) => ({ ...current, location: body.label, timezone: body.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone })); setRegionLater(false); setTimezoneLater(false); setRegionMatches([]);
+      } catch (problem) { setError(problem instanceof Error ? problem.message : "Could not identify this region."); } finally { setLocatingRegion(false); }
+    }, () => { setError("PVIntell could not access this device’s location. You can search for your region instead."); setLocatingRegion(false); }, { enableHighAccuracy: false, timeout: 12_000 });
   }
 
   async function save(completed = false) {
@@ -71,12 +108,12 @@ export function OnboardingAssessment({ initialAnswers }: { initialAnswers: Onboa
       const response = await fetch("/api/onboarding", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ answers, completed }),
+        body: JSON.stringify({ answers, completed, editing }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not save your assessment");
       if (completed) {
-        router.push("/dashboard");
+        router.push(editing ? "/settings" : "/dashboard");
         router.refresh();
       }
       return true;
@@ -98,8 +135,8 @@ export function OnboardingAssessment({ initialAnswers }: { initialAnswers: Onboa
   const panels = [
     <div key="location" className="space-y-4">
       <label className="text-xs font-bold">What should Wattson call you?<input className="field" value={answers.displayName ?? ""} onChange={(event) => setAnswers({ ...answers, displayName: event.target.value })} placeholder="Your name" autoFocus /></label>
-      <label className="text-xs font-bold">Where are you based?<input className="field" value={answers.location ?? ""} onChange={(event) => setAnswers({ ...answers, location: event.target.value })} placeholder="Town or region, country" /></label>
-      <label className="text-xs font-bold">Your timezone<input className="field" value={answers.timezone ?? ""} onChange={(event) => setAnswers({ ...answers, timezone: event.target.value })} placeholder="Pacific/Auckland" /></label>
+      <div><label className="text-xs font-bold">What region are you based in?<div className="mt-1 flex gap-2"><input disabled={regionLater} className="field mt-0 disabled:bg-[#eef2f6]" value={answers.location ?? ""} onChange={(event) => { setAnswers({ ...answers, location: event.target.value }); setRegionMatches([]); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchRegion(); } }} placeholder="For example, Waikato, New Zealand"/><button type="button" onClick={() => void searchRegion()} disabled={regionLater || searchingRegion || (answers.location?.trim().length ?? 0) < 2} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Search regions">{searchingRegion ? <LoaderCircle className="animate-spin" size={17}/> : <Search size={17}/>}</button></div></label><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={useMyRegion} disabled={regionLater || locatingRegion} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold disabled:opacity-40"><LocateFixed size={14}/>{locatingRegion ? "Finding your region…" : "Use my location"}</button><button type="button" onClick={() => { setRegionLater((current) => !current); setAnswers((current) => ({ ...current, location: "" })); setRegionMatches([]); }} className={`rounded-xl border px-3 py-2 text-[11px] font-bold ${regionLater ? "border-brand bg-[#edf5fd] text-brand" : "border-line bg-white"}`}>{regionLater ? "Add region now" : "I’ll add it later"}</button></div>{regionMatches.length ? <div className="mt-2 overflow-hidden rounded-xl border border-line bg-white">{regionMatches.map((match) => <button key={`${match.latitude}:${match.longitude}`} type="button" onClick={() => chooseRegion(match)} className="block w-full border-b border-line px-4 py-3 text-left text-xs last:border-0 hover:bg-[#edf5fd]"><strong>{match.name}</strong><span className="mt-1 block text-[10px] text-muted">{match.label} · {match.timezone}</span></button>)}</div> : null}<span className="mt-2 block text-[10px] font-normal leading-4 text-muted">A broad region is enough—no street address is required. “Use my location” resolves the region without saving the device coordinates. Exact Site pins remain private to your signed-in account.</span></div>
+      <div><label className="text-xs font-bold">Your timezone<select disabled={timezoneLater} className="field disabled:bg-[#eef2f6]" value={answers.timezone ?? ""} onChange={(event) => { setAnswers({ ...answers, timezone: event.target.value }); setTimezoneLater(false); }}><option value="">Select a timezone</option>{timezones.map((timezone) => <option key={timezone} value={timezone}>{timezone.replaceAll("_", " ")}</option>)}</select></label><button type="button" onClick={() => { setTimezoneLater((current) => !current); setAnswers((current) => ({ ...current, timezone: "" })); }} className={`mt-2 rounded-xl border px-3 py-2 text-[11px] font-bold ${timezoneLater ? "border-brand bg-[#edf5fd] text-brand" : "border-line bg-white"}`}>{timezoneLater ? "Choose timezone now" : "I’ll add it later"}</button></div>
     </div>,
     <ChoiceGrid key="experience" selected={answers.experience} onSelect={(value) => setAnswers({ ...answers, experience: value as OnboardingAnswers["experience"] })} choices={[
       ["new", "I’m completely new", "I have no solar understanding or knowledge yet. Start at the beginning and explain every term in plain language."],
@@ -140,7 +177,7 @@ export function OnboardingAssessment({ initialAnswers }: { initialAnswers: Onboa
           <div className="flex gap-4"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#eaf2fb] text-brand"><Sparkles size={19}/></span><div><div className="eyebrow">Wattson asks</div><h1 className="mt-3 font-display text-2xl font-extrabold md:text-3xl">{prompts[step][0]}</h1><p className="mt-2 text-sm leading-6 text-muted">{prompts[step][1]}</p></div></div>
           <div className="mt-7">{panels[step]}</div>
           {error && <div className="mt-5 rounded-xl bg-[#fff0eb] p-3 text-xs text-[#913e31]">{error}</div>}
-          <div className="mt-7 flex items-center justify-between"><button type="button" disabled={step === 0 || saving} onClick={() => setStep((current) => current - 1)} className="flex items-center gap-2 px-2 py-2 text-xs font-bold text-muted disabled:invisible"><ArrowLeft size={15}/> Back</button><button type="button" disabled={!ready || saving} onClick={() => void next()} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white disabled:opacity-40">{saving ? "Saving…" : step === 5 ? "Build my dashboard" : "Continue"}{step === 5 ? <Check size={15}/> : <ArrowRight size={15}/>}</button></div>
+          <div className="mt-7 flex items-center justify-between"><button type="button" disabled={step === 0 || saving} onClick={() => setStep((current) => current - 1)} className="flex items-center gap-2 px-2 py-2 text-xs font-bold text-muted disabled:invisible"><ArrowLeft size={15}/> Back</button><button type="button" disabled={!ready || saving} onClick={() => void next()} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white disabled:opacity-40">{saving ? "Saving…" : step === 5 ? (editing ? "Save changes" : "Build my dashboard") : "Continue"}{step === 5 ? <Check size={15}/> : <ArrowRight size={15}/>}</button></div>
         </div>
       </div>
     </section>

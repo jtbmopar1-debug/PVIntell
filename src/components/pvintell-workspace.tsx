@@ -4,7 +4,6 @@
 import {
   AlertTriangle,
   ArrowLeft,
-  ArrowRight,
   BatteryCharging,
   Bot,
   Camera,
@@ -14,7 +13,6 @@ import {
   ChevronRight,
   CircleGauge,
   ClipboardCheck,
-  Compass,
   HelpCircle,
   Home,
   LayoutDashboard,
@@ -23,7 +21,6 @@ import {
   Menu,
   Package,
   PlugZap,
-  RotateCcw,
   Send,
   Sparkles,
   Sun,
@@ -72,6 +69,7 @@ import { windGenerationHowToGuides } from "@/guides/how-to-wind-generation";
 import { solarHotWaterHowToGuides } from "@/guides/how-to-solar-hot-water";
 import { SolarWeather } from "@/components/solar-weather";
 import { BrandLogo } from "@/components/brand-logo";
+import { WattsonHeaderAction } from "@/components/wattson-header-action";
 import { SiteOverview } from "@/components/site-overview";
 import { SystemEquipmentOverview } from "@/components/system-equipment-overview";
 import { SystemTechnicalOverview } from "@/components/system-technical-overview";
@@ -128,22 +126,6 @@ function useCloseFloatingMenus() {
   }, []);
 }
 
-const starts = [
-  ["Off-grid home", "Power a home without relying on the grid", Home],
-  [
-    "Battery backup",
-    "Keep essentials running through outages",
-    BatteryCharging,
-  ],
-  ["Cabin or tiny home", "Design a practical small power system", Sun],
-  ["Boat or caravan", "Build for life on the move", Compass],
-  ["Upgrade a system", "Make existing solar work harder", Wrench],
-  [
-    "Diagnose a problem",
-    "Understand what your system is telling you",
-    CircleGauge,
-  ],
-] as const;
 const demoSite: Site = {
   id: "demo-site",
   name: "Demo site",
@@ -285,6 +267,7 @@ export function PVIntellWorkspace({
   sitePage = false,
   systemPage = false,
   initialView,
+  initialWattsonPrompt,
   email = "",
   showGoogleWelcome = false,
 }: {
@@ -300,6 +283,7 @@ export function PVIntellWorkspace({
   sitePage?: boolean;
   systemPage?: boolean;
   initialView?: WorkspaceView;
+  initialWattsonPrompt?: string;
   email?: string;
   showGoogleWelcome?: boolean;
 }) {
@@ -311,7 +295,7 @@ export function PVIntellWorkspace({
   );
   const [messages, setMessages] = useState(initialMessages);
   const [conversationId, setConversationId] = useState(initialConversationId);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialWattsonPrompt ?? "");
   const [sending, setSending] = useState(false);
   const [menu, setMenu] = useState(false);
   const [expandedSiteId, setExpandedSiteId] = useState(initialSite.id);
@@ -364,7 +348,8 @@ export function PVIntellWorkspace({
     [],
   );
   const monitorOnly = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
-  const viewingProjectHistory = monitorOnly && ["design", "proposed-schematic", "build", "commission"].includes(view);
+  const hasProjectHistory = project.goal !== "Record equipment that is already installed";
+  const viewingProjectHistory = monitorOnly && hasProjectHistory && ["design", "proposed-schematic", "build", "commission"].includes(view);
   function persist(p: Project) {
     setProject(p);
     if (cloud) {
@@ -437,8 +422,7 @@ export function PVIntellWorkspace({
         citations = body.citations;
         actionUrl = body.actionUrl;
         actionLabel = body.actionLabel;
-        if (body.actionUrl) router.push(body.actionUrl);
-        else if (body.actions?.length) router.refresh();
+        if (body.actions?.length) router.refresh();
       } else
         reply = await ai.sendMessage(message, {
           project: updated,
@@ -476,23 +460,6 @@ export function PVIntellWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function startConversationAgain() {
-    if (!cloud || sending) return;
-    const response = await fetch("/api/wattson/reset", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ scope: "system", projectId: project.id }),
-    });
-    const body = await response.json();
-    if (!response.ok) {
-      window.alert(body.error ?? "Could not start a new conversation");
-      return;
-    }
-    setConversationId(body.id);
-    setMessages([]);
-    setInput("");
-    router.replace(`/sites/${initialSite.id}/systems/${project.id}?view=wattson&conversation=${body.id}`, { scroll: false });
-  }
   async function sendImage(file: File) {
     if (sending) return;
     const message =
@@ -679,33 +646,34 @@ export function PVIntellWorkspace({
         <header className="sticky top-0 z-50 border-b border-line bg-[rgba(248,250,252,.98)]">
           <div className="mx-auto flex h-[64px] max-w-[1440px] items-center gap-4 px-4 md:px-6">
             <Link href="/dashboard" className="shrink-0"><Logo /></Link>
+            {cloud && <WattsonHeaderAction siteId={initialSite.id}/>} 
             {cloud && <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{initialSite.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div><div className="space-y-1">{sites.map((site) => <Link key={site.id} href={`/sites/${site.id}`} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === initialSite.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}><MapPin size={12}/><span className="truncate">{site.name}</span></Link>)}</div><Link href="/discovery/new-system" className="mt-3 flex items-center gap-2 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]"><Sparkles size={13}/>New independent Site</Link></div></details>}
              <div className="hidden min-w-0 flex-1 border-l border-line pl-4 md:block">
               <div className="eyebrow text-[8px]">{currentViewLabel}</div>
               <div className="mt-1 truncate text-xs font-extrabold">{project.name} <span className="font-medium text-muted">· {project.location} · {project.systemVoltage > 0 ? `${project.systemVoltage} V` : "voltage to confirm"} · {project.projectType}</span></div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {cloud && <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${initialSite.id}`} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-xl bg-[#fff2b8] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><UniversalHowToMenu location={initialSite.location} onAsk={askGuide}/><Link href={`/settings?site=${initialSite.id}`} className="rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Settings</Link></nav>}
+              {cloud && <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><UniversalHowToMenu location={initialSite.location} onAsk={askGuide}/><Link href={`/settings?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>}
               <button type="button" onClick={() => setMenu((open) => !open)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>{menu ? <X size={17}/> : <Menu size={18}/>}</button>
               </div>
             </div>
             {view !== "monitor" && <nav className="mx-auto hidden max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-6 py-1.5 md:flex" aria-label="System navigation">
             <button type="button" onClick={() => setView("site")} className={`shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold ${view === "site" ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>Site</button>
             {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Plan ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery brief</Link><button type="button" onClick={() => setView("wattson")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Continue planning with Wattson</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed system outline</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed build schematic</Link> : <span className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#9aa8b6]">Proposed schematic · locked</span>}</div></details>}
-            {monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Project history ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original discovery brief</Link><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed design</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed schematic</Link> : null}<button type="button" onClick={() => setView("build")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build record</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning record</button></div></details>}
+            {monitorOnly && hasProjectHistory && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Project history ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original discovery brief</Link><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed design</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed schematic</Link> : null}<button type="button" onClick={() => setView("build")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build record</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning record</button></div></details>}
             {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" disabled={!proposedSchematicReviewed} onClick={() => setView("build")} className={`block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold ${proposedSchematicReviewed ? "text-muted hover:bg-[#eef3f8]" : "cursor-not-allowed text-[#9aa8b6]"}`}>{proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning</button></div></details>}
             <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">System records ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" onClick={() => setView("overview")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">System overview</button><button type="button" onClick={() => setView("system")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built equipment</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built schematic</Link><button type="button" onClick={() => setView("equipment")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Site equipment</button></div></details>
             {monitorOnly && <button type="button" onClick={() => setView("monitor")} className="shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Monitor</button>}
            </nav>}
             {menu ? <nav className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-line bg-white p-3 md:hidden" aria-label="Mobile navigation"><div className="grid gap-1">
-              {cloud ? <><Link href={`/dashboard?site=${initialSite.id}`} className="mobile-nav-item">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-lg bg-[#fff2b8] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link></> : null}
+              {cloud ? <><Link href={`/dashboard?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link></> : null}
               {view !== "monitor" ? <><div className="my-1 border-t border-line" />
               <button type="button" onClick={() => { setView("site"); setMenu(false); }} className="mobile-nav-item">Site</button>
-              <Link href={`/sites/${initialSite.id}/discovery`} className="mobile-nav-item">{monitorOnly ? "Original discovery" : "Discovery"}</Link>
+              {(!monitorOnly || hasProjectHistory) && <><Link href={`/sites/${initialSite.id}/discovery`} className="mobile-nav-item">{monitorOnly ? "Original discovery" : "Discovery"}</Link>
               <Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="mobile-nav-item">{monitorOnly ? "Original proposed design" : "Proposed design"}</Link>
               {outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="mobile-nav-item">{monitorOnly ? "Original proposed schematic" : "Proposed schematic"}</Link> : null}
               <button type="button" disabled={!monitorOnly && !proposedSchematicReviewed} onClick={() => { setView("build"); setMenu(false); }} className="mobile-nav-item disabled:opacity-45">{monitorOnly ? "Build record" : proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button>
-              <button type="button" onClick={() => { setView("commission"); setMenu(false); }} className="mobile-nav-item">{monitorOnly ? "Commissioning record" : "Commissioning"}</button>
+              <button type="button" onClick={() => { setView("commission"); setMenu(false); }} className="mobile-nav-item">{monitorOnly ? "Commissioning record" : "Commissioning"}</button></>}
               <button type="button" onClick={() => { setView("overview"); setMenu(false); }} className="mobile-nav-item">System overview</button>
               <button type="button" onClick={() => { setView("system"); setMenu(false); }} className="mobile-nav-item">As-built equipment</button>
               <Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="mobile-nav-item">As-built schematic</Link>
@@ -713,7 +681,7 @@ export function PVIntellWorkspace({
               {monitorOnly ? <button type="button" onClick={() => { setView("monitor"); setMenu(false); }} className="mobile-nav-item">Monitor</button> : null}</> : null}
               <div className="my-1 border-t border-line" />
               <div className="rounded-lg text-xs font-bold text-muted"><UniversalHowToMenu location={initialSite.location} onAsk={askGuide}/></div>
-              <Link href={`/settings?site=${initialSite.id}`} className="mobile-nav-item">Settings</Link>
+              <Link href={`/settings?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link>
             </div></nav> : null}
          </header>
          <div className="mx-auto max-w-[1320px] p-4 md:p-6">
@@ -751,7 +719,6 @@ export function PVIntellWorkspace({
               solar={solar}
               battery={battery}
               inverter={inverter}
-              startAgain={startConversationAgain}
             />
           )}{" "}
           {view === "equipment" && (
@@ -862,7 +829,6 @@ function Wattson({
   solar,
   battery,
   inverter,
-  startAgain,
 }: any) {
   const conversationRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -878,45 +844,16 @@ function Wattson({
       <section className="card overflow-hidden">
         <div className="border-b border-line bg-[linear-gradient(125deg,#fafcfe_10%,#fff7d6)] px-5 py-5 md:px-6">
           <div className="flex gap-4">
-            <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-brand text-white">
-              <Bot size={23} />
-            </span>
             <div>
-              <div className="eyebrow">Wattson • your power guide</div>
+              <div className="eyebrow">System-specific Wattson</div>
               <h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">
-                What do you want to do?
+                Ask about this proposed system
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-                Describe your life and what you want to power. I’ll handle the
-                calculations, assumptions, and explanations.
+                Wattson already has this system’s discovery, calculations and proposed arrangement. Ask about a component, connection or design decision without starting over.
               </p>
             </div>
-            <button type="button" onClick={() => void startAgain()} disabled={sending} className="ml-auto flex h-9 shrink-0 items-center gap-2 rounded-xl border border-line bg-white px-3 text-[10px] font-bold text-brand disabled:opacity-40"><RotateCcw size={13}/>Start again</button>
           </div>
-        </div>
-        <div className="grid gap-3 border-b border-line p-5 sm:grid-cols-2 lg:grid-cols-3">
-          {starts.map(([title, desc, Icon]) => (
-            <button
-              key={title}
-              onClick={() =>
-                send(
-                  `I want to start with: ${title}. I don't know much about solar yet.`,
-                )
-              }
-              className="group rounded-2xl border border-line bg-white p-4 text-left hover:border-[#7ea8ce]"
-            >
-              <div className="flex justify-between">
-                <span className="grid size-8 place-items-center rounded-xl bg-[#eaf2fb] text-brand">
-                  <Icon size={16} />
-                </span>
-                <ArrowRight size={14} />
-              </div>
-              <div className="mt-3 text-xs font-bold">{title}</div>
-              <div className="mt-1 text-[10px] leading-4 text-muted">
-                {desc}
-              </div>
-            </button>
-          ))}
         </div>
         <div ref={conversationRef} className="wattson-conversation thin-scrollbar space-y-3 overflow-y-auto p-4 md:p-5">
           {messages.map((m: ChatMessage) => (
@@ -979,7 +916,7 @@ function Wattson({
             onChange={(e) => setInput(e.target.value)}
             rows={2}
             placeholder="I’m building a small cabin and need a fridge, lights and water pump…"
-            className="flex-1 resize-none bg-transparent px-3 py-2 text-xs outline-none"
+            className="min-h-14 flex-1 resize-none bg-transparent px-3 py-2 text-base leading-6 outline-none sm:min-h-0 sm:text-xs sm:leading-5"
           />
           <button
             disabled={!input.trim()}
@@ -1355,7 +1292,7 @@ const noviceHowToGuides: readonly NoviceHowToGuide[] = [
   { group: "Panels and solar cable", id: "mc4", title: "Solar cable and MC4-style connectors", image: "/guides/mc4/mc4-assembly-overview.png", summary: "Recognise the preparation sequence. Connector family, cable, dimensions and tools must all match the exact manufacturer instructions.", steps: ["Match the male/female housing, metal contact, seal and approved solar cable", "Measure the strip length from the connector maker’s table—do not guess", "Crimp the specified contact with the specified die and locator; do not substitute solder unless that exact manufacturer explicitly requires it", "Inspect the crimp, insert it until retained, lightly pull-test, then close the gland with the specified assembly tool and torque"], source: "Stäubli MC4-Evo 2 assembly instructions MA298", sourceUrl: "https://www.staubli.com/content/dam/ecs/technical-documentation/assembly-instructions/RE/PV_MA298-en.pdf" },
   { group: "Power equipment", id: "controller", title: "Solar power controller", image: "/schematic-components/mppt-charge-controller.jpg", summary: "Mount the controller, provide airflow and identify the panel and battery sides before any connection.", steps: ["Read the exact controller manual and mark its clearances", "Mount it in the permitted direction on a suitable dry surface", "Label the panel side and battery side before routing cable", "Leave final protection, polarity checks and connection for the controlled connection stage"], source: "Use the exact controller manufacturer’s installation manual." },
   { group: "Power equipment", id: "battery", title: "Battery storage", image: "/schematic-components/lifepo4-battery-bank.jpg", summary: "Position and secure the battery bank while keeping terminals protected and ventilation clear.", steps: ["Confirm chemistry, weight, permitted orientation and indoor/outdoor rating", "Prepare a dry, stable location with the maker’s required clearance", "Secure the batteries and protect terminals from tools or dropped metal", "Record polarity, fuse location and cable route before connection"], source: "Victron Lithium Battery Smart installation guidance", sourceUrl: "https://www.victronenergy.com/media/pg/Lithium_Battery_Smart/en/installation.html" },
-  { group: "Power equipment", id: "inverter", title: "Main inverter / charger", image: "/schematic-components/hybrid-inverter.jpg", summary: "Mount the main power box where it stays dry, ventilated, serviceable and close enough to the battery.", steps: ["Read the exact model manual before choosing the wall", "Mark required space above, below and beside the unit", "Use a structure that can safely hold the unit’s weight", "Plan separate, protected paths for solar, battery, building power, earth and communication cables"], source: "Use the exact inverter/charger installation manual." },
+  { group: "Power equipment", id: "inverter", title: "Hybrid inverter / charger", image: "/schematic-components/hybrid-inverter.jpg", summary: "Mount the hybrid inverter where it stays dry, ventilated, serviceable and close enough to the battery.", steps: ["Read the exact model manual before choosing the wall", "Mark required space above, below and beside the unit", "Use a structure that can safely hold the unit’s weight", "Plan separate, protected paths for solar, battery, building power, earth and communication cables"], source: "Use the exact inverter/charger installation manual." },
   { group: "Safety and connection", id: "protection", title: "Fuses and safety switches", image: "/schematic-components/dc-fuse.jpg", summary: "Understand which cable each fuse, breaker or isolator protects before anything is connected.", steps: ["Find the safety device on the proposed schematic", "Trace the cable it is intended to protect", "Confirm the proposed rating against the real cable and equipment manuals", "Label the device and leave it open/off until the pre-power checks are complete"], source: "Ratings remain design-specific and require verification before connection." },
   { group: "Safety and connection", id: "switchboard", title: "Building power and final connection", image: "/schematic-components/ac-distribution-board.jpg", summary: "Prepare the records and physical route, then hand the required testing and connection to the authorised person.", steps: ["Confirm which loads and circuits the system will supply", "Photograph and label both ends of every prepared route", "Make sure the proposed schematic matches what was actually built", "Arrange the required testing, inspection, certification and final connection"], source: "WorkSafe New Zealand: DIY solar installations", sourceUrl: "https://www.worksafe.govt.nz/about-us/news-and-media/diy-solar-installation" },
 ];

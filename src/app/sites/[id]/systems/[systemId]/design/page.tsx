@@ -14,5 +14,8 @@ export default async function DesignCalculatorPage({ params }: { params: Promise
   try { workspace = await loadSiteWorkspace(supabase, id, systemId); }
   catch { redirect(`/sites/${id}`); }
   const { project, messages, site, sites, systems, questionnaireDrafts, siteEquipment } = workspace;
+  if (["monitor", "diagnose", "maintain", "explain"].includes(project.phase)) {
+    redirect(`/sites/${id}/systems/${systemId}?view=system`);
+  }
   return <PVIntellWorkspace key={`${project.id}:${project.updatedAt ?? ""}`} initialProject={project} initialMessages={messages.length ? messages : initialConversation} initialSite={site} sites={sites} systems={systems} initialQuestionnaires={questionnaireDrafts} initialSiteEquipment={siteEquipment} cloud systemPage initialView="design" email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""}/>;
 }

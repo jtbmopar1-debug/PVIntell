@@ -1,6 +1,6 @@
 "use client";
 
-import { Compass, LocateFixed, MapPin, Mountain, Save, SunMedium } from "lucide-react";
+import { Compass, LoaderCircle, LocateFixed, MapPin, Mountain, Save, Search, SunMedium } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -10,6 +10,7 @@ const EditableSiteMap = dynamic(() => import("@/components/editable-site-map"), 
 type PlanningSystem = { id: string; name: string; latitude: number | null; longitude: number | null; locationMode: "static" | "mobile"; updatedAt: string | null };
 export type PlanningSite = { id: string; name: string; location: string; latitude: number | null; longitude: number | null; timezone: string; systems: PlanningSystem[]; arrays: Array<{ name: string; azimuth: number | null; tilt: number | null }> };
 type Position = { latitude: number; longitude: number };
+type LocationMatch = Position & { name: string; label: string; timezone: string };
 const siteKey = (id: string) => `site:${id}`;
 const systemKey = (id: string) => `system:${id}`;
 function clamp(value: number) { return Math.max(0, Math.min(70, Math.round(value))); }
@@ -32,17 +33,21 @@ export function AccountLocationPlanner({ sites }: { sites: PlanningSite[] }) {
   });
   const [modes, setModes] = useState<Record<string, "static" | "mobile">>(() => Object.fromEntries(sites.flatMap((site) => site.systems.map((system) => [system.id, system.locationMode]))));
   const [saving, setSaving] = useState(false); const [notice, setNotice] = useState("");
+  const [locationQuery, setLocationQuery] = useState(firstSite?.location && firstSite.location !== "Location not set" ? firstSite.location : "");
+  const [locationMatches, setLocationMatches] = useState<LocationMatch[]>([]);
+  const [newSitePosition, setNewSitePosition] = useState<LocationMatch>();
+  const [searching, setSearching] = useState(false);
   const site = sites.find((item) => item.id === siteId) ?? sites[0];
   const sitePosition = site ? positions[siteKey(site.id)] : undefined;
   const activeSystem = site?.systems.find((system) => systemKey(system.id) === activePointId);
   const activePosition = positions[activePointId];
   const guidance = useMemo(() => { if (!sitePosition) return null; const latitude = Math.abs(sitePosition.latitude); return { direction: sitePosition.latitude < 0 ? "true north" : "true south", azimuth: sitePosition.latitude < 0 ? 0 : 180, annual: clamp(latitude), summer: clamp(latitude - 15), winter: clamp(latitude + 15) }; }, [sitePosition]);
-  const mapPoints: SiteMapPoint[] = site && sitePosition ? site.systems.map((system) => ({ id: systemKey(system.id), name: system.name, ...positions[systemKey(system.id)], kind: "system" as const, mobile: modes[system.id] === "mobile", approximate: system.latitude == null || system.longitude == null })) : [];
+  const mapPoints: SiteMapPoint[] = site && sitePosition ? [{ id: siteKey(site.id), name: site.name, ...sitePosition, kind: "site" as const }, ...site.systems.map((system) => ({ id: systemKey(system.id), name: system.name, ...positions[systemKey(system.id)], kind: "system" as const, mobile: modes[system.id] === "mobile", approximate: system.latitude == null || system.longitude == null }))] : [];
   const originalPosition = activeSystem ? (activeSystem.latitude != null && activeSystem.longitude != null ? { latitude: activeSystem.latitude, longitude: activeSystem.longitude } : null) : null;
   const positionChanged = Boolean(activePosition && (!originalPosition || Math.abs(activePosition.latitude - originalPosition.latitude) > 0.0000001 || Math.abs(activePosition.longitude - originalPosition.longitude) > 0.0000001));
   const modeChanged = Boolean(activeSystem && modes[activeSystem.id] !== activeSystem.locationMode);
 
-  function selectSite(id: string) { const next = sites.find((item) => item.id === id); setSiteId(id); setActivePointId(next?.systems[0] ? systemKey(next.systems[0].id) : ""); setNotice(""); }
+  function selectSite(id: string) { const next = sites.find((item) => item.id === id); setSiteId(id); setActivePointId(next?.systems[0] ? systemKey(next.systems[0].id) : ""); setLocationQuery(next?.location && next.location !== "Location not set" ? next.location : ""); setLocationMatches([]); setNewSitePosition(undefined); setNotice(""); }
   function selectPoint(id: string) { setActivePointId(id); setNotice(""); }
   function moveMarker(id: string, latitude: number, longitude: number) { setPositions((current) => ({ ...current, [id]: { latitude, longitude } })); setActivePointId(id); setNotice(""); }
   function useDeviceLocation() {
@@ -59,6 +64,31 @@ export function AccountLocationPlanner({ sites }: { sites: PlanningSite[] }) {
     } catch (problem) { setNotice(problem instanceof Error ? problem.message : "The corrected location could not be saved."); } finally { setSaving(false); }
   }
 
+  async function searchSiteLocation() {
+    if (locationQuery.trim().length < 2) return;
+    setSearching(true); setNotice("");
+    try {
+      const response = await fetch(`/api/location/search?q=${encodeURIComponent(locationQuery.trim())}`);
+      const body = await response.json(); if (!response.ok) throw new Error(body.error || "Could not search locations.");
+      setLocationMatches(body.results ?? []);
+      if (!(body.results ?? []).length) setNotice("No matching location was found. Try a nearby town, postcode or region.");
+    } catch (problem) { setNotice(problem instanceof Error ? problem.message : "Could not search locations."); } finally { setSearching(false); }
+  }
+  function chooseSiteLocation(match: LocationMatch) { setNewSitePosition(match); setLocationQuery(match.label); setLocationMatches([]); setNotice(""); }
+  function useDeviceForSite() {
+    if (!navigator.geolocation) return setNotice("Location access is not available on this device.");
+    navigator.geolocation.getCurrentPosition(({ coords }) => chooseSiteLocation({ name: site?.name ?? "Site", label: site?.name ?? "Device location", latitude: coords.latitude, longitude: coords.longitude, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" }), () => setNotice("PVIntell could not access this device’s location."), { enableHighAccuracy: true, timeout: 12000 });
+  }
+  async function saveSiteLocation() {
+    if (!site || !newSitePosition) return;
+    setSaving(true); setNotice("");
+    try {
+      const response = await fetch(`/api/sites/${site.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ location: newSitePosition.label, latitude: newSitePosition.latitude, longitude: newSitePosition.longitude, timezone: newSitePosition.timezone, locationSource: "manual" }) });
+      const body = await response.json(); if (!response.ok) throw new Error(body.error || "Could not save the Site location.");
+      setNotice(`${site.name} is now mapped.`); router.refresh();
+    } catch (problem) { setNotice(problem instanceof Error ? problem.message : "Could not save the Site location."); } finally { setSaving(false); }
+  }
+
   return <section className="card mt-4 overflow-hidden">
     <div className="flex flex-col gap-3 border-b border-line p-4 sm:flex-row sm:items-center sm:justify-between"><div><div className="eyebrow">Location and solar geometry</div><h2 className="mt-1.5 text-base font-extrabold">Planning map</h2></div>{sites.length > 1 ? <select value={site?.id ?? ""} onChange={(event) => selectSite(event.target.value)} className="h-10 rounded-lg border border-line bg-white px-3 text-xs font-bold text-brand" aria-label="Planning site">{sites.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select> : null}</div>
     {site && sitePosition && guidance ? <>
@@ -67,8 +97,8 @@ export function AccountLocationPlanner({ sites }: { sites: PlanningSite[] }) {
       <div className="grid gap-2 p-4 sm:grid-cols-2 lg:grid-cols-4"><PlanningFact icon={Compass} label="Equator-facing" value={`${guidance.direction} · ${guidance.azimuth}°`}/><PlanningFact icon={SunMedium} label="Annual starting tilt" value={`about ${guidance.annual}°`}/><PlanningFact icon={SunMedium} label="Summer starting tilt" value={`about ${guidance.summer}°`}/><PlanningFact icon={Mountain} label="Winter starting tilt" value={`about ${guidance.winter}°`}/></div>
       <div className="border-t border-line px-4 py-3 text-[12px] leading-5 text-muted">System pins without a confirmed position are offset near the Site pin until you place and save them. Orange pins are mobile; their saved position is context for Wattson rather than a permanent installation location.</div>
       {site.arrays.length ? <div className="border-t border-line p-4"><div className="text-xs font-extrabold">Recorded arrays at {site.name}</div><div className="mt-2 grid gap-2 sm:grid-cols-2">{site.arrays.map((array, index) => <div key={`${array.name}:${array.azimuth ?? "na"}:${array.tilt ?? "na"}:${index}`} className="rounded-lg bg-[#f1f5f8] px-3 py-2 text-[12px]"><strong>{array.name}</strong><span className="ml-2 text-muted">Azimuth {array.azimuth == null ? "not recorded" : `${array.azimuth}°`} · tilt {array.tilt == null ? "not recorded" : `${array.tilt}°`}</span></div>)}</div></div> : null}
-    </> : <div className="grid min-h-48 place-items-center p-6 text-center"><div><MapPin className="mx-auto text-brand"/><h3 className="mt-3 text-sm font-extrabold">No mapped site yet</h3><p className="mt-1 text-xs text-muted">Add coordinates from a Site’s Solar weather page to unlock its planning map and seasonal tilt guide.</p></div></div>}
-    <div className="border-t border-line bg-[#fbfcfd] px-4 py-2 text-[10px] text-muted">The Site selector filters both the map and system pins. Map data © OpenStreetMap contributors.</div>
+    </> : <div className="p-5"><div className="mx-auto max-w-xl text-center"><MapPin className="mx-auto text-brand"/><h3 className="mt-3 text-sm font-extrabold">{site ? `${site.name} is saved, but not mapped yet` : "No Site recorded yet"}</h3><p className="mt-1 text-xs leading-5 text-muted">{site ? "Add its location here to load it on the planning map and unlock location-based solar guidance." : "A Site created through discovery will appear here automatically."}</p></div>{site ? <div className="mx-auto mt-5 max-w-xl"><div className="flex gap-2"><input value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchSiteLocation(); } }} className="field mt-0" placeholder="Town, postcode or region"/><button type="button" onClick={() => void searchSiteLocation()} disabled={searching || locationQuery.trim().length < 2} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40">{searching ? <LoaderCircle className="animate-spin" size={17}/> : <Search size={17}/>}</button></div><button type="button" onClick={useDeviceForSite} className="mt-2 inline-flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold"><LocateFixed size={14}/>Use this device’s location</button>{locationMatches.length ? <div className="mt-3 overflow-hidden rounded-xl border border-line">{locationMatches.map((match) => <button key={`${match.latitude}:${match.longitude}`} type="button" onClick={() => chooseSiteLocation(match)} className="block w-full border-b border-line bg-white px-4 py-3 text-left text-xs last:border-0 hover:bg-[#edf5fd]"><strong>{match.name}</strong><span className="mt-1 block text-[11px] text-muted">{match.label}</span></button>)}</div> : null}{newSitePosition ? <><div className="relative mt-4 h-64 overflow-hidden rounded-xl border border-line bg-[#dfe9ee]"><EditableSiteMap points={[{ id: siteKey(site.id), name: site.name, latitude: newSitePosition.latitude, longitude: newSitePosition.longitude, kind: "site" }]} activeId={siteKey(site.id)} center={[newSitePosition.latitude, newSitePosition.longitude]} onSelect={() => undefined} onMove={(_, latitude, longitude) => setNewSitePosition((current) => current ? { ...current, latitude, longitude } : current)}/></div><button type="button" onClick={() => void saveSiteLocation()} disabled={saving} className="mt-3 flex h-10 items-center gap-2 rounded-xl bg-brand px-4 text-xs font-bold text-white disabled:opacity-40"><Save size={14}/>{saving ? "Saving…" : `Save ${site.name} location`}</button></> : null}{notice ? <p className="mt-3 text-xs text-muted">{notice}</p> : null}</div> : null}</div>}
+    <div className="border-t border-line bg-[#fbfcfd] px-4 py-2 text-[10px] leading-4 text-muted">The Site selector filters both the map and system pins. These coordinates stay inside your signed-in PVIntell account and are used for Site-specific weather and design calculations; they are not published as public map markers. Map data © OpenStreetMap contributors.</div>
   </section>;
 }
 

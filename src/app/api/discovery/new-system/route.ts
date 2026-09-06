@@ -1,12 +1,13 @@
 import { z } from "zod";
+import tzLookup from "tz-lookup";
 import { applyWattsonActions, type WattsonActionRequest } from "@/ai/actions";
 import { createSystem } from "@/data/cloud-project";
-import { newSystemQuestions, unknownAnswer, type DiscoveryAnswers } from "@/discovery/new-system";
+import { newSystemQuestions, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers } from "@/discovery/new-system";
 import { createClient } from "@/lib/supabase/server";
 
 const answersSchema = z.record(z.string(), z.union([z.string().max(4000), z.number(), z.array(z.string().max(100)).min(1).max(20)]));
-const draftSchema = z.object({ answers: answersSchema, questionId: z.string().max(100).optional() });
-const completeSchema = z.object({ answers: answersSchema });
+const draftSchema = z.object({ draftId: z.uuid().optional(), answers: answersSchema, questionId: z.string().max(100).optional() });
+const completeSchema = z.object({ draftId: z.uuid().optional(), answers: answersSchema });
 const editSchema = z.object({ projectId: z.uuid(), answers: answersSchema });
 
 function outcomeText(value: unknown): string {
@@ -48,11 +49,15 @@ function structuredPanelAnswer(value: string | number | string[] | undefined, ki
 function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
   const mapped: Array<[string, string | number | string[] | undefined]> = [
     ["utility_relationship", answers.utility_relationship === "off_grid" ? "No public electricity supply" : "Connected to public electricity"],
+    ["ac_phase_arrangement", answers.ac_phase_arrangement],
+    ["nominal_ac_voltage", answers.nominal_ac_voltage],
     ["primary_outcome", outcomeText(answers.primary_outcome)],
     ["current_energy_use", typeof answers.current_energy_use === "number" ? `${answers.current_energy_use} kWh/month` : answers.current_energy_use],
     ["backup_preference", answers.backup_preference],
     ["outage_essential_loads", answers.outage_essential_loads],
     ["backup_duration", answers.backup_duration],
+    ["generator_requirement", answers.generator_requirement],
+    ["generator_details", answers.generator_details],
     ["cooking_energy", answers.cooking_energy],
     ["water_heating_energy", answers.water_heating_energy],
     ["space_heating_energy", answers.space_heating_energy],
@@ -81,6 +86,8 @@ function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
     ["ev_bidirectional_goal", answers.ev_bidirectional_goal],
     ["delivery_approach", answers.delivery_approach],
     ["dc_system_voltage", answers.dc_system_voltage],
+    ["battery_chemistry", answers.battery_chemistry],
+    ["custom_battery_assessment", answers.custom_battery_assessment],
     ["module_level_electronics", answers.module_level_electronics],
     ["module_electronics_compatibility", answers.module_electronics_compatibility],
   ];
@@ -130,6 +137,17 @@ export async function PUT(request: Request) {
   if (!parsed.success) return Response.json({ error: "Invalid discovery draft" }, { status: 400 });
   const context = await accountContext();
   if ("error" in context) return context.error;
+  if (parsed.data.draftId) {
+    const saved = await context.supabase.from("discovery_drafts").upsert({
+      id: parsed.data.draftId,
+      owner_id: context.userId,
+      status: "draft",
+      question_id: parsed.data.questionId ?? null,
+      answers: parsed.data.answers,
+    }, { onConflict: "id" });
+    if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+    return Response.json({ saved: true, draftId: parsed.data.draftId });
+  }
   const assessment = (context.profile.onboarding_assessment ?? {}) as Record<string, unknown>;
   assessment.guidedNewSystem = {
     version: 1,
@@ -170,14 +188,27 @@ export async function POST(request: Request) {
   const answers = parsed.data.answers as DiscoveryAnswers;
   const context = await accountContext();
   if ("error" in context) return context.error;
+  const unresolvedValues = new Set([unknownAnswer, "unknown", "not_checked", "not_decided", "undecided", "unknown_chemistry"]);
+  const missingAnswers = visibleDiscoveryQuestions(answers).filter((question) => {
+    const value = answers[question.id];
+    return value === undefined || value === "" || (typeof value === "string" && unresolvedValues.has(value)) || (Array.isArray(value) && (!value.length || value.some((item) => unresolvedValues.has(item))));
+  });
+  if (missingAnswers.length) return Response.json({ error: `Complete all discovery questions before review. First missing answer: ${missingAnswers[0].title}`, questionId: missingAnswers[0].id }, { status: 400 });
   const unknownIds = newSystemQuestions
     .filter((question) => answers[question.id] === unknownAnswer)
     .map((question) => question.id);
   const missingFoundation = ["utility_relationship", "primary_outcome"].filter((key) => !answers[key] || answers[key] === unknownAnswer);
 
   if (missingFoundation.length) {
+    if (parsed.data.draftId) {
+      const saved = await context.supabase.from("discovery_drafts").upsert({
+        id: parsed.data.draftId, owner_id: context.userId, status: "review_needed",
+        question_id: missingFoundation[0], answers,
+      }, { onConflict: "id" });
+      if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+    }
     const assessment = (context.profile.onboarding_assessment ?? {}) as Record<string, unknown>;
-    assessment.guidedNewSystem = {
+    if (!parsed.data.draftId) assessment.guidedNewSystem = {
       version: 1,
       status: "review_needed",
       questionId: missingFoundation[0],
@@ -214,13 +245,20 @@ export async function POST(request: Request) {
   let createdSiteId: string | undefined;
   if (!siteId) {
     if (!requestedSiteName) return Response.json({ error: "Enter a name for the new Site." }, { status: 400 });
+    const latitude = typeof answers.site_latitude === "number" ? answers.site_latitude : null;
+    const longitude = typeof answers.site_longitude === "number" ? answers.site_longitude : null;
+    if (latitude == null || longitude == null) return Response.json({ error: "Search for the new Site and confirm its map pin before continuing." }, { status: 400 });
+    let timezone = typeof answers.site_timezone === "string" ? answers.site_timezone : context.profile.timezone || "UTC";
+    try { timezone = tzLookup(latitude, longitude); } catch { /* Retain the geocoder timezone if lookup fails. */ }
     const created = await context.supabase.from("sites").insert({
       owner_id: context.userId,
       name: requestedSiteName,
-      location: context.profile.home_location || null,
-      timezone: context.profile.timezone || "UTC",
-      location_source: "imported",
-      location_confirmed: false,
+      location: typeof answers.site_location === "string" ? answers.site_location : requestedSiteName,
+      latitude,
+      longitude,
+      timezone,
+      location_source: "map",
+      location_confirmed: true,
     }).select("id").single();
     if (created.error) return Response.json({ error: created.error.message }, { status: 400 });
     siteId = created.data.id;
@@ -232,6 +270,16 @@ export async function POST(request: Request) {
     const systemName = String(answers.system_name || "Home solar");
     const systemId = await createSystem(context.supabase, context.userId, siteId, systemName, projectType(answers), outcomeText(answers.primary_outcome), proposedSystemVoltage(answers));
     createdSystemId = systemId;
+    const advanced = await context.supabase.from("projects").update({ phase: "design" }).eq("id", systemId).eq("owner_id", context.userId);
+    if (advanced.error) throw advanced.error;
+    if (parsed.data.draftId) {
+      const draftConversation = await context.supabase.from("discovery_drafts").select("conversation_id").eq("id", parsed.data.draftId).eq("owner_id", context.userId).maybeSingle();
+      if (draftConversation.error) throw draftConversation.error;
+      if (draftConversation.data?.conversation_id) {
+        const linked = await context.supabase.from("user_conversations").update({ site_id: siteId, project_id: systemId, title: `Discovery — ${systemName}` }).eq("id", draftConversation.data.conversation_id).eq("owner_id", context.userId);
+        if (linked.error) throw linked.error;
+      }
+    }
     await applyWattsonActions(context.supabase, systemId, discoveryActions(answers));
     const questionnaire = await context.supabase.from("questionnaire_responses").upsert({
       project_id: systemId,
@@ -256,7 +304,10 @@ export async function POST(request: Request) {
     });
     if (siteBrief.error) throw siteBrief.error;
     const assessment = (context.profile.onboarding_assessment ?? {}) as Record<string, unknown>;
-    delete assessment.guidedNewSystem;
+    if (parsed.data.draftId) {
+      const removed = await context.supabase.from("discovery_drafts").delete().eq("id", parsed.data.draftId).eq("owner_id", context.userId);
+      if (removed.error) throw removed.error;
+    } else delete assessment.guidedNewSystem;
     assessment.lastGuidedDiscovery = {
       version: 1,
       status: "completed",
@@ -266,20 +317,14 @@ export async function POST(request: Request) {
       unknownIds,
       completedAt: new Date().toISOString(),
     };
-    const cleared = await context.supabase.from("profiles").update({ onboarding_assessment: assessment }).eq("id", context.userId);
+    const profileUpdate: Record<string, unknown> = { onboarding_assessment: assessment };
+    if (createdSiteId && answers.save_as_account_location === "yes") {
+      profileUpdate.home_location = typeof answers.site_location === "string" ? answers.site_location : requestedSiteName;
+      profileUpdate.timezone = typeof answers.site_timezone === "string" ? answers.site_timezone : context.profile.timezone || "UTC";
+    }
+    const cleared = await context.supabase.from("profiles").update(profileUpdate).eq("id", context.userId);
     if (cleared.error) throw cleared.error;
-    const firstUnknown = newSystemQuestions.find((question) => unknownIds.includes(question.id));
-    const conversationId = await addWattsonHandoff(
-      context.supabase,
-      context.userId,
-      firstUnknown
-        ? `I’ve saved your discovery brief and opened a working design for ${systemName}. You marked ${unknownIds.length} item${unknownIds.length === 1 ? "" : "s"} as unknown. Let’s start with this one: ${firstUnknown.title}`
-        : `I’ve saved your discovery brief and opened a working design for ${systemName}. No equipment has been treated as purchased or installed. Next, I’ll review the answers with you before we select or size anything.`,
-      { kind: "guided_discovery_complete", siteId, systemId, unknownIds },
-      `${systemName} — discovery review`,
-      { siteId, projectId: systemId },
-    );
-    return Response.json({ siteId, systemId, reviewUrl: `/dashboard?site=${siteId}&conversation=${conversationId}#wattson` });
+    return Response.json({ siteId, systemId, designUrl: `/sites/${siteId}/systems/${systemId}/design/schematic` });
   } catch (problem) {
     if (createdSystemId) await context.supabase.from("projects").delete().eq("id", createdSystemId).eq("owner_id", context.userId);
     if (createdSiteId) await context.supabase.from("sites").delete().eq("id", createdSiteId).eq("owner_id", context.userId);

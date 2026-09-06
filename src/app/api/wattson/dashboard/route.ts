@@ -52,11 +52,15 @@ function systemNameFromBuilding(description: string) {
 function answerMatchesDiscovery(key: string, message: string) {
   const patterns: Record<string, RegExp> = {
     current_energy_use: /\b(?:kwh|kilowatt|bill|usage|consumption|unpowered|no (?:existing )?(?:use|power|history)|new (?:shed|building|home|house|workshop))\b/i,
+    ac_phase_arrangement: /\b(?:single[ -]?phase|split[ -]?phase|three[ -]?phase|3[ -]?phase|3ph|dc only|no ac)\b/i,
+    nominal_ac_voltage: /\b(?:100|1[01]0|120|200|220|230|240|380|400|415|440|480)\s*v(?:olts?)?\b/i,
     everyday_needs: /\b(?:light|outlet|socket|tool|pump|fridge|freezer|refriger|appliance|equipment|machine|computer|charger)\w*\b/i,
-    cooking_energy: /\b(?:no cooking|cook|oven|cooktop|induction|lpg|gas|wood|microwave|none)\b/i,
-    water_heating_energy: /\b(?:no (?:hot )?water|water heat|cylinder|instant electric|heat pump|lpg|gas|solar hot|wetback|none)\b/i,
+    cooking_energy: /\b(?:no cooking|cook|oven|cooktop|induction|air\s*fryer|lpg|gas|wood|microwave|none)\b/i,
+    water_heating_energy: /\b(?:no (?:hot )?water|water heat|water heater|cylinder|hwc|geyser|instant electric|heat pump|lpg|gas|solar hot|wetback|none)\b/i,
     space_heating_energy: /\b(?:no heat|heat pump|heater|heating|wood|fire|lpg|gas|boiler|none)\b/i,
     heavy_or_surge_loads: /\b(?:tool|pump|welder|compressor|motor|saw|oven|heater|ev|charger|none|nothing)\w*\b/i,
+    generator_requirement: /\b(?:generator|genset|no generator|prepare for one)\b/i,
+    generator_details: /\b(?:generator|genset).*(?:model|petrol|gasoline|diesel|lpg|propane|kw|kva|ats|start|phase|volt)/i,
     building_type: /\b(?:house|home|townhouse|apartment|unit|shed|workshop|garage|farm|cabin|building)\b/i,
     property_authority: /\b(?:own|owner|rent|renter|landlord|body corporate|shared|permission|approval)\b/i,
     proposed_panel_location: /\b(?:roof|ground|frame|shed|garage|carport|wall|unsure|don'?t know)\b/i,
@@ -68,12 +72,16 @@ function answerMatchesDiscovery(key: string, message: string) {
 function discoveryKeyFromAssistantQuestion(message: string | undefined) {
   if (!message) return null;
   const patterns: Array<[string, RegExp]> = [
+    ["ac_phase_arrangement", /\bac phase arrangement|single-phase, split-phase, three-phase/i],
+    ["nominal_ac_voltage", /\bnominal ac .*voltage|supply or inverter-output voltage/i],
     ["current_energy_use", /\b(?:existing|current) electricity use|recent bill|monitoring total/i],
     ["everyday_needs", /\bwhat should it power day to day|what .* intend to run/i],
     ["cooking_energy", /\bhow is cooking done|cooking method/i],
     ["water_heating_energy", /\bhow is water heated|water heating/i],
     ["space_heating_energy", /\bhow is .* heated|any heating/i],
     ["heavy_or_surge_loads", /\blargest appliances|larger tools|run at the same time/i],
+    ["generator_requirement", /\binclude .*generator|generator supply|prepare for one later/i],
+    ["generator_details", /\bwhat is known about the generator|generator.*make\/model/i],
     ["building_type", /\bwhat kind of building|building or property/i],
     ["property_authority", /\bdo you own|rent it|landlord|body corporate/i],
     ["proposed_panel_location", /\bwhere might panels fit|panel location/i],
@@ -151,7 +159,7 @@ export async function POST(request: Request) {
   if (siteDiscoveries.error || selectedConversation.error) return Response.json({ error: siteDiscoveries.error?.message ?? selectedConversation.error?.message ?? "Could not load discovery context." }, { status: 400 });
   const systemIds = (systems.data ?? []).map((system) => system.id);
   const siteIds = (sites.data ?? []).map((site) => site.id);
-  const [components, pvStrings, connections, loads, assumptions, goals, siteEquipment] = await Promise.all([
+  const [components, pvStrings, connections, loads, assumptions, goals, siteEquipment, monitoringConnections, monitoringDevices, monitoringLatest] = await Promise.all([
     systemIds.length ? supabase.from("system_components").select("id,project_id,type,display_name,manufacturer,model,quantity,installation_location,serial_number,firmware_version,manual_url,specifications,notes,confidence").in("project_id", systemIds) : Promise.resolve({ data: [], error: null }),
     systemIds.length ? supabase.from("pv_arrays").select("id,project_id,name,manufacturer,panel_model,panel_type,supplier,purchased_on,installed_on,panel_watts,panel_count,strings,panels_per_string,orientation_degrees,tilt_degrees,cable_size_mm2,cable_length_m,connector_type,breaker_details,isolator_details,combiner_details,installation_notes,specifications,confidence").in("project_id", systemIds) : Promise.resolve({ data: [], error: null }),
     systemIds.length ? supabase.from("system_connections").select("id,project_id,source_ref,target_ref,name,connection_type,polarity,cable_size,cable_length,breaker_size,fuse_size,isolator,route,notes,confidence").in("project_id", systemIds) : Promise.resolve({ data: [], error: null }),
@@ -159,8 +167,11 @@ export async function POST(request: Request) {
     systemIds.length ? supabase.from("assumptions").select("id,project_id,label,value,reason,confidence").in("project_id", systemIds) : Promise.resolve({ data: [], error: null }),
     systemIds.length ? supabase.from("project_goals").select("id,project_id,text,priority").in("project_id", systemIds) : Promise.resolve({ data: [], error: null }),
     siteIds.length ? supabase.from("site_equipment").select("id,site_id,assigned_project_id,type,name,manufacturer,model,quantity,condition,status,specifications,notes").in("site_id", siteIds) : Promise.resolve({ data: [], error: null }),
+    systemIds.length ? supabase.from("monitoring_connections").select("id,project_id,provider,display_name,status,is_active,capabilities,last_success_at,last_failure_at,status_message").in("project_id", systemIds) : Promise.resolve({ data: [], error: null }),
+    systemIds.length ? supabase.from("monitoring_devices").select("connection_id,project_id,provider_device_id,device_type,display_name,status,last_seen_at,mapped_component_id,mapped_pv_array_id").in("project_id", systemIds) : Promise.resolve({ data: [], error: null }),
+    systemIds.length ? supabase.from("monitoring_latest_readings").select("connection_id,project_id,measured_at,received_at,pv_power_w,load_power_w,battery_power_w,battery_voltage_v,battery_current_a,battery_soc_percent,grid_power_w,inverter_state,generated_energy_today_wh,consumed_energy_today_wh").in("project_id", systemIds) : Promise.resolve({ data: [], error: null }),
   ]);
-  const detailError = components.error ?? pvStrings.error ?? connections.error ?? loads.error ?? assumptions.error ?? goals.error ?? siteEquipment.error;
+  const detailError = components.error ?? pvStrings.error ?? connections.error ?? loads.error ?? assumptions.error ?? goals.error ?? siteEquipment.error ?? monitoringConnections.error ?? monitoringDevices.error ?? monitoringLatest.error;
   if (detailError) return Response.json({ error: detailError.message }, { status: 400 });
   const connectedSystems = (systems.data ?? []).map((system) => ({
     ...system,
@@ -171,6 +182,11 @@ export async function POST(request: Request) {
     loads: (loads.data ?? []).filter((item) => item.project_id === system.id),
     assumptions: (assumptions.data ?? []).filter((item) => item.project_id === system.id),
     goals: (goals.data ?? []).filter((item) => item.project_id === system.id),
+    monitoringConnections: (monitoringConnections.data ?? []).filter((item) => item.project_id === system.id).map((connection) => ({
+      ...connection,
+      devices: (monitoringDevices.data ?? []).filter((device) => device.connection_id === connection.id),
+      latestReading: (monitoringLatest.data ?? []).find((reading) => reading.connection_id === connection.id),
+    })),
   }));
   const conversationSiteId = parsed.data.siteId ?? selectedConversation.data?.site_id;
   const selectedSiteBrief = (siteDiscoveries.data ?? []).find((item) => item.site_id === conversationSiteId && item.status === "completed");

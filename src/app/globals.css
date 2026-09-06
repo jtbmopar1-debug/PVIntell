@@ -27,3 +27,31 @@ html[data-theme="dark"] body{background:radial-gradient(circle at 78% -8%,rgba(2
   .grid.gap-3.sm\:grid-cols-2.xl\:grid-cols-5{grid-template-columns:repeat(2,minmax(0,1fr));gap:.625rem}
   .field{min-height:42px}
 }
+/* System navigation now lives on the Systems hub rather than in a second header. */
+nav[aria-label="System navigation"] {
+  display: none !important;
+}
+
+nav[aria-label="Mobile navigation"] .mobile-nav-item {
+  display: none;
+}
+
+/* Connection records use the same obvious Wattson entry point as discovery. */
+a.block.text-center.text-xs.font-bold.text-brand[href*="focus="] {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--blue);
+  padding: 0 16px;
+  color: transparent;
+  font-size: 0;
+}
+
+a.block.text-center.text-xs.font-bold.text-brand[href*="focus="]::after {
+  content: "Ask Wattson";
+  color: white;
+  font-size: 12px;
+  font-weight: 800;
+}

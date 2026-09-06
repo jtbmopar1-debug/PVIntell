@@ -3,7 +3,7 @@ import { createClient as createSupabaseAdmin, type SupabaseClient } from "@supab
 import tzLookup from "tz-lookup";
 import { createClient } from "@/lib/supabase/server";
 
-const querySchema = z.object({ siteId: z.uuid() });
+const querySchema = z.object({ siteId: z.uuid().optional(), regional: z.literal("1").optional() }).refine((value) => value.siteId || value.regional, "A Site or regional forecast is required");
 const regionCellDegrees = 0.02;
 const forecastDays = 5;
 const cacheVersion = "five-day-v1";
@@ -55,17 +55,45 @@ const value = (entry: unknown) => {
 };
 
 export async function GET(request: Request) {
-  const url = new URL(request.url); const parsed = querySchema.safeParse({ siteId: url.searchParams.get("siteId") });
+  const url = new URL(request.url); const parsed = querySchema.safeParse({ siteId: url.searchParams.get("siteId") ?? undefined, regional: url.searchParams.get("regional") ?? undefined });
   if (!parsed.success) return Response.json({ error: "Invalid site." }, { status: 400 });
   const supabase = await createClient(); const claims = await supabase.auth.getClaims();
   if (claims.error || typeof claims.data?.claims?.sub !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const site = await supabase.from("sites").select("latitude,longitude,timezone,location").eq("id", parsed.data.siteId).maybeSingle();
-  if (site.error || !site.data) return Response.json({ error: "Site not found." }, { status: 404 });
-  if (typeof site.data.latitude !== "number" || typeof site.data.longitude !== "number") return Response.json({ error: "Set the site's coordinates to load solar weather.", code: "LOCATION_REQUIRED" }, { status: 409 });
-  let timezone = typeof site.data.timezone === "string" && site.data.timezone ? site.data.timezone : "UTC";
-  try { timezone = tzLookup(site.data.latitude, site.data.longitude); } catch { /* Use the stored timezone when lookup is unavailable. */ }
-  if (timezone !== site.data.timezone) await supabase.from("sites").update({ timezone }).eq("id", parsed.data.siteId);
-  const latitude = cellCoordinate(site.data.latitude); const longitude = cellCoordinate(site.data.longitude);
+  let siteData: { latitude: number; longitude: number; timezone: string; location: string };
+  if (parsed.data.regional) {
+    const profile = await supabase.from("profiles").select("home_location,timezone").eq("id", claims.data.claims.sub).single();
+    if (profile.error || !profile.data.home_location) return Response.json({ error: "Add your town or region in Onboarding answers to load weather.", code: "LOCATION_REQUIRED" }, { status: 409 });
+    const location = profile.data.home_location.trim();
+    const geocodeResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`, { next: { revalidate: 86400 } });
+    const geocode = await geocodeResponse.json() as { results?: Array<{ name: string; admin1?: string; country?: string; latitude: number; longitude: number; timezone?: string }> };
+    const match = geocode.results?.[0];
+    if (geocodeResponse.ok && match) {
+      siteData = { latitude: match.latitude, longitude: match.longitude, timezone: match.timezone || profile.data.timezone || "UTC", location: [match.name, match.admin1, match.country].filter(Boolean).join(", ") };
+    } else {
+      const countryPath = /^[a-z]{2,3}$/i.test(location) ? `alpha/${encodeURIComponent(location)}` : `name/${encodeURIComponent(location)}?fullText=true`;
+      const countryResponse = await fetch(`https://restcountries.com/v3.1/${countryPath}${countryPath.includes("?") ? "&" : "?"}fields=name,latlng`, { next: { revalidate: 604800 } });
+      const rawCountry = countryResponse.ok ? await countryResponse.json() as unknown : undefined;
+      const country = (Array.isArray(rawCountry) ? rawCountry[0] : rawCountry) as { name?: { common?: string }; latlng?: number[] } | undefined;
+      if (!country?.latlng || country.latlng.length < 2) return Response.json({ error: "That regional location could not be found. Add a nearby town or region in Onboarding answers.", code: "LOCATION_REQUIRED" }, { status: 409 });
+      siteData = { latitude: country.latlng[0], longitude: country.latlng[1], timezone: profile.data.timezone || "UTC", location: country.name?.common || location.toUpperCase() };
+    }
+  } else {
+    const site = await supabase.from("sites").select("latitude,longitude,timezone,location").eq("id", parsed.data.siteId as string).maybeSingle();
+    if (site.error || !site.data) return Response.json({ error: "Site not found." }, { status: 404 });
+    if (typeof site.data.latitude !== "number" || typeof site.data.longitude !== "number") {
+      const fallbackLocation = site.data.location?.trim();
+      if (!fallbackLocation || fallbackLocation === "Location not set") return Response.json({ error: "Set the site's location to load solar weather.", code: "LOCATION_REQUIRED" }, { status: 409 });
+      const geocodeResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(fallbackLocation)}&count=1&language=en&format=json`, { next: { revalidate: 86400 } });
+      const geocode = await geocodeResponse.json() as { results?: Array<{ name: string; admin1?: string; country?: string; latitude: number; longitude: number; timezone?: string }> };
+      const match = geocode.results?.[0];
+      if (!geocodeResponse.ok || !match) return Response.json({ error: "Pinpoint this Site to load local solar weather.", code: "LOCATION_REQUIRED" }, { status: 409 });
+      siteData = { latitude: match.latitude, longitude: match.longitude, timezone: match.timezone || site.data.timezone || "UTC", location: fallbackLocation };
+    } else siteData = { latitude: site.data.latitude, longitude: site.data.longitude, timezone: site.data.timezone || "UTC", location: site.data.location || "Location not set" };
+  }
+  let timezone = siteData.timezone;
+  try { timezone = tzLookup(siteData.latitude, siteData.longitude); } catch { /* Use the stored timezone when lookup is unavailable. */ }
+  if (!parsed.data.regional && timezone !== siteData.timezone) await supabase.from("sites").update({ timezone }).eq("id", parsed.data.siteId as string);
+  const latitude = cellCoordinate(siteData.latitude); const longitude = cellCoordinate(siteData.longitude);
   const locationKey = `${latitude.toFixed(4)}:${longitude.toFixed(4)}:${timezone}:${cacheVersion}`; const dateKey = localDate(timezone); const admin = cacheClient(); let ownsCacheClaim = false;
   if (admin) {
     const cached = await admin.from("weather_forecast_cache").select("payload,fetched_at").eq("location_key", locationKey).eq("local_date", dateKey).maybeSingle();
@@ -97,7 +125,7 @@ export async function GET(request: Request) {
     const byTime = new Map<string, Record<string, unknown>>();
     for (const hour of weather.hours ?? []) byTime.set(String(hour.time), { time: hour.time, temperature: value(hour.airTemperature), cloudCover: value(hour.cloudCover), precipitation: value(hour.precipitation), windSpeed: value(hour.windSpeed) });
     for (const hour of solar.hours ?? []) byTime.set(String(hour.time), { ...(byTime.get(String(hour.time)) ?? { time: hour.time }), irradiance: value(hour.solarDownwardRadiationFlux), uvIndex: value(hour.uvIndex) });
-    const payload = { site: { location: site.data.location, timezone }, hours: [...byTime.values()].sort((a, b) => String(a.time).localeCompare(String(b.time))), fetchedAt: new Date().toISOString() };
+    const payload = { site: { location: siteData.location, timezone }, hours: [...byTime.values()].sort((a, b) => String(a.time).localeCompare(String(b.time))), fetchedAt: new Date().toISOString() };
     if (admin) await admin.from("weather_forecast_cache").upsert({ location_key: locationKey, local_date: dateKey, timezone, latitude, longitude, payload, fetched_at: payload.fetchedAt }, { onConflict: "location_key,local_date" });
     return Response.json({ ...payload, cache: { source: "stormglass", localDate: dateKey } });
   } catch (problem) {
