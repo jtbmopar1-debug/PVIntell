@@ -67,3 +67,9 @@ a.block.text-center.text-xs.font-bold.text-brand[href*="focus="]::after {
   font-size: 12px;
   font-weight: 800;
 }
+/* The landing-page Wattson preview deliberately demonstrates its light chat UI,
+   independent of the signed-in application theme. */
+html[data-theme="dark"] #wattson .bg-white {
+  background-color: #fff !important;
+  color: #14233a;
+}

@@ -8,7 +8,7 @@ type InstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
 
-export function InstallAppButton() {
+export function InstallAppButton({ tone = "dark" }: { tone?: "dark" | "light" }) {
   const [promptEvent, setPromptEvent] = useState<InstallPromptEvent | null>(null);
   const [isIos, setIsIos] = useState(false);
   const [showIosHelp, setShowIosHelp] = useState(false);
@@ -52,11 +52,11 @@ export function InstallAppButton() {
 
   return (
     <div className="relative">
-      <button type="button" onClick={install} className="inline-flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl border border-white/25 bg-white/8 px-6 text-sm font-bold text-white backdrop-blur sm:w-auto">
+      <button type="button" onClick={install} className={`inline-flex min-h-13 w-full items-center justify-center gap-2 rounded-2xl border px-6 text-sm font-bold backdrop-blur sm:w-auto ${tone === "light" ? "border-line bg-white text-brand hover:border-[#9db9d2]" : "border-white/25 bg-white/8 text-white"}`}>
         <Download size={17}/>
         Install PVIntell
       </button>
-      {showIosHelp ? <div className="mt-2 rounded-xl border border-white/15 bg-[#10243a] px-4 py-3 text-xs leading-5 text-white/80 sm:absolute sm:left-0 sm:w-64"><Share className="mr-1 inline text-[#69b9f2]" size={15}/> Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</div> : null}
+      {showIosHelp ? <div className={`mt-2 rounded-xl border px-4 py-3 text-xs leading-5 sm:absolute sm:left-0 sm:w-64 ${tone === "light" ? "border-line bg-white text-muted shadow-lg" : "border-white/15 bg-[#10243a] text-white/80"}`}><Share className="mr-1 inline text-[#69b9f2]" size={15}/> Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</div> : null}
     </div>
   );
 }

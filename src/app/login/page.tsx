@@ -92,7 +92,9 @@ export default async function LoginPage({
               type="hidden"
               name="next"
               value={
-                notice.setup === "password" ? "/account?setup=password" : "/"
+                notice.setup === "password"
+                  ? "/account?setup=password"
+                  : "/dashboard"
               }
             />
             <button className="mt-4 flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#ccd8e4] bg-white text-xs font-bold text-[#364a60] hover:border-[#9db4c9] hover:bg-[#fafcfe]">

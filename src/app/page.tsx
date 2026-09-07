@@ -40,7 +40,7 @@ export default async function Home() {
     <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(schema).replace(/</g, "\\u003c") }}/>
     <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-[#071525]/80 backdrop-blur-xl"><div className="mx-auto flex h-16 max-w-[1240px] items-center gap-5 px-4 sm:px-6"><Link href="/" aria-label="PVIntell home"><BrandLogo inverse/></Link><nav className="ml-auto hidden items-center gap-6 text-xs font-bold text-white/70 md:flex"><a href="#platform">Platform</a><a href="#wattson">Wattson</a><a href="#features">Features</a><a href="#how-it-works">How it works</a></nav><Link href="/login" className="ml-auto text-xs font-bold md:ml-3">Sign in</Link><Link href={primaryHref} className="hidden rounded-xl bg-[#f6c945] px-4 py-2.5 text-xs font-extrabold text-[#11395e] sm:inline-flex">{signedIn ? "Dashboard" : "Create account"}</Link><Menu className="text-white/70 md:hidden" size={20}/></div></header>
 
-    <div className="fixed bottom-4 left-1/2 z-50 w-[calc(100%-2rem)] -translate-x-1/2 sm:bottom-6 sm:left-auto sm:right-6 sm:w-auto sm:translate-x-0">
+    <div className="fixed right-4 top-20 z-50 w-auto sm:right-6">
       <InstallAppButton/>
     </div>
     <main>
