@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ArrowRight, BatteryCharging, BookOpen, Bot, Cable, ChartNoAxesCombined, Check, CloudSun, Compass, Menu, Network, ShieldCheck, Sparkles, Sun, WalletCards, Zap } from "lucide-react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { BrandLogo } from "@/components/brand-logo";
 import { InstallAppButton } from "@/components/install-app-button";
 import { LocalDevFooter } from "@/components/localdev-footer";
@@ -32,6 +33,7 @@ const features = [
 export default async function Home() {
   let signedIn = false;
   if (getSupabaseConfig().configured) { const supabase = await createClient(); const claims = await supabase.auth.getClaims(); signedIn = !claims.error && typeof claims.data?.claims?.sub === "string"; }
+  if (signedIn) redirect("/dashboard");
   const primaryHref = signedIn ? "/dashboard" : "/login?mode=signup";
   const primaryLabel = signedIn ? "Open your dashboard" : "Create your account";
   const schema = { "@context": "https://schema.org", "@type": "SoftwareApplication", name: "PVIntell", applicationCategory: "UtilitiesApplication", operatingSystem: "Web", url: siteUrl, description, featureList: features.map(([, title]) => title) };
