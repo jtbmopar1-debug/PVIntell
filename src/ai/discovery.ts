@@ -76,6 +76,9 @@ export function userIsAskingDiscoveryQuestion(message: string) {
 export function discoveryGuidance(key: string) {
   const guidance: Record<string, string> = {
     current_energy_use: "If this is an existing powered building, a bill or monitoring total in kWh gives us a useful starting point. If it is new or has no usage history, say so and we’ll design from the lights, outlets, tools, pumps and other equipment you intend to use.",
+    served_floor_area: "Floor area helps establish scale, especially for a new home without bills, but it is not a load calculation by itself. Enter the approximate occupied or conditioned indoor area served by this system and keep garages or unrelated outbuildings separate.",
+    garage_conditioning: "Record whether a garage is attached or detached and whether it is continuously, occasionally or never heated or cooled. An unconditioned attached garage changes the building boundary but is not ordinary occupied floor area.",
+    garage_floor_area: "Enter the approximate garage area separately from the occupied house area so its envelope and equipment loads can be interpreted according to how the garage is used and conditioned.",
     ac_phase_arrangement: "AC phase arrangement and voltage are separate facts. Tell me whether the Site is single-phase, split-phase, three-phase, DC-only, or not yet known. A meter, switchboard label, supply document or existing inverter label may help; do not open electrical enclosures to find it.",
     nominal_ac_voltage: "Tell me the nominal AC supply or required output voltage shown by reliable Site or equipment information. Common families include 100 V, 110–120 V, 200–240 V, 380–415 V three-phase and 440–480 V three-phase, but Wattson should not infer the answer from country alone.",
     backup_preference: "Outage backup means a battery powers chosen parts of the home when public electricity fails. Essentials-only usually covers things such as the fridge, a few lights, internet and perhaps a water pump; most-of-home backup is larger and more expensive. Which sounds closer: no backup, essentials only, or most of the home?",
@@ -87,7 +90,7 @@ export function discoveryGuidance(key: string) {
     water_heating_energy: "Water heating is often one of a home’s largest energy uses. Tell me whether it uses an electric hot-water cylinder (also called an HWC, storage water heater or geyser in some regions), heat pump, instant electric heater, LPG/gas, solar hot water, a wood-fire wetback, or a combination.",
     space_heating_energy: "Winter heating can materially change the solar and battery design. Tell me whether the building uses heat pumps, direct electric heaters, wood, LPG/gas, a boiler, or no fixed heating. More than one is fine.",
     heavy_or_surge_loads: "Some appliances need a lot of power or a brief starting surge, which affects inverter size even if they do not run for long. Examples include ovens, electric water heating, heat pumps, pumps, welders, large tools and EV chargers. Which of those—if any—does the home use?",
-    building_type: "Building type affects roof access, shared ownership and what mounting options are realistic. Examples are a detached house, townhouse, apartment/unit, shed, workshop or farm building. Which best describes this property?",
+    building_type: "Building or property type affects roof access, shared ownership, wet-area constraints and what mounting options are realistic. Examples are a detached house, townhouse, apartment/unit, shed, workshop, farm building, pool or spa, vehicle or boat. Which best describes this property?",
     property_authority: "This asks who can approve physical and electrical changes. An owner usually decides directly; a renter normally needs landlord approval; townhouses and apartments may also need body-corporate approval. Which situation applies?",
     proposed_panel_location: "Panels can go on the main roof, another roof such as a garage or shed, or on a ground-mounted frame. If you are unsure, say so and a roof/site photo can help us compare the options.",
     usable_solar_space: "Usable solar space means an area that is structurally suitable and not occupied by vents, chimneys, ridges or required clearances. Rough measurements, a roof plan or clear photos are enough for discovery; exact measurements can come later.",
@@ -159,7 +162,7 @@ export function nextRequiredDiscoveryQuestion(
       ["space_heating_energy", "How is the building heated—heat pump, direct electric heating, wood, LPG/gas, a boiler, or no fixed heating?"],
       ["heavy_or_surge_loads", "What are the largest appliances or tools that may run at the same time, such as an oven, water heater, pump, welder or EV charger?"],
     ]),
-    ["building_type", "What kind of building is this—for example a detached house, townhouse, apartment, shed or farm building?"],
+    ["building_type", "What kind of building or property is this—for example a detached house, townhouse, apartment, shed, farm building, pool or spa, vehicle or boat?"],
     ["property_authority", "Do you own the property, rent it, or need approval from a landlord, body corporate or another owner?"],
     ["proposed_panel_location", "Where might panels fit: the main roof, another roof, a ground-mounted area, or are you unsure?"],
     ["panel_area_dimensions", "What are the rough usable length and width of each possible panel area? If you cannot measure it yet, a clear photo or plan can be reviewed first."],

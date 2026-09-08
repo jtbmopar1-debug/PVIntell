@@ -53,7 +53,7 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
   const selectedSite = sites.find((site) => site.id === selectedSiteId) ?? sites[0];
   const visibleSystems = selectedSite ? systems.filter((system) => system.siteId === selectedSite.id) : systems;
   const visibleDrafts = selectedSite ? drafts.filter((draft) => !draft.siteId || draft.siteId === selectedSite.id) : drafts;
-  const localDate = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long", timeZone: selectedSite?.timezone ?? "UTC" }).format(new Date());
+  const localDate = new Intl.DateTimeFormat("en-NZ", { weekday: "long", day: "numeric", month: "long", timeZone: selectedSite?.timezone ?? "UTC" }).format(new Date());
 
   const siteQuery = selectedSite ? `?site=${selectedSite.id}` : "";
   async function remove(kind: "system" | "draft", id: string, name: string) {

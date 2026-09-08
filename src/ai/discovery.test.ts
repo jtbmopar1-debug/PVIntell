@@ -36,6 +36,43 @@ describe("Wattson discovery interpretation", () => {
     expect(confirmedPrimaryOutcome([], "I want lower bills and backup in a blackout")).toBe("Reduce electricity use/cost and improve resilience");
   });
 
+  it("asks about self-consumption storage without asking about outage backup for a bill-only design", () => {
+    const ids = visibleDiscoveryQuestions({
+      utility_relationship: "grid_connected",
+      primary_outcome: ["cost"],
+      building_type: ["detached_house"],
+      panel_location: ["roof"],
+    }).map((question) => question.id);
+    expect(ids).not.toContain("backup_preference");
+    expect(ids).toContain("battery_requirement");
+    expect(ids).not.toContain("dc_system_voltage");
+
+    const withStorage = visibleDiscoveryQuestions({
+      utility_relationship: "grid_connected",
+      primary_outcome: ["cost"],
+      building_type: ["detached_house"],
+      panel_location: ["roof"],
+      battery_requirement: "include",
+    }).map((question) => question.id);
+    expect(withStorage).toContain("dc_system_voltage");
+  });
+
+  it("keeps hybrid and other solar inverter arrangements available without a battery", () => {
+    const architecture = visibleDiscoveryQuestions({
+      utility_relationship: "grid_connected",
+      building_type: ["detached_house"],
+      panel_location: ["roof"],
+      battery_requirement: "none",
+    }).find((question) => question.id === "architecture_preference");
+    const values = architecture?.options?.map((option) => option.value);
+
+    expect(values).toContain("string_inverter");
+    expect(values).toContain("combined");
+    expect(values).toContain("optimiser_string");
+    expect(values).toContain("microinverters");
+    expect(values).toContain("modular");
+  });
+
   it("derives workspace mode only from confirmed utility and outcome answers", () => {
     expect(workspaceProjectType("off_grid", null)).toBe("off-grid");
     expect(workspaceProjectType("grid_connected", "Reduce imported electricity and power costs")).toBe("grid-tied");
@@ -88,5 +125,29 @@ describe("Wattson discovery interpretation", () => {
       .find((question) => question.id === "future_changes")?.options;
     expect(cabinOptions?.some((option) => option.value === "workshop")).toBe(false);
     expect(workshopOptions?.some((option) => option.value === "workshop")).toBe(true);
+  });
+
+  it("uses a dedicated needs branch for a pool-only system", () => {
+    const ids = visibleDiscoveryQuestions({ building_type: ["pool_spa"], utility_relationship: "grid_connected" }).map((question) => question.id);
+    expect(ids).toContain("pool_equipment");
+    expect(ids).toContain("pool_heating_method");
+    expect(ids).toContain("pool_heating_profile");
+    expect(ids).not.toContain("current_energy_use");
+    expect(ids).not.toContain("served_floor_area");
+    expect(ids).not.toContain("cooking_energy");
+    expect(ids).not.toContain("water_heating_energy");
+    expect(ids).not.toContain("space_heating_energy");
+    expect(ids).not.toContain("everyday_needs");
+    expect(ids).not.toContain("backup_preference");
+  });
+
+  it("retains property and pool questions for a mixed-use Site", () => {
+    const ids = visibleDiscoveryQuestions({ building_type: ["detached_house", "pool_spa"], utility_relationship: "grid_connected", pool_or_spa: ["existing"] }).map((question) => question.id);
+    expect(ids).toContain("current_energy_use");
+    expect(ids).toContain("served_floor_area");
+    expect(ids).toContain("cooking_energy");
+    expect(ids).toContain("water_heating_energy");
+    expect(ids).toContain("space_heating_energy");
+    expect(ids).toContain("pool_equipment");
   });
 });

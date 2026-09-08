@@ -29,7 +29,30 @@ function hasResidentialUse(answers: DiscoveryAnswers) {
 
 function hasPoolUse(answers: DiscoveryAnswers) {
   const uses = Array.isArray(answers.pool_or_spa) ? answers.pool_or_spa : [answers.pool_or_spa];
-  return uses.some((value) => ["existing", "indoor_spa_bath", "planned"].includes(String(value)));
+  return answerValues(answers.building_type).includes("pool_spa") || uses.some((value) => ["outdoor_pool_spa", "existing", "indoor_spa_bath", "planned"].includes(String(value)));
+}
+
+function hasPoolEquipmentToRate(answers: DiscoveryAnswers) {
+  return answerValues(answers.pool_equipment).some((value) => value !== "none")
+    || answerValues(answers.pool_heating_method).some((value) => ["heat_pump", "resistive_electric", "spa_inline_heater", "gas", "hybrid"].includes(value));
+}
+
+function hasHouseholdMotorLoads(answers: DiscoveryAnswers) {
+  return answerValues(answers.everyday_needs).some((value) => ["water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "compressor"].includes(value));
+}
+
+function isPoolOnly(answers: DiscoveryAnswers) {
+  const buildings = answerValues(answers.building_type);
+  return buildings.length === 1 && buildings[0] === "pool_spa";
+}
+
+function requestsOutagePlanning(answers: DiscoveryAnswers) {
+  const outcomes = answerValues(answers.primary_outcome);
+  return outcomes.some((value) => value !== "cost");
+}
+
+function hasGarageArea(answers: DiscoveryAnswers) {
+  return ["attached_unconditioned", "attached_conditioned", "attached_intermittent", "detached_conditioned"].includes(String(answers.garage_conditioning));
 }
 
 function hasEvUse(answers: DiscoveryAnswers) {
@@ -43,26 +66,32 @@ function answerValues(value: string | number | string[] | undefined) {
 }
 
 function hasLargeLoadCandidates(answers: DiscoveryAnswers) {
-  const selected = [answers.everyday_needs, answers.cooking_energy, answers.water_heating_energy, answers.space_heating_energy, answers.pool_heating_method, answers.future_changes]
+  const selected = [answers.everyday_needs, answers.cooking_energy, answers.water_heating_energy, answers.space_heating_energy, answers.pool_equipment, answers.pool_heating_method, answers.future_changes]
     .flatMap(answerValues);
   return selected.some((value) => [
     "water_pump", "tools", "compressor", "fridge_freezer", "cooling", "ev",
     "electric_oven", "electric_cooktop", "induction", "air_fryer", "microwave",
     "electric_resistive", "instant_electric", "heat_pump", "resistive", "pool_heat_pump", "resistive_electric", "spa_inline_heater",
+    "filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature",
   ].includes(value)) || answerValues(answers.building_type).some((value) => ["shed_workshop", "farm_building"].includes(value));
 }
 
 function hasGeneratorRequirement(answers: DiscoveryAnswers) {
-  return ["existing", "planned", "provision_only"].includes(String(answers.generator_requirement));
+  return ["include", "existing", "planned", "provision_only"].includes(String(answers.generator_requirement));
 }
 
 function hasBatteryBus(answers: DiscoveryAnswers) {
-  return answers.dc_system_voltage !== undefined && answers.dc_system_voltage !== "no_battery_bus";
+  return shouldIncludeBattery(answers) && answers.dc_system_voltage !== undefined;
+}
+
+function shouldIncludeBattery(answers: DiscoveryAnswers) {
+  const panelLocations = answerValues(answers.panel_location);
+  return answers.utility_relationship === "off_grid" || answers.battery_requirement === "include" || panelLocations.includes("none") || (answers.backup_preference !== undefined && answers.backup_preference !== "none");
 }
 
 function needsModuleElectronicsCompatibility(answers: DiscoveryAnswers) {
-  const choices = Array.isArray(answers.module_level_electronics) ? answers.module_level_electronics : [answers.module_level_electronics];
-  return choices.some((value) => ["optimisers", "microinverters", "compare", "existing_mixed"].includes(String(value)));
+  return ["optimiser_string", "microinverters", "existing"].includes(String(answers.architecture_preference))
+    || answerValues(answers.module_level_electronics).some((value) => ["optimisers", "microinverters", "existing_mixed"].includes(value));
 }
 
 export const discoveryStages: Array<{ id: DiscoveryStage; label: string; description: string }> = [
@@ -131,6 +160,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "shed_workshop", label: "Shed or workshop", description: "A separate working or storage building." },
       { value: "farm_building", label: "Farm or rural building", description: "May include pumps, machinery or long cable runs." },
       { value: "cabin_mobile", label: "Cabin, tiny home or mobile setup", description: "A small or potentially movable installation." },
+      { value: "pool_spa", label: "Pool, spa or jacuzzi", description: "A pool or spa area with pumps, heating and wet-area electrical constraints." },
+      { value: "vehicle_boat", label: "Vehicle or boat", description: "A motorhome, caravan, campervan, work vehicle or marine installation." },
       { value: "other", label: "Something else", description: "Describe it in the next steps." },
     ],
   },
@@ -140,6 +171,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "owner", label: "I own it", description: "You can usually make property decisions, subject to local requirements." },
       { value: "renter", label: "I rent it", description: "Landlord approval will normally be needed." },
       { value: "shared", label: "Shared title or body corporate", description: "Other owners or a body corporate may need to approve." },
+      { value: "contractor_adviser", label: "I’m a contractor or adviser", description: "You are assessing options for a client or property owner, who must approve the work." },
       { value: "client", label: "I am planning for someone else", description: "The owner or client will need to confirm decisions." },
     ],
   },
@@ -215,7 +247,26 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     id: "current_energy_use", stage: "needs", title: "How much electricity does the property currently use?",
     noviceHelp: "Look for kWh on a recent electricity bill. Enter a monthly total if available; otherwise Ask Wattson can help build an evidence-based appliance list before you continue.",
     technicalHelp: "Enter representative monthly consumption in kWh; seasonal history can be added during review.", type: "number", unit: "kWh/month",
-    showWhen: (answers) => answers.utility_relationship === "grid_connected",
+    showWhen: (answers) => answers.utility_relationship === "grid_connected" && !isPoolOnly(answers),
+  },
+  {
+    id: "served_floor_area", stage: "needs", title: "How much indoor floor area will this system serve?",
+    noviceHelp: "Enter the approximate occupied or conditioned floor area that will use power. This helps estimate a new home or a property without reliable bills; actual measured electricity use remains stronger evidence when it is available.",
+    technicalHelp: "Record the approximate served floor area, not the total land, garage or unconditioned outbuilding area. Floor area is contextual evidence and must not be used as a standalone load calculation.", type: "number", unit: "m²", showWhen: hasResidentialUse,
+  },
+  {
+    id: "garage_conditioning", stage: "needs", title: "Is there a garage area to include?",
+    noviceHelp: "An attached garage can change the building's heating and cooling boundary, while a heated workshop or detached garage can add its own loads. Record it separately from the occupied house floor area.", type: "choice", options: [
+      { value: "none", label: "No garage area", description: "There is no garage to include in this system's building or load model." },
+      { value: "attached_unconditioned", label: "Attached and not heated or cooled", description: "Treat it as an adjacent unconditioned space, not occupied floor area." },
+      { value: "attached_conditioned", label: "Attached and continuously conditioned", description: "Include regular garage heating or cooling while keeping its area separate." },
+      { value: "attached_intermittent", label: "Attached and occasionally conditioned", description: "Heating or cooling is used only for selected work or weather conditions." },
+      { value: "detached_conditioned", label: "Detached garage or conditioned workshop", description: "Model it as a separate building load rather than part of the house envelope." },
+    ], showWhen: hasResidentialUse,
+  },
+  {
+    id: "garage_floor_area", stage: "needs", title: "What is the approximate garage floor area?",
+    noviceHelp: "Enter the garage area separately. Wattson will use whether it is attached and conditioned to interpret its effect rather than automatically treating every square metre like occupied living space.", type: "number", unit: "m²", showWhen: hasGarageArea,
   },
   {
     id: "cooking_energy", stage: "needs", title: "How is cooking done at this property?",
@@ -251,16 +302,27 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "lpg_gas", label: "LPG or gas", description: "Most heating energy comes from gas fuel." },
       { value: "boiler", label: "Boiler or central heating", description: "Its fuel source and any electrical pumps or controls need to be included." },
       { value: "none", label: "No fixed heating", description: "There is no regular building-heating system to include." },
-    ],
+    ], showWhen: (answers) => !isPoolOnly(answers),
   },
   {
-    id: "pool_or_spa", stage: "needs", title: "Is there a pool, outdoor spa or indoor spa bath to power?",
-    noviceHelp: "Pools and outdoor spas may have regular filtration and temperature-maintenance loads. An indoor spa bath is normally an intermittent bathroom load using jet or air pumps and sometimes an inline heater. Select everything that exists or is genuinely planned.", type: "multi_choice", options: [
-      { value: "existing", label: "Existing pool or outdoor spa", description: "Include its circulation, filtration, sanitation and heating equipment." },
+    id: "pool_or_spa", stage: "needs", title: "Which pool or spa loads should this system support?",
+    noviceHelp: "Select every pool or spa load the proposed power system must support. Installation or ownership status is recorded separately and does not change the design requirement.", type: "multi_choice", options: [
+      { value: "outdoor_pool_spa", label: "Pool or outdoor spa", description: "Include its circulation, filtration, sanitation and heating equipment." },
       { value: "indoor_spa_bath", label: "Indoor spa bath", description: "Include its intermittent jet or air pump, controls and any built-in heater." },
-      { value: "planned", label: "Planned for the future", description: "Keep capacity and expansion space available without treating it as a current load." },
       { value: "none", label: "None of these", description: "Do not include pool or spa equipment in this Site's energy plan." },
-    ],
+    ], showWhen: (answers) => !isPoolOnly(answers),
+  },
+  {
+    id: "pool_equipment", stage: "needs", title: "Which pool or spa equipment should be included?",
+    noviceHelp: "Select every item the proposed system must power. Recording pumps and controls separately lets Wattson identify their running schedule, startup demand and opportunities to use solar directly.", type: "multi_choice", options: [
+      { value: "filtration_pump", label: "Filtration or circulation pump", description: "Include fixed-speed or variable-speed pumps and their normal daily schedule." },
+      { value: "booster_cleaner_pump", label: "Booster or cleaner pump", description: "A separate pump for cleaning, pressure-side equipment or another water circuit." },
+      { value: "sanitation", label: "Sanitation equipment", description: "Salt chlorinator, ozone, UV, dosing or similar water-treatment equipment." },
+      { value: "spa_jet_air_pump", label: "Spa jet or air pump", description: "Intermittent pumps or blowers used during spa operation." },
+      { value: "water_feature", label: "Water feature or auxiliary pump", description: "Fountains, waterfalls, swim jets, covers or other powered pool equipment." },
+      { value: "controls", label: "Controls and automation", description: "Timers, controllers, sensors and communications that remain powered." },
+      { value: "none", label: "No separate equipment to include", description: "Only use this when the pool or spa has no electrical equipment in scope." },
+    ], showWhen: hasPoolUse,
   },
   {
     id: "pool_heating_method", stage: "needs", title: "How is the pool or spa heated?",
@@ -276,8 +338,12 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: hasPoolUse,
   },
   {
-    id: "pool_heating_profile", stage: "needs", title: "What should Wattson know about the pool or spa?",
-    noviceHelp: "For a pool or outdoor spa, add approximate volume or dimensions, target temperature, months used, cover and circulation details. For an indoor spa bath, add the jet/air-pump and heater ratings plus typical session length and frequency. Estimates can be corrected later.", technicalHelp: "For pools/outdoor spas record water volume, exposed area, target temperature rise, heating season, cover use, circulation flow/head, pump rating and duty. For indoor spa baths record fill source, jet/air-pump input, inline-heater input and intermittent session profile.", type: "textarea", showWhen: hasPoolUse,
+    id: "pool_heating_profile", stage: "needs", title: "What heating capacity does this pool or spa need?",
+    noviceHelp: "Enter the required heater output if you already know it. If not, open the optional calculator and its result will fill this field for you.", technicalHelp: "Record required thermal output in kW. The optional calculator estimates initial water-heating energy from volume and temperature rise, then applies the selected planning allowance and heat-up period. Confirm seasonal losses, circulation flow/head and manufacturer output at the actual ambient and water temperatures before equipment selection.", type: "number", unit: "kW thermal", showWhen: hasPoolUse,
+  },
+  {
+    id: "pool_equipment_ratings", stage: "needs", title: "What electrical load will each pool or spa component place on the system?",
+    noviceHelp: "Enter the electrical input shown on each equipment label. Running power helps size normal supply; starting or surge power helps check whether the inverter can start pumps and compressors.", technicalHelp: "Record quantity, continuous electrical input and starting/maximum input for every selected pump, heater and auxiliary load. Keep thermal heater output separate from electrical input, and confirm which loads can overlap.", type: "textarea", showWhen: hasPoolEquipmentToRate,
   },
   {
     id: "everyday_needs", stage: "needs", title: "What does this property need to power day-to-day?",
@@ -288,6 +354,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "internet_computers", label: "Internet, computers or TV", description: "Routers, work devices and entertainment." },
       { value: "water_pump", label: "Water, bore or pressure pump", description: "Pumps often have a high starting surge." },
       { value: "septic_pump", label: "Sewage or septic pump", description: "Include any wastewater or effluent pumping." },
+      { value: "septic_aerator", label: "Septic aerator or treatment blower", description: "A small motor that may run for long periods and still has a startup demand." },
+      { value: "sump_drainage_pump", label: "Sump or drainage pump", description: "An automatic pump that may start while other household loads are running." },
       { value: "tools", label: "Workshop tools", description: "Hand tools, bench tools or battery chargers." },
       { value: "compressor", label: "Compressor, motor or welder", description: "Motors/welders can have a large startup and running needs." },
       { value: "security", label: "Security, cameras or gate", description: "Cameras, alarms, gates and communications." },
@@ -295,7 +363,13 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "cooling", label: "Cooling or ventilation", description: "Fans, air conditioning or extraction." },
       { value: "ev", label: "Electric-vehicle charging", description: "A vehicle that regularly charges at this property." },
       { value: "none", label: "No regular loads yet", description: "The building is not yet in use or its loads are not defined." },
-    ],
+    ], showWhen: (answers) => !isPoolOnly(answers),
+  },
+  {
+    id: "household_motor_ratings", stage: "needs", title: "What running power do the household pumps and motors use?",
+    noviceHelp: "Enter the normal running watts or kilowatts shown on each equipment label. Wattson estimates startup demand automatically for inverter planning; a manufacturer starting value can be added when available.",
+    technicalHelp: "Record quantity and continuous electrical input. Wattson applies an equipment-type planning multiplier for starting demand unless a manufacturer maximum/start value is supplied. Confirm motor-control method, VSD or soft-start behaviour before final inverter selection.",
+    type: "textarea", showWhen: hasHouseholdMotorLoads,
   },
   {
     id: "backup_preference", stage: "needs", title: "What should happen during a public power outage?",
@@ -303,7 +377,16 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "none", label: "No outage backup needed", description: "Solar is mainly for savings or daytime use." },
       { value: "essentials", label: "Keep essentials running", description: "For example refrigeration, lights, internet and a water pump." },
       { value: "most_home", label: "Run most of the home", description: "A larger backup system designed around major household loads." },
-    ], showWhen: (answers) => answers.utility_relationship === "grid_connected" && (Array.isArray(answers.primary_outcome) ? answers.primary_outcome.some((value) => value !== "cost") : answers.primary_outcome !== "cost"),
+    ], showWhen: (answers) => !isPoolOnly(answers) && answers.utility_relationship === "grid_connected" && requestsOutagePlanning(answers),
+  },
+  {
+    id: "battery_requirement", stage: "needs", title: "Should this system design include battery storage?",
+    noviceHelp: "Battery storage can increase solar self-use without providing outage backup. Choose whether storage belongs in the proposed system; outage operation is handled separately.",
+    technicalHelp: "Record the storage requirement independently from backup/islanding scope. A non-backup battery may still provide self-consumption, tariff or export-control functions.",
+    type: "choice", options: [
+      { value: "include", label: "Include battery storage", description: "Design suitable storage for the recorded energy goals and operating limits." },
+      { value: "none", label: "No battery storage", description: "Keep the proposed system battery-free." },
+    ], showWhen: (answers) => answers.utility_relationship === "grid_connected" && !isPoolOnly(answers) && !answerValues(answers.panel_location).includes("none") && (answers.backup_preference === "none" || !requestsOutagePlanning(answers)),
   },
   {
     id: "outage_essential_loads", stage: "needs", title: "Which items must stay on in an outage?",
@@ -320,13 +403,12 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: (answers) => answers.utility_relationship === "off_grid" || (answers.backup_preference !== undefined && answers.backup_preference !== "none"),
   },
   {
-    id: "generator_requirement", stage: "needs", title: "Do you want generator supply included in this system?",
-    noviceHelp: "A generator is optional for both grid-connected and off-grid systems. Select it only when it exists, is genuinely planned, or you want the system prepared for one; Wattson will not infer generator use from a general backup goal.",
-    technicalHelp: "Record whether generator integration is installed, proposed or provision-only. Compatibility, source transfer, neutral/earth arrangement, start controls and accepted voltage/frequency remain separate design checks.",
+    id: "generator_requirement", stage: "needs", title: "Should this system design include generator supply?",
+    noviceHelp: "Choose whether the proposed system must integrate a generator, only provide a future-ready connection, or exclude generator supply. Ownership and installation status are recorded separately.",
+    technicalHelp: "Define full generator integration, provision-only or no generator. Compatibility, source transfer, neutral/earth arrangement, start controls and accepted voltage/frequency remain separate design checks.",
     type: "choice", options: [
-      { value: "existing", label: "Yes — generator already available", description: "Include the real generator and its current connection or intended use." },
-      { value: "planned", label: "Yes — generator planned", description: "Include generator supply as part of the proposed system." },
-      { value: "provision_only", label: "Prepare for one later", description: "Allow a safe future connection path without treating a generator as currently installed." },
+      { value: "include", label: "Include generator supply", description: "Design the system around the generator specifications and required operating arrangement." },
+      { value: "provision_only", label: "Provide a generator-ready connection", description: "Allow a safe connection path without including generator operation in the initial system." },
       { value: "none", label: "No generator", description: "Do not include generator supply or generator operation in the design." },
     ],
   },
@@ -337,8 +419,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     type: "textarea", showWhen: hasGeneratorRequirement,
   },
   {
-    id: "heavy_loads", stage: "needs", title: "Which larger loads may run at the same time?",
-    noviceHelp: "Choose every likely larger load. These choices help Wattson estimate inverter size and startup surge without guessing.", type: "multi_choice", options: [
+    id: "heavy_loads", stage: "needs", title: "Which high-power loads could operate together?",
+    noviceHelp: "Select the loads that could realistically be on at the same time. This helps Wattson plan inverter peak power and motor-starting surge; it does not calculate daily energy use.", type: "multi_choice", options: [
       { value: "water_pump", label: "Water or bore pump", description: "Includes pressure and irrigation pumps." },
       { value: "compressor", label: "Air compressor", description: "A motor load with a startup surge." },
       { value: "welder", label: "Welder", description: "A high-demand workshop load." },
@@ -403,8 +485,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "portable_outlet", label: "Portable charger and outlet", description: "The outlet, circuit, plug temperature and continuous-load suitability still need checking." },
       { value: "fixed_single_phase", label: "Fixed single-phase wallbox", description: "Record its real model, circuit and configured current." },
       { value: "fixed_three_phase", label: "Fixed three-phase wallbox", description: "Vehicle, Site and EVSE must all support the intended arrangement." },
-      { value: "no_supply", label: "Nothing installed yet", description: "Plan the parking position, cable route, circuit and power management from scratch." },
-      { value: "unknown", label: "I’m not sure", description: "Keep the rating unresolved and let Wattson explain what to photograph." },
+      { value: "no_supply", label: "No charging supply available", description: "Plan the parking position, cable route, circuit and power management from scratch." },
     ], showWhen: hasEvUse,
   },
   {
@@ -424,13 +505,16 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ],
   },
   {
-    id: "architecture_preference", stage: "design", title: "Do you already have a preferred equipment arrangement?",
-    noviceHelp: "You do not need to decide this now. Wattson can review your needs first and explain the suitable choices afterward.", type: "choice", options: [
-      { value: "existing", label: "Use an inverter I already have", description: "Identify the existing inverter and assess whether it can be incorporated into this build." },
-      { value: "combined", label: "One combined hybrid unit", description: "A compact unit that can coordinate solar, batteries and the grid." },
-      { value: "modular", label: "Separate modular equipment", description: "Separate charging and inverter equipment that may be easier to expand or replace in parts." },
-      { value: "ac_coupled", label: "AC-coupled equipment", description: "Often considered when integrating with an existing grid-connected solar system." },
-    ],
+    id: "architecture_preference", stage: "design", title: "Which solar and inverter arrangement should Wattson consider?",
+    noviceHelp: "Choose how the panels should convert and deliver power, or compare the suitable options. This choice is independent of whether a battery is included now. Microinverters perform the panel-level inverter function, while DC optimisers still feed a compatible string or hybrid inverter.", type: "choice", options: [
+      { value: "existing", label: "Assess a specific inverter I have", description: "Treat it as a candidate and include it only if its documented limits suit the design." },
+      { value: "string_inverter", label: "Solar-only string inverter", description: "Panels connect in DC strings to one central inverter. Unlike a hybrid inverter, it has no direct battery connection." },
+      { value: "combined", label: "Hybrid solar inverter", description: "A central solar inverter with battery-ready or integrated battery-control capability; it can still be assessed when no battery is included now." },
+      { value: "optimiser_string", label: "DC optimisers with string inverter", description: "Panel-level DC optimisers feed a specifically compatible central inverter." },
+      { value: "microinverters", label: "Microinverters", description: "Panel-level inverters produce AC from each module or small module group." },
+      { value: "modular", label: "Separate inverter and solar controllers", description: "Separate MPPT solar controllers and inverter or inverter-charger equipment designed to work together." },
+      { value: "compare", label: "Compare suitable arrangements", description: "Let Wattson compare practical, electrical, monitoring, maintenance and compatibility trade-offs." },
+    ], showWhen: includesSolarPanels,
   },
   {
     id: "dc_system_voltage", stage: "design", title: "What battery or DC voltage should Wattson work with?",
@@ -444,12 +528,11 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "48", label: "48 V nominal", description: "Common for larger stationary/off-grid systems, but not automatically the right choice." },
       { value: "60", label: "60 V nominal", description: "Used by some specialist systems; component availability and local voltage boundaries need checking." },
       { value: "high_voltage", label: "Manufacturer high-voltage battery", description: "An integrated battery/inverter platform operating above common 12–60 V nominal systems." },
-      { value: "no_battery_bus", label: "No battery DC bus planned", description: "For a design such as grid-only PV; the PV string still has its own separately calculated DC voltage." },
-    ],
+    ], showWhen: shouldIncludeBattery,
   },
   {
-    id: "battery_chemistry", stage: "design", title: "What type of battery is installed or being considered?",
-    noviceHelp: "Battery chemistry changes usable capacity, charging limits, temperature behaviour, expected life, protection and compatibility. Choose the exact type when known; use the label or manufacturer documents rather than appearance.",
+    id: "battery_chemistry", stage: "design", title: "Which battery chemistry should the design use?",
+    noviceHelp: "Battery chemistry changes usable capacity, charging limits, temperature behaviour, expected life, protection and compatibility. A specific battery the user owns remains a candidate until its label, condition and compatibility have been assessed.",
     technicalHelp: "Confirm chemistry, nominal and maximum voltage, series/parallel rules, BMS or balancing requirements, charge profile, continuous and peak current, low-temperature charging limits, ventilation and manufacturer compatibility. Do not infer chemistry from nominal voltage.",
     type: "choice", options: [
       { value: "lifepo4", label: "Lithium iron phosphate (LiFePO₄/LFP)", description: "Common stationary and mobile lithium chemistry with an appropriate BMS and charge profile." },
@@ -462,16 +545,6 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "manufacturer_system", label: "Manufacturer battery system", description: "A proprietary low- or high-voltage battery platform identified by its exact make and model." },
       { value: "custom_home_built", label: "Custom or home-built battery", description: "Record its chemistry, configuration, BMS, limits and test evidence so Wattson can assess it without providing cell-level construction instructions." },
     ], showWhen: hasBatteryBus,
-  },
-  {
-    id: "module_level_electronics", stage: "design", title: "Should Wattson consider panel-level optimisers or microinverters?",
-    noviceHelp: "These devices sit at or behind individual panels. They can help with some shaded or multi-direction roofs and panel-level monitoring, but add rooftop equipment, connectors, compatibility rules and replacement considerations.", type: "multi_choice", options: [
-      { value: "none", label: "Standard string arrangement", description: "Panels connect in strings without separate electronics on every module." },
-      { value: "optimisers", label: "DC power optimisers", description: "Panel-level DC electronics feeding a compatible central/string inverter." },
-      { value: "microinverters", label: "Microinverters", description: "Panel-level inverters producing AC from each module or small module group." },
-      { value: "compare", label: "Compare all three", description: "Show the practical, electrical, monitoring, maintenance and cost trade-offs." },
-      { value: "existing_mixed", label: "Existing or mixed equipment", description: "Record exact brands/models before assuming anything is compatible." },
-    ], showWhen: includesSolarPanels,
   },
   {
     id: "module_electronics_compatibility", stage: "design", title: "What equipment must the optimisers or microinverters work with?",
@@ -526,7 +599,7 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
         ];
         cookingOptions.filter(([value]) => cooking.has(value)).forEach(([value, label, description]) => add(value, label, description));
         add("none", "None of these overlap", "The listed larger loads are not expected to run at the same time.");
-        return { ...question, noviceHelp: "Only loads supported by your earlier answers are shown. Select the combination that could realistically overlap; this is used for inverter peak and surge planning, not daily energy.", options };
+        return { ...question, noviceHelp: "Select every listed load that could realistically be operating at the same time. Wattson uses this for inverter peak-power and startup-surge planning, not daily energy use.", options };
       }
       if (question.id === "backup_duration" && answers.utility_relationship === "grid_connected") {
         return {
@@ -564,7 +637,8 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
             }
           : option),
       };
-    });
+    })
+    .filter((question) => question.id !== "heavy_loads" || (question.options?.filter((option) => option.value !== "none").length ?? 0) >= 2);
 }
 
 export function helpForExperience(question: DiscoveryQuestion, profile: OnboardingAnswers) {

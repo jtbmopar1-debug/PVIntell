@@ -209,7 +209,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
     router.push(`/settings/connections${siteId ? `?site=${siteId}` : ""}`);
   }
 
-  const localDate = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long", timeZone: weather.data?.site.timezone ?? forecastSite.timezone }).format(new Date());
+  const localDate = new Intl.DateTimeFormat("en-NZ", { weekday: "long", day: "numeric", month: "long", timeZone: weather.data?.site.timezone ?? forecastSite.timezone }).format(new Date());
 
   return (
     <div className="min-h-screen bg-[#edf3f7] text-ink">
@@ -273,7 +273,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
           </div>
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
             <Metric emoji="☀️" label="Expected solar today" value={selectedSite && today ? `${today.expected.toFixed(1)} kWh` : weather.loading ? "Loading…" : profile.location ? "Regional outlook" : "—"} detail={selectedSite && today ? `${today.remaining.toFixed(1)} kWh still available · ${today.forecastBasis === "array-geometry" ? "using panel angle" : "basic estimate"}` : profile.location ? `Sunlight and weather for ${weather.data?.site.location ?? profile.location} · add a system for kWh` : "Add a regional location in Onboarding answers"} />
-            <Metric emoji="🌤️" label="Best solar hour" value={today?.peak ? new Intl.DateTimeFormat(undefined, { hour: "numeric", timeZone: weather.data?.site.timezone ?? forecastSite.timezone }).format(new Date(today.peak.time)) : "—"} detail={today?.peak ? `${Math.round(today.peak.irradiance ?? 0)} W/m² forecast` : "Waiting for regional weather"} />
+            <Metric emoji="🌤️" label="Best solar hour" value={today?.peak ? new Intl.DateTimeFormat("en-NZ", { hour: "numeric", timeZone: weather.data?.site.timezone ?? forecastSite.timezone }).format(new Date(today.peak.time)) : "—"} detail={today?.peak ? `${Math.round(today.peak.irradiance ?? 0)} W/m² forecast` : "Waiting for regional weather"} />
             <Metric emoji="🌡️" label="Temperature now" value={today?.current?.temperature != null ? formatTemperature(today.current.temperature, units) : "—"} detail={today?.current?.cloudCover != null ? `${Math.round(today.current.cloudCover)}% cloud cover` : "Current local conditions"} />
             <Metric emoji="🌧️" label="Rain today" value={today ? formatRainfall(today.rain, units) : "—"} detail="Daily forecast total" />
             <Metric emoji="💨" label="Wind today" value={today ? formatWindSpeed(today.maxWind, units) : "—"} detail={today?.current?.windSpeed != null ? `${formatWindSpeed(today.current.windSpeed, units)} right now` : "Peak forecast speed"} />

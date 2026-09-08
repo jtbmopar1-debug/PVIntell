@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 
 const answersSchema = z.record(z.string(), z.union([z.string().max(4000), z.number(), z.array(z.string().max(100)).min(1).max(20)]));
 const draftSchema = z.object({ answers: answersSchema, questionId: z.string().max(100).optional() });
-const completeSchema = z.object({ answers: answersSchema });
+const completeSchema = z.object({ answers: answersSchema, systemId: z.string().uuid().optional() });
 
 async function ownedSite(siteId: string) {
   const supabase = await createClient();
@@ -45,7 +45,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if ("error" in context) return context.error;
   const baseline = context.discovery?.baseline_answers ?? (context.discovery?.status === "completed" ? context.discovery.answers : undefined);
   const changed = Boolean(baseline) && JSON.stringify(baseline) !== JSON.stringify(parsed.data.answers);
-  const systems = await context.supabase.from("projects").select("id").eq("site_id", id);
+  const systems = await context.supabase.from("projects").select("id,phase").eq("site_id", id);
   if (systems.error) return Response.json({ error: systems.error.message }, { status: 400 });
   const saved = await context.supabase.from("site_discoveries").upsert({
     site_id: id,
@@ -62,6 +62,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const advanced = await context.supabase.from("projects").update({ phase: "design" }).eq("site_id", id).eq("owner_id", context.userId).eq("phase", "discover");
     if (advanced.error) return Response.json({ error: advanced.error.message }, { status: 400 });
   }
-  const designUrl = systems.data.length === 1 ? `/sites/${id}/systems/${systems.data[0].id}/design/schematic` : `/sites/${id}`;
+  const requestedSystem = parsed.data.systemId ? systems.data.find((system) => system.id === parsed.data.systemId) : undefined;
+  const activeDesigns = systems.data.filter((system) => !["monitor", "diagnose", "maintain", "explain"].includes(system.phase));
+  const targetSystem = requestedSystem ?? (activeDesigns.length === 1 ? activeDesigns[0] : systems.data.length === 1 ? systems.data[0] : undefined);
+  const designUrl = targetSystem ? `/sites/${id}/systems/${targetSystem.id}/design/schematic` : `/sites/${id}`;
   return Response.json({ saved: true, affectedDesigns: changed ? systems.data.length : 0, designUrl });
 }

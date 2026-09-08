@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Bot, Check, CircleHelp, LoaderCircle, LocateFixed, MapPin, Plus, Ruler, Save, Search, Send, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Calculator, Check, ChevronDown, CircleHelp, ImagePlus, LoaderCircle, LocateFixed, MapPin, Plus, Ruler, Save, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
+import { PoolHeatingCalculator } from "@/components/pool-heating-calculator";
 import { discoveryStages, helpForExperience, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers, type DiscoveryQuestion } from "@/discovery/new-system";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 
@@ -84,6 +85,11 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
         delete next.storage_supply_source_grid;
       }
       if (question.id === "battery_chemistry" && value !== "custom_home_built") delete next.custom_battery_assessment;
+      if (question.id === "battery_requirement" && value === "none") {
+        delete next.dc_system_voltage;
+        delete next.battery_chemistry;
+        delete next.custom_battery_assessment;
+      }
       return next;
     });
   }
@@ -119,7 +125,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     setSaving(true); setBuildingProposal(true); setError("");
     try {
       const response = await fetch(siteDiscoveryId ? `/api/sites/${siteDiscoveryId}/discovery` : "/api/discovery/new-system", {
-        method: siteDiscoveryId || existingSystemId ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(siteDiscoveryId ? { answers } : existingSystemId ? { projectId: existingSystemId, answers } : { draftId: discoveryDraftId, answers }),
+        method: siteDiscoveryId || existingSystemId ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(siteDiscoveryId ? { answers, systemId: existingSystemId } : existingSystemId ? { projectId: existingSystemId, answers } : { draftId: discoveryDraftId, answers }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not complete discovery");
@@ -151,7 +157,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
       <div className="mt-7 grid gap-6 lg:grid-cols-[240px_1fr]">
         <aside className="card h-fit p-4 lg:sticky lg:top-6">
           <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-brand text-white"><Sparkles size={18}/></span><div><div className="eyebrow">Guided setup</div><div className="mt-1 text-sm font-extrabold">{siteDiscoveryId ? "Site discovery" : "New system discovery"}</div></div></div>
-          <div className="mt-5 space-y-2">{discoveryStages.map((stage, position) => { const active=position===stageIndex; const done=position<stageIndex; const available=questions.some((item)=>item.stage===stage.id); return <button type="button" key={stage.id} onClick={() => goToStage(stage.id)} disabled={!available || saving} className={`w-full rounded-xl border p-3 text-left transition hover:border-brand disabled:cursor-not-allowed disabled:opacity-45 ${active?"border-brand bg-[#edf5fd]":done?"border-[#b8ddc8] bg-[#f1faf5]":"border-line bg-white"}`}><div className="flex items-center gap-2"><span className={`grid size-6 place-items-center rounded-full text-[10px] font-bold ${done?"bg-[#dff2e6] text-[#17603b]":active?"bg-brand text-white":"bg-[#edf1f5] text-muted"}`}>{done?<Check size={12}/>:position+1}</span><strong className="text-xs">{stage.label}</strong></div><p className="mt-2 text-[10px] leading-4 text-muted">{stage.description}</p></button>})}</div>
+          <div className="mt-5 space-y-2">{discoveryStages.map((stage, position) => { const active=position===stageIndex; const done=position<stageIndex; const available=questions.some((item)=>item.stage===stage.id); return <button type="button" key={stage.id} onClick={() => goToStage(stage.id)} disabled={!available || saving} className={`w-full rounded-xl border p-3 text-left transition hover:border-brand disabled:cursor-not-allowed disabled:opacity-45 ${active?"theme-selected-tile border-brand bg-[#edf5fd]":done?"border-[#b8ddc8] bg-[#f1faf5]":"border-line bg-white"}`}><div className="flex items-center gap-2"><span className={`grid size-6 place-items-center rounded-full text-[10px] font-bold ${done?"bg-[#dff2e6] text-[#17603b]":active?"bg-brand text-white":"bg-[#edf1f5] text-muted"}`}>{done?<Check size={12}/>:position+1}</span><strong className="text-xs">{stage.label}</strong></div><p className="mt-2 text-[10px] leading-4 text-muted">{stage.description}</p></button>})}</div>
           <div className="mt-5"><div className="flex justify-between text-[10px] font-bold"><span>Progress</span><span>{answered}/{questions.length}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[#e6edf4]"><div className="h-full rounded-full bg-[#f6c945] transition-all" style={{width:`${questions.length ? Math.round(answered/questions.length*100) : 0}%`}}/></div></div>
           {answered === questions.length && !reviewing ? <button type="button" onClick={() => { setReturningToReview(false); setIndex(questions.length); }} disabled={saving} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white disabled:opacity-40"><Check size={15}/>Review completed discovery</button> : null}
           {siteDiscoveryId && <button type="button" onClick={() => void deleteSite()} disabled={saving} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-[#efb6a7] px-3 py-2.5 text-xs font-bold text-[#b9412b] hover:bg-[#fff1ed] disabled:opacity-40"><Trash2 size={15}/>Delete Site and discovery</button>}
@@ -169,6 +175,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
             panelLocations={Array.isArray(answers.panel_location) ? answers.panel_location : []}
             panelAreaDimensions={answers.panel_area_dimensions}
             setAnswer={setAnswer}
+            setRelatedAnswer={(key, relatedValue) => setAnswers((current) => ({ ...current, [key]: relatedValue }))}
             setSite={(siteId, siteName) => setAnswers((current) => ({ ...current, site_id: siteId, site_name: siteName }))}
             setSiteLocation={(location) => setAnswers((current) => ({ ...current, ...location }))}
             onAskWattson={() => openDiscoveryHelp(question)}
@@ -184,7 +191,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   </div>;
 }
 
-function QuestionCard({ question, value, profile, sites, selectedSiteId, siteName, siteLocationAnswers, panelLocations, panelAreaDimensions, setAnswer, setSite, setSiteLocation, onAskWattson }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; sites: Array<{ id: string; name: string }>; selectedSiteId: string; siteName: string; siteLocationAnswers: DiscoveryAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void; setSiteLocation: (location: DiscoveryAnswers) => void; onAskWattson: () => void }) {
+function QuestionCard({ question, value, profile, sites, selectedSiteId, siteName, siteLocationAnswers, panelLocations, panelAreaDimensions, setAnswer, setRelatedAnswer, setSite, setSiteLocation, onAskWattson }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; sites: Array<{ id: string; name: string }>; selectedSiteId: string; siteName: string; siteLocationAnswers: DiscoveryAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setRelatedAnswer: (key: string, value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void; setSiteLocation: (location: DiscoveryAnswers) => void; onAskWattson: () => void }) {
   const unknown = value === unknownAnswer;
   const choices = question.type === "choice" || question.type === "multi_choice";
   const needsLocalAuthorityCheck = question.id === "panel_location" && Array.isArray(value) && value.some((item) => ["ground", "fence", "wall_facade", "carport_pergola"].includes(item));
@@ -206,18 +213,163 @@ function QuestionCard({ question, value, profile, sites, selectedSiteId, siteNam
   if (question.id === "structure_condition") {
     return <StructureConditionCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
+  if (question.id === "generator_details") {
+    return <GeneratorDetailsCard question={question} profile={profile} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
+  }
+  if (question.id === "pool_heating_profile") {
+    return <PoolHeaterCapacityCard question={question} profile={profile} value={value} locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} setAnswer={setAnswer} setRelatedAnswer={setRelatedAnswer} onAskWattson={onAskWattson}/>;
+  }
+  if (question.id === "pool_equipment_ratings") {
+    return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={Array.isArray(siteLocationAnswers.pool_equipment) ? siteLocationAnswers.pool_equipment : []} heating={Array.isArray(siteLocationAnswers.pool_heating_method) ? siteLocationAnswers.pool_heating_method.filter((item) => item !== "heat_pump") : []} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
+  }
+  if (question.id === "household_motor_ratings") {
+    const motorKeys = ["water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "compressor"];
+    const selectedMotors = Array.isArray(siteLocationAnswers.everyday_needs) ? siteLocationAnswers.everyday_needs.filter((item) => motorKeys.includes(item)) : [];
+    return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={selectedMotors} heating={[]} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
+  }
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
-    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const nextValues=option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const captureExisting=option.value==="existing"&&["panel_construction_interest","architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition ${selected?"border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
+    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const nextValues=option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const captureExisting=option.value==="existing"&&["panel_construction_interest","architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition ${selected?"theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.id === "pool_heating_profile" && !unknown ? <PoolHeatingCalculator embedded locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} onSave={setAnswer}/>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
       {needsLocalAuthorityCheck && <p className="mt-4 rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[11px] leading-5 text-[#765918]">Ground, fence, wall and canopy arrays might be restricted or require planning, building or other consent. Check with the relevant local authority before purchasing equipment or starting work.</p>}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help now, then return and answer this question.</span></div>
+      <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help now, then return and answer this question.</span></div>
     </div>
   </section>;
 }
 
+function PoolHeaterCapacityCard({ question, profile, value, locationLabel, setAnswer, setRelatedAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; locationLabel: string; setAnswer: (value: string | number | string[]) => void; setRelatedAnswer: (key: string, value: string | number | string[]) => void; onAskWattson: () => void }) {
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
+  const displayedValue = typeof value === "number" ? String(value) : typeof value === "string" ? value.match(/[\d.]+/)?.[0] ?? "" : "";
+  return <section className="card overflow-hidden bg-white">
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
+    <div className="p-6 md:p-8">
+      <label className="text-xs font-bold">Required heater output<div className="relative mt-1.5"><input type="number" min="0" step="0.1" value={displayedValue} onChange={(event) => setAnswer(event.target.value === "" ? "" : Number(event.target.value))} className="field mt-0 pr-28" placeholder="Enter heater size"/><span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">kW thermal</span></div></label>
+      <button type="button" onClick={() => setCalculatorOpen((open) => !open)} className="mt-4 flex w-full items-center justify-between rounded-xl border border-brand bg-[#edf6fd] px-4 py-3 text-left text-xs font-bold text-brand"><span className="flex items-center gap-2"><Calculator size={16}/>Don&apos;t know? Calculate it here</span><ChevronDown size={16} className={`transition-transform ${calculatorOpen ? "rotate-180" : ""}`}/></button>
+      {calculatorOpen ? <PoolHeatingCalculator embedded locationLabel={locationLabel} onSave={(summary, estimateDetails) => { const estimate = Number.parseFloat(summary); if (Number.isFinite(estimate)) setAnswer(estimate); setRelatedAnswer("pool_heater_electrical_kw", Number(estimateDetails.electricalKw.toFixed(2))); setRelatedAnswer("pool_heater_cop", estimateDetails.cop); setCalculatorOpen(false); }}/>:null}
+      <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Ask for help finding a heater rating or understanding the required output.</span></div>
+    </div>
+  </section>;
+}
+
+const poolLoadLabels: Record<string, string> = { filtration_pump: "Filtration or circulation pump", booster_cleaner_pump: "Booster or cleaner pump", sanitation: "Sanitation equipment", spa_jet_air_pump: "Spa jet or air pump", water_feature: "Water feature or auxiliary pump", controls: "Controls and automation", heat_pump: "Pool heat pump", resistive_electric: "Electric resistance heater", spa_inline_heater: "Built-in spa-bath heater", gas: "Gas heater controls and ignition", domestic_hot_water: "Domestic hot-water supply", water_pump: "Water, bore or pressure pump", septic_pump: "Sewage or septic pump", septic_aerator: "Septic aerator or treatment blower", sump_drainage_pump: "Sump or drainage pump", compressor: "Compressor or motor" };
+type PoolLoadEntry = { quantity?: number; runningKw?: number; startingKw?: number; simultaneous?: boolean; startingBasis?: "automatic" | "manufacturer" };
+
+function PoolEquipmentLoadsCard({ question, profile, value, equipment, heating, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
+  let saved: Record<string, PoolLoadEntry> = {};
+  if (typeof value === "string") { try { saved = JSON.parse(value) as Record<string, PoolLoadEntry>; } catch { saved = {}; } }
+  const selected = Array.from(new Set([...equipment, ...heating].filter((item) => item && item !== "none")));
+  const update = (key: string, field: keyof PoolLoadEntry, raw: string | boolean) => { const current = saved[key] ?? {}; const nextValue = typeof raw === "boolean" ? raw : raw === "" ? undefined : Number(raw); setAnswer(JSON.stringify({ ...saved, [key]: { ...current, [field]: nextValue } })); };
+  return <section className="card overflow-hidden bg-white">
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><Bot size={17}/><p className="text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div>
+    <div className="p-6 md:p-8"><textarea rows={8} value={typeof value === "string" ? value : ""} onChange={(event) => setAnswer(event.target.value)} className="field mt-0" placeholder="Example: filtration pump — 1.1 kW running, 2.5 kW starting"/><div className="mt-4 flex items-center gap-3"><button type="button" onClick={onAskWattson} className="rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white">Ask Wattson</button><span className="text-[11px] text-muted">A clear photo of each rating label can help identify these values.</span></div></div>
+  </section>;
+}
+
+function StructuredPoolEquipmentLoadsCard({ question, profile, value, equipment, heating, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
+  let saved: Record<string, PoolLoadEntry> = {};
+  if (typeof value === "string") { try { saved = JSON.parse(value) as Record<string, PoolLoadEntry>; } catch { saved = {}; } }
+  const selected = Array.from(new Set([...equipment, ...heating].filter((item) => item && item !== "none")));
+  const update = (key: string, field: keyof PoolLoadEntry, raw: string | boolean) => { const current = saved[key] ?? {}; const nextValue = typeof raw === "boolean" ? raw : raw === "" ? undefined : Number(raw); setAnswer(JSON.stringify({ ...saved, [key]: { ...current, [field]: nextValue } })); };
+  return <section className="card overflow-hidden bg-white"><div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><Bot size={17}/><p className="text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div><div className="grid gap-4 p-6 md:grid-cols-2 md:p-8">{selected.length ? selected.map((key) => { const row = saved[key] ?? {}; return <article key={key} className="rounded-2xl border border-line bg-[#f8fbfe] p-4"><div className="flex items-start justify-between gap-3"><strong className="text-sm">{poolLoadLabels[key] ?? key.replaceAll("_", " ")}</strong><span className="rounded-full bg-[#eaf2fb] px-2 py-1 text-[9px] font-bold uppercase tracking-[.08em] text-brand">Electrical input</span></div><div className="mt-4 grid gap-3 sm:grid-cols-3"><label className="text-[11px] font-bold">Quantity<input type="number" min="1" step="1" value={row.quantity ?? 1} onChange={(event) => update(key, "quantity", event.target.value)} className="field mt-1.5"/></label><label className="text-[11px] font-bold">Running kW<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => update(key, "runningKw", event.target.value)} placeholder="e.g. 1.1" className="field mt-1.5"/></label><label className="text-[11px] font-bold">Starting kW<input type="number" min="0" step="0.01" value={row.startingKw ?? ""} onChange={(event) => update(key, "startingKw", event.target.value)} placeholder="if known" className="field mt-1.5"/></label></div><label className="mt-3 flex items-center gap-2 text-[11px] font-semibold"><input type="checkbox" checked={row.simultaneous ?? true} onChange={(event) => update(key, "simultaneous", event.target.checked)} className="size-4 accent-[#23679e]"/> May run at the same time as the other selected loads</label></article>; }) : <p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-4 text-xs leading-5 text-[#765918] md:col-span-2">Select the pool equipment first. Wattson will then show one rating card for each selected item.</p>}<div className="flex flex-wrap items-center gap-3 md:col-span-2"><button type="button" onClick={onAskWattson} className="rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white">Ask Wattson</button><span className="text-[11px] text-muted">A clear photo of each rating label can help identify these values.</span></div></div></section>;
+}
+
+function poolStartingMultiplier(key: string) {
+  if (["filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature", "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "compressor"].includes(key)) return 3;
+  if (key === "heat_pump") return 2.5;
+  return 1;
+}
+
+function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, heating, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
+  let saved: Record<string, PoolLoadEntry> = {};
+  if (typeof value === "string") { try { saved = JSON.parse(value) as Record<string, PoolLoadEntry>; } catch { saved = {}; } }
+  const selected = Array.from(new Set([...equipment, ...heating].filter((item) => item && item !== "none")));
+  const saveEntry = (key: string, changes: Partial<PoolLoadEntry>) => setAnswer(JSON.stringify({ ...saved, [key]: { quantity: 0, simultaneous: true, ...saved[key], ...changes } }));
+  const numberValue = (raw: string) => raw === "" ? undefined : Number(raw);
+  const updateRunning = (key: string, raw: string) => {
+    const runningKw = numberValue(raw);
+    const startingKw = runningKw === undefined ? undefined : Number((runningKw * poolStartingMultiplier(key)).toFixed(2));
+    const quantity = runningKw !== undefined && runningKw > 0 && (saved[key]?.quantity ?? 0) === 0 ? 1 : saved[key]?.quantity;
+    saveEntry(key, { runningKw, startingKw, startingBasis: "automatic", quantity });
+  };
+  return <section className="card overflow-hidden bg-white">
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><Bot size={17}/><p className="text-xs leading-5 text-muted">Enter the running electrical input shown on each label. Wattson estimates starting demand automatically from the equipment type and uses it for inverter planning.</p></div></div>
+    <div className="grid gap-4 p-6 md:grid-cols-2 md:p-8">
+      {selected.length ? selected.map((key) => {
+        const row = saved[key] ?? {};
+        const multiplier = poolStartingMultiplier(key);
+        const estimatedStart = row.startingKw ?? (row.runningKw ? Number((row.runningKw * multiplier).toFixed(2)) : undefined);
+        return <article key={key} className="rounded-2xl border border-line bg-[#f8fbfe] p-4">
+          <strong className="text-sm">{poolLoadLabels[key] ?? key.replaceAll("_", " ")}</strong>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">Running electrical input<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW</span></label></div>
+          <div className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">Wattson startup estimate</span><strong className="mt-1 block text-sm">{estimatedStart === undefined ? "Enter running kW" : `${estimatedStart} kW`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">Uses a {multiplier}× planning factor for this equipment type. A variable-speed drive or soft starter may reduce it.</span></div>
+          <label className="mt-3 flex items-center gap-2 text-[11px] font-semibold"><input type="checkbox" checked={row.simultaneous ?? true} onChange={(event) => saveEntry(key, { simultaneous: event.target.checked })} className="size-4 accent-[#23679e]"/> May run with the other selected loads</label>
+          <details className="mt-3 rounded-xl border border-line bg-white p-3"><summary className="cursor-pointer text-[10px] font-bold text-brand">I have the manufacturer’s starting value</summary><label className="mt-3 block text-[10px] font-bold">Starting or maximum input (kW)<input type="number" min="0" step="0.01" value={row.startingBasis === "manufacturer" ? row.startingKw ?? "" : ""} onChange={(event) => saveEntry(key, { startingKw: numberValue(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} className="field mt-1.5"/></label></details>
+        </article>;
+      }) : <p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-4 text-xs leading-5 text-[#765918] md:col-span-2">Select the pool equipment first. Wattson will then show one rating card for each selected item.</p>}
+      <div className="flex flex-wrap items-center gap-3 md:col-span-2"><button type="button" onClick={onAskWattson} className="rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white">Ask Wattson</button><span className="text-[11px] text-muted">A label photo can replace guesswork and refine Wattson’s startup estimate.</span></div>
+    </div>
+  </section>;
+}
+
+type GeneratorDetails = {
+  generatorType: string;
+  fuel: string;
+  continuousRating: string;
+  surgeRating: string;
+  ratingUnit: string;
+  inverterType: string;
+  voltage: string;
+  phase: string;
+  startMethod: string;
+  connectionMethod: string;
+};
+
+const emptyGeneratorDetails: GeneratorDetails = {
+  generatorType: "", fuel: "", continuousRating: "", surgeRating: "", ratingUnit: "kW",
+  inverterType: "", voltage: "", phase: "", startMethod: "", connectionMethod: "",
+};
+
+function generatorDetailsValue(value: string | number | string[] | undefined): GeneratorDetails {
+  if (typeof value !== "string" || value === unknownAnswer) return emptyGeneratorDetails;
+  try { return { ...emptyGeneratorDetails, ...(JSON.parse(value) as Partial<GeneratorDetails>) }; }
+  catch { return emptyGeneratorDetails; }
+}
+
+function GeneratorDetailsCard({ question, profile, value, setAnswer, onAskWattson }: {
+  question: DiscoveryQuestion;
+  profile: OnboardingAnswers;
+  value: string | number | string[] | undefined;
+  setAnswer: (value: string | number | string[]) => void;
+  onAskWattson: () => void;
+}) {
+  const details = generatorDetailsValue(value);
+  const update = (key: keyof GeneratorDetails, nextValue: string) => setAnswer(JSON.stringify({ ...details, [key]: nextValue }));
+  return <section className="card overflow-hidden bg-white">
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
+    <div className="p-6 md:p-8">
+      <div className="mb-5 rounded-xl border border-[#9bd2ad] bg-[#f2fbf5] p-3 text-[11px] leading-5 text-[#17603b]"><strong>Quick tip:</strong> Take a clear photo of the generator rating label. Use the label—or share the photo with Wattson where photo upload is available—to fill these fields accurately.</div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <GeneratorSelect label="Generator type" value={details.generatorType} onChange={(next) => update("generatorType", next)} options={[["portable", "Portable"], ["fixed_standby", "Fixed standby"], ["pto", "Tractor/PTO"], ["vehicle_mounted", "Vehicle-mounted"], ["other", "Other"]]}/>
+        <GeneratorSelect label="Fuel" value={details.fuel} onChange={(next) => update("fuel", next)} options={[["petrol", "Petrol/gasoline"], ["diesel", "Diesel"], ["lpg", "LPG/propane"], ["natural_gas", "Natural gas"], ["dual_fuel", "Dual or multi-fuel"], ["other", "Other"]]}/>
+        <GeneratorSelect label="Generator technology" value={details.inverterType} onChange={(next) => update("inverterType", next)} options={[["inverter", "Inverter generator"], ["conventional", "Conventional generator"]]}/>
+        <label className="text-xs font-bold">Continuous rating<div className="flex gap-2"><input type="number" min="0" step="any" value={details.continuousRating} onChange={(event) => update("continuousRating", event.target.value)} className="field mt-1.5"/><select value={details.ratingUnit} onChange={(event) => update("ratingUnit", event.target.value)} className="field mt-1.5 w-24"><option value="kW">kW</option><option value="kVA">kVA</option></select></div></label>
+        <label className="text-xs font-bold">Surge rating <span className="font-normal text-muted">(optional)</span><div className="relative"><input type="number" min="0" step="any" value={details.surgeRating} onChange={(event) => update("surgeRating", event.target.value)} className="field mt mt-1.5 pr pr-14"/><span className="absolute-events-none absolute inset inset inset inset-y--y--y-0 right right0 right right-3 text-[10px] font-semibold text-muted">{details.ratingUnit}</span></div></label>
+        <GeneratorSelect label="Output voltage" value={details.voltage} onChange={(next) => update("voltage", next)} options={[["100", "100 V"], ["110_120", "110-120 V"], ["200_240", "200-240 V"], ["380_415", "380-415 V"], ["440_480", "440-480 V"], ["other", "Other"]]}/>
+        <GeneratorSelect label="Phase" value={details.phase} onChange={(next) => update("phase", next)} options={[["single", "Single-phase"], ["split", "Split-phase"], ["three", "Three-phase"]]}/>
+        <GeneratorSelect label="Starting method" value={details.startMethod} onChange={(next) => update("startMethod", next)} options={[["manual", "Manual/recoil"], ["electric", "Electric key/button"], ["automatic", "Automatic/remote start"]]}/>
+        <GeneratorSelect label="Connection method" value={details.connectionMethod} onChange={(next) => update("connectionMethod", next)} options={[["changeover", "Manual changeover"], ["ats", "Automatic transfer switch"], ["inverter_input", "Generator input on inverter"], ["portable_inlet", "Portable generator inlet"], ["direct_wired", "Direct-wired connection"]]}/>
+      </div>
+      <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Share a rating-label photo or ask for help identifying any field.</span></div>
+    </div>
+  </section>;
+}
+
+function GeneratorSelect({ label, value, options, onChange }: { label: string; value: string; options: Array<[string, string]>; onChange: (value: string) => void }) {
+  return <label className="text-xs font-bold">{label}<select value={value} onChange={(event) => onChange(event.target.value)} className="field mt-1.5"><option value="">Choose an option</option>{options.map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}</select></label>;
+}
+
 type PanelArea = { id: string; name: string; lengthM: string; widthM: string };
 type PanelOrientation = { id: string; name: string; direction: string; slope: string };
-type StructureCondition = { id: string; name: string; material: string; age: string; condition: string };
+type StructureCondition = { id: string; name: string; material: string; age: string; condition: string; constructionDetail?: string };
 type PanelObstruction = { id: string; areaId: string; kind: string; lengthM: string; widthM: string };
 
 function discoveryAnswerComplete(questionId: string, value: string | number | string[] | undefined) {
@@ -229,6 +381,12 @@ function discoveryAnswerComplete(questionId: string, value: string | number | st
     try {
       const areas = JSON.parse(value) as PanelArea[];
       return areas.length > 0 && areas.every((area) => area.name.trim() && Number(area.lengthM) > 0 && Number(area.widthM) > 0);
+    } catch { return false; }
+  }
+  if (questionId === "generator_details" && typeof value === "string") {
+    try {
+      const generator = JSON.parse(value) as GeneratorDetails;
+      return Boolean(generator.generatorType && generator.fuel && Number(generator.continuousRating) > 0 && generator.ratingUnit && generator.inverterType && generator.voltage && generator.phase && generator.startMethod && generator.connectionMethod);
     } catch { return false; }
   }
   if (questionId === "orientation_and_pitch" && typeof value === "string") {
@@ -312,7 +470,7 @@ function PanelDimensionsCard({ question, profile, panelLocations, value, setAnsw
       <div className="flex justify-end"><button type="button" onClick={() => setShowMeasureHelp(true)} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 text-xs font-bold text-brand"><Ruler size={15}/>How to measure the area</button></div>
       {!unknown && areas.map((area, index) => {
         const areaM2 = Number(area.lengthM) > 0 && Number(area.widthM) > 0 ? Number(area.lengthM) * Number(area.widthM) : 0;
-        return <div key={area.id} className="grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 md:grid-cols-[1.4fr_1fr_1fr_auto] md:items-end">
+        return <div key={area.id} className="theme-subtle-surface grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 md:grid-cols-[1.4fr_1fr_1fr_auto] md:items-end">
           <label className="space-y-1.5 text-xs font-bold"><span>Area name</span><input value={area.name} onChange={(event) => updateArea(area.id, "name", event.target.value)} className="field mt-0" placeholder={`Panel area ${index + 1}`}/></label>
           <label className="space-y-1.5 text-xs font-bold"><span>Usable length</span><div className="relative"><input type="number" min="0" step="0.1" value={area.lengthM} onChange={(event) => updateArea(area.id, "lengthM", event.target.value)} className="field mt-0 pr-10" placeholder="0.0"/><span className="absolute inset-y-0 right-3 grid place-items-center text-xs text-muted">m</span></div></label>
           <label className="space-y-1.5 text-xs font-bold"><span>Usable width</span><div className="relative"><input type="number" min="0" step="0.1" value={area.widthM} onChange={(event) => updateArea(area.id, "widthM", event.target.value)} className="field mt-0 pr-10" placeholder="0.0"/><span className="absolute inset-y-0 right-3 grid place-items-center text-xs text-muted">m</span></div></label>
@@ -320,7 +478,7 @@ function PanelDimensionsCard({ question, profile, panelLocations, value, setAnsw
         </div>;
       })}
       {!unknown && <button type="button" onClick={() => saveAreas([...areas, { id: `area-${Date.now()}`, name: `Panel area ${areas.length + 1}`, lengthM: "", widthM: "" }])} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 text-xs font-bold text-brand"><Plus size={15}/>Add another panel area</button>}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Wattson can help you measure or identify what a useful photo should show.</span></div>
+      <div className="flex flex-wrap items-center gap-3 pt-2"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text?">Wattson can help you measure or identify what a useful photo should show.</span></div>
     </div>
     {showMeasureHelp && <div className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-[#10233a]/55 p-4" onMouseDown={() => setShowMeasureHelp(false)}>
       <div role="dialog" aria-modal="true" aria-labelledby="measure-area-title" className="my-auto w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
@@ -390,7 +548,7 @@ function OrientationCard({ question, profile, panelLocations, panelAreaDimension
       <div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div>
     </div>
     <div className="space-y-3 p-6 md:p-8">
-      {!unknown && orientations.map((area) => <div key={area.id} className="grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 md:grid-cols-[1.2fr_1fr_1fr] md:items-end">
+      {!unknown && orientations.map((area) => <div key={area.id} className="theme-subtle-surface grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 md:grid-cols-[1.2fr_1fr_1fr] md:items-end">
         <div><span className="text-[10px] font-bold uppercase tracking-[.12em] text-muted">Panel area</span><div className="mt-2 text-sm font-extrabold">{area.name}</div></div>
         <label className="space-y-1.5 text-xs font-bold"><span>Facing direction</span><select value={area.direction} onChange={(event) => update(area.id, "direction", event.target.value)} className="field mt-0"><option value="">Choose direction</option>{area.id.startsWith("ground-") ? <option value="open">Open — direction can be selected or suggested</option> : null}{directionOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
         <label className="space-y-1.5 text-xs font-bold"><span>Existing surface slope</span><select value={area.slope} onChange={(event) => update(area.id, "slope", event.target.value)} className="field mt-0"><option value="">Choose slope</option>{slopeOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
@@ -427,7 +585,7 @@ function PanelObstructionsCard({ question, profile, panelLocations, panelAreaDim
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
     <div className="space-y-3 p-6 md:p-8">
-      {!unknown && items.filter((item) => item.kind !== "none").map((item) => <div key={item.id} className="grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 md:grid-cols-[1.2fr_1.35fr_1fr_1fr_auto] md:items-end"><label className="space-y-1.5 text-xs font-bold"><span>Panel area</span><select value={item.areaId} onChange={(event) => update(item.id, "areaId", event.target.value)} className="field mt-0">{areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}</select></label><label className="space-y-1.5 text-xs font-bold"><span>Obstruction</span><select value={item.kind} onChange={(event) => update(item.id, "kind", event.target.value)} className="field mt-0"><option value="">Choose type</option>{obstructionTypes.map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select></label><label className="space-y-1.5 text-xs font-bold"><span>Length (m)</span><input type="number" min="0" step="0.1" value={item.lengthM} onChange={(event) => update(item.id, "lengthM", event.target.value)} className="field mt-0"/></label><label className="space-y-1.5 text-xs font-bold"><span>Width (m)</span><input type="number" min="0" step="0.1" value={item.widthM} onChange={(event) => update(item.id, "widthM", event.target.value)} className="field mt-0"/></label><button type="button" onClick={() => save(items.filter((entry) => entry.id !== item.id))} className="rounded-lg border border-line p-2 text-muted hover:text-[#b9412b]" aria-label="Remove obstruction"><Trash2 size={15}/></button></div>)}
+      {!unknown && items.filter((item) => item.kind !== "none").map((item) => <div key={item.id} className="theme-subtle-surface grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 md:grid-cols-[1.2fr_1.35fr_1fr_1fr_auto] md:items-end"><label className="space-y-1.5 text-xs font-bold"><span>Panel area</span><select value={item.areaId} onChange={(event) => update(item.id, "areaId", event.target.value)} className="field mt-0">{areas.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}</select></label><label className="space-y-1.5 text-xs font-bold"><span>Obstruction</span><select value={item.kind} onChange={(event) => update(item.id, "kind", event.target.value)} className="field mt-0"><option value="">Choose type</option>{obstructionTypes.map(([type, label]) => <option key={type} value={type}>{label}</option>)}</select></label><label className="space-y-1.5 text-xs font-bold"><span>Length (m)</span><input type="number" min="0" step="0.1" value={item.lengthM} onChange={(event) => update(item.id, "lengthM", event.target.value)} className="field mt-0"/></label><label className="space-y-1.5 text-xs font-bold"><span>Width (m)</span><input type="number" min="0" step="0.1" value={item.widthM} onChange={(event) => update(item.id, "widthM", event.target.value)} className="field mt-0"/></label><button type="button" onClick={() => save(items.filter((entry) => entry.id !== item.id))} className="rounded-lg border border-line p-2 text-muted hover:text-[#b9412b]" aria-label="Remove obstruction"><Trash2 size={15}/></button></div>)}
       {!unknown && items.some((item) => item.kind === "none") && <div className="rounded-xl bg-[#f1faf5] p-4 text-xs font-semibold text-[#17603b]">No known obstructions recorded. This can be changed later.</div>}
       {!unknown && <div className="flex flex-wrap items-center gap-3"><button type="button" onClick={add} className="inline-flex items-center gap-2 rounded-xl border border-line bg-white px-4 py-2.5 text-xs font-bold text-brand"><Plus size={15}/>Add obstruction</button><button type="button" onClick={() => save([{ id: "none", areaId: "", kind: "none", lengthM: "", widthM: "" }])} className="rounded-xl border border-line px-4 py-2.5 text-xs font-bold text-muted">No known obstructions</button>{total > 0 && <span className="text-xs font-semibold text-muted">Known area to exclude: {total.toFixed(1)} m²</span>}</div>}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help identifying and measuring obstructions before continuing.</span></div>
@@ -456,13 +614,23 @@ const structureConditionOptions = [
 const groundSurfaceOptions = [
   ["grass", "Grass or pasture"], ["bare_soil", "Bare soil or dirt"],
   ["gravel", "Gravel or compacted aggregate"], ["cleared", "Cleared or prepared area"],
-  ["concrete_paved", "Concrete or paved area"], ["rocky", "Rocky ground"],
+  ["structural_slab", "Structural slab or foundation"], ["patio_drive_slab", "Patio or driveway slab"],
+  ["concrete_pavers", "Concrete pavers"], ["asphalt_hardstand", "Asphalt or other hardstand"],
+  ["concrete_paved", "Concrete or paved area — construction unknown"], ["rocky", "Rocky ground"],
 ] as const;
 
 const groundConditionOptions = [
   ["firm_dry", "Firm and generally dry"], ["soft_wet", "Soft or wet ground"],
   ["flood_prone", "Flood-prone or poor drainage"], ["rough_obstructed", "Rough or obstructed"],
 ] as const;
+
+const pavedConditionOptions = [
+  ["sound_level", "Sound and generally level"], ["cracked_damaged", "Cracked or damaged"],
+  ["uneven_settled", "Uneven or settled"], ["poor_drainage", "Poor drainage or water pooling"],
+  ["unknown", "Condition not yet checked"],
+] as const;
+
+const hardSurfaceMaterials = new Set(["structural_slab", "patio_drive_slab", "concrete_pavers", "asphalt_hardstand", "concrete_paved"]);
 
 function structureConditions(value: string | number | string[] | undefined, areas: PanelArea[]): StructureCondition[] {
   if (typeof value === "string" && value !== unknownAnswer) {
@@ -472,14 +640,14 @@ function structureConditions(value: string | number | string[] | undefined, area
         const saved = parsed.filter((item): item is StructureCondition => Boolean(item && typeof item === "object" && "id" in item && "name" in item));
         if (saved.length) return areas.map((area) => {
           const match = saved.find((item) => item.id === area.id || item.name === area.name);
-          return match ? { id: area.id, name: area.name, material: String(match.material ?? ""), age: area.id.startsWith("ground-") ? "not_applicable" : String(match.age ?? ""), condition: String(match.condition ?? "") } : { id: area.id, name: area.name, material: "", age: area.id.startsWith("ground-") ? "not_applicable" : "", condition: "" };
+          return match ? { id: area.id, name: area.name, material: String(match.material ?? ""), age: area.id.startsWith("ground-") ? "not_applicable" : String(match.age ?? ""), condition: String(match.condition ?? ""), constructionDetail: String(match.constructionDetail ?? "") } : { id: area.id, name: area.name, material: "", age: area.id.startsWith("ground-") ? "not_applicable" : "", condition: "", constructionDetail: "" };
         });
       }
     } catch {
       // Older free-text answers are replaced by the structured selectors below.
     }
   }
-  return areas.map((area) => ({ id: area.id, name: area.name, material: "", age: area.id.startsWith("ground-") ? "not_applicable" : "", condition: "" }));
+  return areas.map((area) => ({ id: area.id, name: area.name, material: "", age: area.id.startsWith("ground-") ? "not_applicable" : "", condition: "", constructionDetail: "" }));
 }
 
 function StructureConditionCard({ question, profile, panelLocations, panelAreaDimensions, value, setAnswer, onAskWattson }: {
@@ -494,15 +662,17 @@ function StructureConditionCard({ question, profile, panelLocations, panelAreaDi
   const unknown = value === unknownAnswer;
   const areas = panelAreas(panelAreaDimensions, panelLocations);
   const structures = structureConditions(value, areas);
-  const update = (id: string, field: "material" | "age" | "condition", fieldValue: string) => setAnswer(JSON.stringify(structures.map((area) => area.id === id ? { ...area, [field]: fieldValue } : area)));
+  const update = (id: string, field: "material" | "age" | "condition" | "constructionDetail", fieldValue: string) => setAnswer(JSON.stringify(structures.map((area) => area.id === id ? { ...area, [field]: fieldValue } : area)));
+  const updateMaterial = (id: string, material: string) => setAnswer(JSON.stringify(structures.map((area) => area.id === id ? { ...area, material, condition: "", constructionDetail: "" } : area)));
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
     <div className="space-y-3 p-6 md:p-8">
-      {!unknown && structures.map((area) => { const groundArea = area.id.startsWith("ground-"); return <div key={area.id} className={`grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 lg:items-end ${groundArea ? "lg:grid-cols-[1.1fr_1.4fr_1.2fr]" : "lg:grid-cols-[1.1fr_1.4fr_1fr_1.2fr]"}`}>
+      {!unknown && structures.map((area) => { const groundArea = area.id.startsWith("ground-"); const hardSurface = groundArea && hardSurfaceMaterials.has(area.material); return <div key={area.id} className={`theme-subtle-surface grid gap-3 rounded-2xl border border-line bg-[#fbfcfe] p-4 lg:items-end ${groundArea ? hardSurface ? "lg:grid-cols-[1fr_1.15fr_1.25fr_1.15fr]" : "lg:grid-cols-[1.1fr_1.4fr_1.2fr]" : "lg:grid-cols-[1.1fr_1.4fr_1fr_1.2fr]"}`}>
         <div><span className="text-[10px] font-bold uppercase tracking-[.12em] text-muted">Possible area</span><div className="mt-2 text-sm font-extrabold">{area.name}</div></div>
-        <label className="space-y-1.5 text-xs font-bold"><span>{groundArea ? "Ground surface" : "Surface or support type"}</span><select value={area.material} onChange={(event) => update(area.id, "material", event.target.value)} className="field mt-0"><option value="">Choose type</option>{(groundArea ? groundSurfaceOptions : structureMaterialOptions).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
+        <label className="space-y-1.5 text-xs font-bold"><span>{groundArea ? "Ground surface" : "Surface or support type"}</span><select value={area.material} onChange={(event) => groundArea ? updateMaterial(area.id, event.target.value) : update(area.id, "material", event.target.value)} className="field mt-0"><option value="">Choose type</option>{(groundArea ? groundSurfaceOptions : structureMaterialOptions).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
+        {hardSurface && <label className="space-y-1.5 text-xs font-bold"><span>Construction or thickness</span><input value={area.constructionDetail ?? ""} onChange={(event) => update(area.id, "constructionDetail", event.target.value)} className="field mt-0" placeholder="e.g. 100 mm, reinforced, unknown"/></label>}
         {!groundArea && <label className="space-y-1.5 text-xs font-bold"><span>Approximate age</span><select value={area.age} onChange={(event) => update(area.id, "age", event.target.value)} className="field mt-0"><option value="">Choose age</option>{structureAgeOptions.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>}
-        <label className="space-y-1.5 text-xs font-bold"><span>{groundArea ? "Ground condition" : "Current condition"}</span><select value={area.condition} onChange={(event) => update(area.id, "condition", event.target.value)} className="field mt-0"><option value="">Choose condition</option>{(groundArea ? groundConditionOptions : structureConditionOptions).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
+        <label className="space-y-1.5 text-xs font-bold"><span>{groundArea ? hardSurface ? "Hard-surface condition" : "Ground condition" : "Current condition"}</span><select value={area.condition} onChange={(event) => update(area.id, "condition", event.target.value)} className="field mt-0"><option value="">Choose condition</option>{(groundArea ? hardSurface ? pavedConditionOptions : groundConditionOptions : structureConditionOptions).map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}</select></label>
       </div>; })}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Wattson can explain what to inspect and what evidence is useful.</span></div>
     </div>
@@ -553,7 +723,7 @@ function NewSiteLocation({ siteName, defaultRegion, initial, onChange }: { siteN
     updateLocation({ ...selected, latitude, longitude });
   }
 
-  return <div className="mt-4 rounded-2xl border border-line bg-[#fbfcfe] p-4">
+  return <div className="theme-subtle-surface mt-4 rounded-2xl border border-line bg-[#fbfcfe] p-4">
     <div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><MapPin size={17}/></span><div><strong className="text-sm">Pinpoint the new Site</strong><p className="mt-1 text-[11px] leading-5 text-muted">Search for the property or use this device, then drag the pin to the exact installation position. This sets the Site’s solar coordinates and timezone.</p></div></div>
     <div className="mt-4 flex gap-2"><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchLocation(); } }} className="field mt-0" placeholder="Address, town, postcode or region"/><button type="button" onClick={() => void searchLocation()} disabled={searching || query.trim().length < 2} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40">{searching ? <LoaderCircle className="animate-spin" size={17}/> : <Search size={17}/>}</button></div>
     <button type="button" onClick={useDeviceLocation} disabled={locating} className="mt-2 flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold disabled:opacity-40"><LocateFixed size={14}/>{locating ? "Finding this device…" : "Use this device’s location"}</button>
@@ -590,8 +760,8 @@ function SystemSetupQuestionCard({ sites, selectedSiteId, siteName, defaultRegio
         <div className="text-sm font-extrabold">Where will this power system be located?</div>
         <p className="mt-1 text-[11px] leading-5 text-muted">Choose an existing Site, or name a new Site if this is at a different property or location.</p>
         {sites.length ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {sites.map((site) => { const selected = selectedSiteId === site.id; return <button key={site.id} type="button" onClick={() => setSite(site.id, site.name)} className={`rounded-2xl border p-4 text-left transition ${selected ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{site.name}</strong>{selected && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Add this power system to the existing Site.</p></button>; })}
-          <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">Create a new Site</strong>{selectedSiteId === "__new__" && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Use this for a different property or location.</p></button>
+          {sites.map((site) => { const selected = selectedSiteId === site.id; return <button key={site.id} type="button" onClick={() => setSite(site.id, site.name)} className={`rounded-2xl border p-4 text-left transition ${selected ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{site.name}</strong>{selected && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Add this power system to the existing Site.</p></button>; })}
+          <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">Create a new Site</strong>{selectedSiteId === "__new__" && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Use this for a different property or location.</p></button>
         </div> : null}
         {(!sites.length || selectedSiteId === "__new__") && <><input type="text" value={siteName} onChange={(event) => setSite("__new__", event.target.value)} className="field mt-3" placeholder="Site name, e.g. River Views"/><NewSiteLocation siteName={siteName} defaultRegion={defaultRegion} initial={siteLocationAnswers} onChange={setSiteLocation}/></>}
       </div>
@@ -621,12 +791,12 @@ function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, set
       <div className="grid gap-3 sm:grid-cols-2">
         {sites.map((site) => {
           const selected = selectedSiteId === site.id;
-          return <button key={site.id} type="button" onClick={() => setSite(site.id, site.name)} className={`rounded-2xl border p-4 text-left transition ${selected ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}>
+          return <button key={site.id} type="button" onClick={() => setSite(site.id, site.name)} className={`rounded-2xl border p-4 text-left transition ${selected ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}>
             <div className="flex items-start justify-between gap-3"><strong className="text-sm">{site.name}</strong>{selected && <Check className="text-brand" size={16}/>}</div>
             <p className="mt-2 text-[11px] leading-5 text-muted">Add this power system to the existing Site.</p>
           </button>;
         })}
-        <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}>
+        <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}>
           <div className="flex items-start justify-between gap-3"><strong className="text-sm">Create a new Site</strong>{selectedSiteId === "__new__" && <Check className="text-brand" size={16}/>}</div>
           <p className="mt-2 text-[11px] leading-5 text-muted">Use this when the system is at a different property or location.</p>
         </button>
@@ -643,6 +813,7 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
   const existingEquipment = selectedAnswer === "existing" || (Array.isArray(selectedAnswer) && selectedAnswer.includes("existing"));
   const equipmentName = question.id === "dc_system_voltage" ? "battery" : question.id === "architecture_preference" ? "inverter" : question.id === "panel_construction_interest" ? "solar panels" : "equipment";
   const customBatteryAssessment = question.id === "battery_chemistry" && selectedAnswer === "custom_home_built";
+  const explainingArchitecture = question.id === "architecture_preference" && !existingEquipment;
   const compareModuleArrangements = question.id === "module_level_electronics" && Array.isArray(selectedAnswer) && selectedAnswer.includes("compare");
   const existingModuleEquipment = question.id === "module_level_electronics" && Array.isArray(selectedAnswer) && selectedAnswer.includes("existing_mixed");
   const openingMessage = compareModuleArrangements
@@ -651,12 +822,15 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
       ? "Let’s identify the existing or mixed panel-level equipment you want considered for this build. Send the exact panel, optimiser, microinverter and main-inverter makes and models, plus label photos or manufacturer documents where available. I’ll verify voltage, current, power, connector, string or branch, communications and firmware compatibility. Nothing will be treated as compatible merely because the connectors fit or the brands appear related."
       : customBatteryAssessment
     ? "Before a custom or home-built battery can remain in this build, we need a significant evidence review. I’ll work through its source and history; exact cell chemistry and series/parallel configuration; nominal and maximum voltage; capacity; BMS, contactors, pre-charge and isolation monitoring; fusing and disconnects; enclosure, condition and thermal management; charge/discharge limits; inverter compatibility; and available test or inspection evidence. I will ask for one evidence item at a time. When the review is complete I’ll clearly recommend either retaining it or NOT using it. You make the final choice, but missing safety-critical evidence will keep it marked unverified. First: is this a purpose-built custom pack, or does it use salvaged modules or a complete pack from a vehicle or other system?"
+    : explainingArchitecture
+    ? "I can define every inverter arrangement shown here and compare the ones that suit this Site. In particular, a hybrid inverter is one central solar inverter with battery capability available now or later, while a modular arrangement uses separate solar controllers and inverter equipment. Tell me which options you want compared, or ask me to recommend a suitable arrangement from your discovery answers."
     : existingEquipment
     ? `Let’s identify the ${equipmentName} you want considered for this build. Send the make and model, the rating-label specifications, or a clear photo of the label. I’ll assess compatibility rather than assume it belongs in the design. If it is unsuitable or the evidence is insufficient, I’ll say so and explain why.`
-    : `Let’s work only on this question: “${question.title}” What part would you like me to explain or help you identify?`;
+    : `Let’s work only on this question: “${question.title}” If it’s something you can see, show me with a photo if you can—it may save several questions. Otherwise, tell me what you know and what you want help identifying.`;
   const [messages, setMessages] = useState<DiscoveryHelpMessage[]>([{ role: "assistant", content: openingMessage }]);
   const [conversationId, setConversationId] = useState<string | undefined>(existingConversationId);
   const [input, setInput] = useState("");
+  const [attachment, setAttachment] = useState<File>();
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -669,21 +843,24 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
   }, [messages, sending, error]);
 
   async function send() {
-    const message = input.trim();
+    const message = input.trim() || (attachment ? "Please read this equipment label and help me answer this question." : "");
     if (!message || sending) return;
-    const nextMessages = [...messages, { role: "user" as const, content: message }];
+    const displayedMessage = attachment ? `${message}\n\n[Attached image: ${attachment.name}]` : message;
+    const nextMessages = [...messages, { role: "user" as const, content: displayedMessage }];
     setMessages(nextMessages); setInput(""); setSending(true); setError("");
     try {
-      const response = await fetch("/api/wattson/discovery-help", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message, conversationId, discoveryDraftId, siteId, projectId, discoveryAnswers, question: { id: question.id, title: question.title, stage: question.stage, help: question.noviceHelp, options: question.options }, recentConversation: nextMessages.slice(-8) }),
-      });
+      const payload = { message, conversationId, discoveryDraftId, siteId, projectId, discoveryAnswers, question: { id: question.id, title: question.title, stage: question.stage, help: question.noviceHelp, options: question.options }, recentConversation: nextMessages.slice(-8) };
+      const formData = new FormData();
+      formData.set("payload", JSON.stringify(payload));
+      if (attachment) formData.set("file", attachment);
+      const response = await fetch("/api/wattson/discovery-help", { method: "POST", body: formData });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable.");
       setConversationId(body.conversationId);
       onConversation(body.conversationId);
       if (typeof body.safetyDecision === "string") onSafetyDecision(body.safetyDecision);
       setMessages((current) => [...current, { role: "assistant", content: String(body.message) }]);
+      setAttachment(undefined);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Wattson is unavailable."); }
     finally { setSending(false); }
   }
@@ -692,7 +869,17 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
     <section className="flex h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-t-3xl border border-line bg-white shadow-2xl sm:h-[min(720px,88dvh)] sm:rounded-3xl">
       <header className="flex items-center gap-3 border-b border-line bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)] p-4"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-brand text-white"><Bot size={20}/></span><div className="min-w-0 flex-1"><div className="eyebrow">Discovery chat</div><h2 className="mt-1 truncate text-sm font-extrabold">{question.title}</h2></div><button type="button" onClick={onClose} className="grid size-10 place-items-center rounded-xl border border-line bg-white text-muted" aria-label="Close discovery help"><X size={18}/></button></header>
       <div ref={messageListRef} className="thin-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#f8fafc] p-4">{messages.map((item, index) => <div key={index} className={`flex ${item.role === "user" ? "justify-end" : "justify-start"}`}><div className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-[13px] leading-5 ${item.role === "user" ? "bg-brand text-white" : "border border-line bg-white"}`}><FormattedChatMessage content={item.content}/></div></div>)}{sending ? <p className="text-xs font-semibold text-muted">Wattson is thinking…</p> : null}{error ? <p className="rounded-xl bg-[#fff0eb] p-3 text-xs text-[#913e31]">{error}</p> : null}</div>
-      <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="border-t border-line bg-white p-3"><p className="mb-2 text-[11px] leading-4 text-muted">This subject stays separate from your main chats and is saved in Wattson chats.</p><div className="flex items-end gap-2"><textarea value={input} onChange={(event) => setInput(event.target.value)} rows={2} placeholder="Tell Wattson what you need to understand…" className="field mt-0 min-h-12 flex-1 resize-none py-3 text-[16px]"/><button disabled={!input.trim() || sending} className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send"><Send size={18}/></button></div><button type="button" onClick={onClose} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-brand bg-white text-xs font-extrabold text-brand"><ArrowLeft size={15}/>Back to questions</button></form>
+      <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="border-t border-line bg-white p-3">
+        <p className="mb-2 text-[11px] leading-4 text-muted">Show Wattson with a photo if you can. Photos can reveal useful evidence, but cannot prove structural or electrical safety.</p>
+        {attachment ? <div className="mb-2 flex items-center gap-2 rounded-xl border border-line bg-[#edf6fd] px-3 py-2 text-xs"><ImagePlus size={15} className="shrink-0 text-brand"/><span className="min-w-0 flex-1 truncate">{attachment.name}</span><button type="button" onClick={() => setAttachment(undefined)} aria-label="Remove attached image"><X size={15}/></button></div> : null}
+        <div className="flex items-end gap-2">
+          <label className="flex h-12 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-line bg-white px-3 text-xs font-bold text-brand" aria-label="Take a photo or choose one from the gallery"><ImagePlus size={18}/><span className="hidden sm:inline">Photo</span><input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => setAttachment(event.target.files?.[0])}/></label>
+          <textarea value={input} onChange={(event) => setInput(event.target.value)} rows={2} placeholder="Ask about the photo or this question…" className="field mt-0 min-h-12 flex-1 resize-none py-3 text-[16px]"/>
+          <button disabled={(!input.trim() && !attachment) || sending} className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send"><Send size={18}/></button>
+        </div>
+        <p className="mt-2 text-[10px] leading-4 text-muted">JPEG, PNG or WebP, up to 8 MB. On a phone, the photo chooser can offer the camera or gallery.</p>
+        <button type="button" onClick={onClose} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-brand bg-white text-xs font-extrabold text-brand"><ArrowLeft size={15}/>Back to questions</button>
+      </form>
     </section>
   </div>;
 }
@@ -705,6 +892,22 @@ function Review({ answers, questions, onSelectQuestion }: { answers: DiscoveryAn
 function answerLabel(question: DiscoveryQuestion, value: string | number | string[] | undefined) {
   if (value===unknownAnswer || value==="unknown" || value==="not_checked" || value==="not_decided" || value==="undecided" || value==="unknown_chemistry") return "Answer required";
   if (value===undefined || value==="") return "Not answered";
+  if (typeof value === "string" && ["pool_equipment_ratings", "household_motor_ratings"].includes(question.id)) {
+    try {
+      const entries = Object.values(JSON.parse(value) as Record<string, PoolLoadEntry>).filter((entry) => (entry.quantity ?? 0) > 0 && (entry.runningKw ?? 0) > 0);
+      if (!entries.length) return "No additional electrical load included";
+      const runningTotal = entries.reduce((sum, entry) => sum + (entry.runningKw ?? 0) * (entry.quantity ?? 0), 0);
+      const simultaneousRunning = entries.reduce((sum, entry) => sum + (entry.simultaneous === false ? 0 : (entry.runningKw ?? 0) * (entry.quantity ?? 0)), 0);
+      const startupPeak = entries.reduce((peak, entry) => {
+        if (entry.simultaneous === false) return peak;
+        const quantity = entry.quantity ?? 0;
+        const running = (entry.runningKw ?? 0) * quantity;
+        const starting = (entry.startingKw ?? entry.runningKw ?? 0) * quantity;
+        return Math.max(peak, simultaneousRunning + Math.max(0, starting - running));
+      }, simultaneousRunning);
+      return `${Number(runningTotal.toFixed(2))} kW running total · ${Number(startupPeak.toFixed(2))} kW estimated startup peak`;
+    } catch { return "Load totals need review"; }
+  }
   if (typeof value === "string" && ["panel_area_dimensions", "orientation_and_pitch", "structure_condition", "panel_area_constraints"].includes(question.id)) {
     try {
       const rows = JSON.parse(value) as Array<Record<string, unknown>>;
@@ -713,7 +916,7 @@ function answerLabel(question: DiscoveryQuestion, value: string | number | strin
         if (question.id === "panel_area_dimensions") return `${name}: ${String(row.lengthM ?? "?")} m × ${String(row.widthM ?? "?")} m`;
         if (question.id === "orientation_and_pitch") return `${name}: ${String(row.direction ?? "unknown direction").replaceAll("_", " ")}, ${String(row.slope ?? "unknown slope").replaceAll("_", " ")}`;
         if (question.id === "panel_area_constraints") return row.kind === "none" ? "No known obstructions" : `${String(row.kind ?? "obstruction").replaceAll("_", " ")}: ${String(row.lengthM ?? "?")} m × ${String(row.widthM ?? "?")} m`;
-        if (String(row.id ?? "").startsWith("ground-")) return `${name}: ${String(row.material ?? "unknown ground surface").replaceAll("_", " ")}, ${String(row.condition ?? "unknown condition").replaceAll("_", " ")}`;
+        if (String(row.id ?? "").startsWith("ground-")) return `${name}: ${String(row.material ?? "unknown ground surface").replaceAll("_", " ")}${row.constructionDetail ? `, ${String(row.constructionDetail)}` : ""}, ${String(row.condition ?? "unknown condition").replaceAll("_", " ")}`;
         return `${name}: ${String(row.material ?? "unknown support").replaceAll("_", " ")}, ${String(row.age ?? "unknown age").replaceAll("_", " ")}, ${String(row.condition ?? "unknown condition").replaceAll("_", " ")}`;
       }).join("; ");
     } catch { return "Needs structured details"; }

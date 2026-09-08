@@ -19,8 +19,21 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
-  const parsed = schema.safeParse(await request.json());
+  let rawPayload: unknown;
+  let imageFile: File | undefined;
+  if (request.headers.get("content-type")?.includes("multipart/form-data")) {
+    const form = await request.formData();
+    const payload = form.get("payload");
+    const file = form.get("file");
+    try { rawPayload = typeof payload === "string" ? JSON.parse(payload) : undefined; }
+    catch { rawPayload = undefined; }
+    if (file instanceof File) imageFile = file;
+  } else rawPayload = await request.json();
+  const parsed = schema.safeParse(rawPayload);
   if (!parsed.success) return Response.json({ error: "Invalid discovery help request." }, { status: 400 });
+  if (imageFile && (!new Set(["image/jpeg", "image/png", "image/webp"]).has(imageFile.type) || !imageFile.size || imageFile.size > 8 * 1024 * 1024)) {
+    return Response.json({ error: "Use a JPEG, PNG or WebP image smaller than 8 MB." }, { status: 400 });
+  }
   const supabase = await createClient(); const claims = await supabase.auth.getClaims(); const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -83,7 +96,9 @@ export async function POST(request: Request) {
   if (parsed.data.siteId || parsed.data.projectId) {
     await supabase.from("user_conversations").update({ site_id: parsed.data.siteId ?? null, project_id: parsed.data.projectId ?? null, title: conversationTitle }).eq("id", conversationId).eq("owner_id", userId);
   }
-  const userWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "user", content: parsed.data.message, structured_context: { kind: "discovery_help", questionId: parsed.data.question.id } });
+  const image = imageFile ? { data: Buffer.from(await imageFile.arrayBuffer()).toString("base64"), mimeType: imageFile.type } : undefined;
+  const userContent = imageFile ? `${parsed.data.message}\n\n[Attached image: ${imageFile.name}]` : parsed.data.message;
+  const userWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "user", content: userContent, structured_context: { kind: "discovery_help", questionId: parsed.data.question.id, imageName: imageFile?.name, mimeType: imageFile?.type } });
   if (userWrite.error) return Response.json({ error: userWrite.error.message }, { status: 400 });
 
   const question = parsed.data.question;
@@ -109,7 +124,8 @@ export async function POST(request: Request) {
     project: { ...demoProject, id: parsed.data.projectId ?? `discovery-${conversationId}`, siteId: parsed.data.siteId, name: `${siteName} discovery help`, location, projectType: confirmedProjectType },
     recentConversation: parsed.data.recentConversation,
     allowActions: false,
-    message: `You are in a dedicated phone-a-friend ${helpContext} chat. ${contextInstruction} Stay strictly on the active item until the user understands it and has a usable answer. The confirmed discovery answers below are authoritative context. Never contradict them, invent an unselected goal or priority, assume equipment that was not recorded, or substitute the demo project's defaults. Discuss generator operation only when the confirmed answers or the user's current message explicitly mention a generator. For a grid-connected system, explain battery reserve as outage backup while the grid is unavailable; do not describe it as normal off-grid autonomy. Teach in plain language and help the user identify evidence such as a label, measurement, bill or photo when that evidence is necessary to answer this exact question. Ask one focused clarifying question only when the active question cannot yet be answered. The chat remains open: if the user voluntarily continues with another question about this same active subject, answer it fully and helpfully, but still do not manufacture a follow-up question merely to prolong the conversation. Never use a closing question to explore mounting conditions, equipment, loads, design details, or any other adjacent discovery subject. Do not save an answer or alter any project record from this help chat. Never claim certainty when facts are missing.\n\nConfirmed discovery answers:\n${JSON.stringify(discoveryAnswers)}\n\nActive question:\n${JSON.stringify(question)}\n\nUser message: ${parsed.data.message}`,
+    message: `You are in a dedicated phone-a-friend ${helpContext} chat. ${contextInstruction} Stay strictly on the active item until the user understands it and has a usable answer. The confirmed discovery answers below are authoritative context. Never contradict them, invent an unselected goal or priority, assume equipment that was not recorded, or substitute the demo project's defaults. Discuss generator operation only when the confirmed answers or the user's current message explicitly mention a generator. For a grid-connected system, explain battery reserve as outage backup while the grid is unavailable; do not describe it as normal off-grid autonomy. Teach in plain language and help the user identify evidence such as a label, measurement, bill or photo when that evidence is necessary to answer this exact question. When an image is attached, report visible evidence first and clearly distinguish it from anything requiring measurement or qualified inspection. Never declare a roof structurally suitable, electrical equipment safe, or an installation compliant from a photo alone. Ask one focused clarifying question only when the active question cannot yet be answered. The chat remains open: if the user voluntarily continues with another question about this same active subject, answer it fully and helpfully, but still do not manufacture a follow-up question merely to prolong the conversation. Never use a closing question to explore mounting conditions, equipment, loads, design details, or any other adjacent discovery subject. Do not save an answer or alter any project record from this help chat. Never claim certainty when facts are missing.\n\nConfirmed discovery answers:\n${JSON.stringify(discoveryAnswers)}\n\nActive question:\n${JSON.stringify(question)}\n\nUser message: ${parsed.data.message}`,
+    image,
   });
   const assistantWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: result.message, structured_context: { kind: "discovery_help", questionId: question.id, provider: "gemini", model: result.model, citations: result.citations } });
   if (assistantWrite.error) return Response.json({ error: assistantWrite.error.message }, { status: 400 });

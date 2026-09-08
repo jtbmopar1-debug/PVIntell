@@ -4,8 +4,9 @@ import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { createClient } from "@/lib/supabase/server";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 
-export default async function SiteDiscoveryPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function SiteDiscoveryPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ system?: string }> }) {
   const { id } = await params;
+  const { system } = await searchParams;
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
@@ -23,5 +24,5 @@ export default async function SiteDiscoveryPage({ params }: { params: Promise<{ 
   if (sites.error) throw new Error(sites.error.message);
   if (discovery.error) throw new Error(discovery.error.message);
   const assessment = (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers;
-  return <GuidedNewSystem profile={assessment} sites={sites.data ?? []} initialAnswers={(discovery.data?.answers ?? {}) as DiscoveryAnswers} initialQuestionId={discovery.data?.question_id ?? undefined} siteDiscoveryId={id} returnUrl={`/sites/${id}`} />;
+  return <GuidedNewSystem profile={assessment} sites={sites.data ?? []} initialAnswers={(discovery.data?.answers ?? {}) as DiscoveryAnswers} initialQuestionId={discovery.data?.question_id ?? undefined} existingSystemId={system} siteDiscoveryId={id} returnUrl={`/sites/${id}`} />;
 }

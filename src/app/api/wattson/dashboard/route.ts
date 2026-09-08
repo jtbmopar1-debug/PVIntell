@@ -62,7 +62,7 @@ function answerMatchesDiscovery(key: string, message: string) {
     heavy_or_surge_loads: /\b(?:tool|pump|welder|compressor|motor|saw|oven|heater|ev|charger|none|nothing)\w*\b/i,
     generator_requirement: /\b(?:generator|genset|no generator|prepare for one)\b/i,
     generator_details: /\b(?:generator|genset).*(?:model|petrol|gasoline|diesel|lpg|propane|kw|kva|ats|start|phase|volt)/i,
-    building_type: /\b(?:house|home|townhouse|apartment|unit|shed|workshop|garage|farm|cabin|building)\b/i,
+    building_type: /\b(?:house|home|townhouse|apartment|unit|shed|workshop|garage|farm|cabin|building|pool|spa|jacuzzi|vehicle|motorhome|caravan|campervan|boat|marine)\b/i,
     property_authority: /\b(?:own|owner|rent|renter|landlord|body corporate|shared|permission|approval)\b/i,
     proposed_panel_location: /\b(?:roof|ground|frame|shed|garage|carport|wall|unsure|don'?t know)\b/i,
     delivery_approach: /\b(?:diy|myself|shared|trade|installer|turnkey|contractor)\b/i,

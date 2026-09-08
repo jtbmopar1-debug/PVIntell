@@ -5,6 +5,11 @@ html[data-theme="dark"]{--ink:#e7eef7;--muted:#a7b5c6;--canvas:#0b1523;--paper:#
 @theme inline{--font-sans:var(--font-body);--font-display:var(--font-display);--color-ink:var(--ink);--color-muted:var(--muted);--color-canvas:var(--canvas);--color-paper:var(--paper);--color-line:var(--line);--color-brand:var(--blue);--color-lime:var(--solar)}
 *{box-sizing:border-box}html{background:var(--canvas);font-size:14px}body{margin:0;color:var(--ink);background:radial-gradient(circle at 78% -8%,rgba(246,201,69,.2),transparent 28rem),radial-gradient(circle at 10% 25%,rgba(22,93,156,.06),transparent 32rem),var(--canvas);font-family:var(--font-body),sans-serif}button,input,textarea,select{font:inherit}button{cursor:pointer}::selection{background:var(--solar);color:var(--ink)}
 html[data-theme="dark"] body{background:radial-gradient(circle at 78% -8%,rgba(246,201,69,.1),transparent 28rem),radial-gradient(circle at 10% 25%,rgba(70,150,220,.1),transparent 32rem),var(--canvas)}html[data-theme="dark"] .card{background:rgba(18,31,47,.96);border-color:var(--line);box-shadow:0 7px 22px rgba(0,0,0,.22)}html[data-theme="dark"] .bg-white,html[data-theme="dark"] [class*="bg-white/"]{background-color:#142335!important}html[data-theme="dark"] .bg-canvas,html[data-theme="dark"] .bg-\[\#edf3f7\],html[data-theme="dark"] .bg-\[\#f5f7fa\],html[data-theme="dark"] .bg-\[\#f3f6fa\]{background-color:var(--canvas)!important}html[data-theme="dark"] .bg-\[\#f6f9fc\],html[data-theme="dark"] .bg-\[\#fbfcfd\],html[data-theme="dark"] .bg-\[\#f1f5f8\],html[data-theme="dark"] .bg-\[\#eef3f8\],html[data-theme="dark"] .bg-\[\#eaf2fb\],html[data-theme="dark"] .bg-\[\#eef5fb\],html[data-theme="dark"] .bg-\[\#f5f8fb\]{background-color:#192a3d!important}html[data-theme="dark"] .field{border-color:var(--line);background:#0f1c2b;color:var(--ink)}html[data-theme="dark"] input::placeholder,html[data-theme="dark"] textarea::placeholder{color:#8090a3}html[data-theme="dark"] select option{background:#142335;color:var(--ink)}
+html[data-theme="dark"] [class~="bg-[#edf5fd]"],html[data-theme="dark"] [class~="bg-[#edf5fc]"]{background-color:#193149!important}
+html[data-theme="dark"] .theme-selected-tile{background:#193149!important;color:var(--ink)!important}
+html[data-theme="dark"] .theme-selected-tile .text-muted{color:#b8c8d9!important}
+html[data-theme="dark"] .theme-subtle-surface{background:#101f30!important;color:var(--ink)!important}
+html[data-theme="dark"] .theme-subtle-surface .text-muted{color:#aebed0!important}
 .card{border:1px solid rgba(22,93,156,.12);background:rgba(255,253,248,.94);border-radius:14px;box-shadow:0 7px 20px rgba(15,59,102,.055)}.eyebrow{color:var(--blue);font-size:9px;line-height:1;font-weight:800;text-transform:uppercase;letter-spacing:.12em}.thin-scrollbar{scrollbar-width:thin;scrollbar-color:#c8d4e0 transparent}@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}.animate-rise{animation:rise .32s ease-out both}
 .field{display:block;width:100%;height:38px;margin-top:5px;border:1px solid var(--line);border-radius:9px;background:#fff;padding:0 10px;color:var(--ink);font-size:11px;font-weight:500;outline:none}.field:focus{border-color:var(--blue);box-shadow:0 0 0 2px rgba(22,93,156,.1)}textarea.field{height:auto;resize:vertical}
 .wattson-composer-input{font-size:16px!important;line-height:1.5rem!important}
@@ -17,6 +22,62 @@ html[data-theme="dark"] .systems-card-list>article.card>div:first-child{backgrou
 html[data-theme="dark"] .systems-card-list>article.card>div:first-child .text-muted{color:#b5c3d3}
 .dashboard-actions a>div>strong,.dashboard-actions button>div>strong{color:#143c63}
 nav[aria-label="Primary navigation"] a,nav[aria-label="Primary navigation"] button{color:#143c63}
+
+/* Pale feature and status surfaces need their own dark palette. Keeping their
+   light-mode gradients made inherited headings nearly white on cream. */
+html[data-theme="dark"] [class~="bg-[linear-gradient(110deg,#eef5fc,#fff8d9)]"],
+html[data-theme="dark"] [class~="bg-[linear-gradient(105deg,#eef5fc,#fff8d9)]"],
+html[data-theme="dark"] [class~="bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)]"] {
+  background-image:linear-gradient(110deg,#172d43,#292b20)!important;
+}
+html[data-theme="dark"] [class~="bg-[linear-gradient(105deg,#eef7f2,#ffffff)]"],
+html[data-theme="dark"] [class~="bg-[linear-gradient(120deg,#eef7f2,#f8fbfd)]"] {
+  background-image:linear-gradient(110deg,#183128,#182a3b)!important;
+}
+html[data-theme="dark"] [class~="bg-[linear-gradient(135deg,#fff3b7,#edf6ff)]"],
+html[data-theme="dark"] [class~="bg-[linear-gradient(125deg,#fafcfe_10%,#fff7d6)]"],
+html[data-theme="dark"] [class~="bg-[linear-gradient(180deg,#fffdf5,#f5f8fc)]"],
+html[data-theme="dark"] [class~="bg-[linear-gradient(120deg,#eaf3fb,#f8fbfd)]"],
+html[data-theme="dark"] [class~="bg-[linear-gradient(120deg,#f1f4f6,#f8fbfd)]"] {
+  background-image:linear-gradient(120deg,#192b3d,#25291f)!important;
+}
+
+html[data-theme="dark"] [class~="bg-[#fff9df]"],
+html[data-theme="dark"] [class~="bg-[#fff8df]"],
+html[data-theme="dark"] [class~="bg-[#fff6cf]"],
+html[data-theme="dark"] [class~="bg-[#fff1bc]"],
+html[data-theme="dark"] [class~="bg-[#fff0a9]"],
+html[data-theme="dark"] [class~="bg-[#fff0a8]"] {background-color:#302a17!important}
+html[data-theme="dark"] [class~="bg-[#f2fbf5]"],
+html[data-theme="dark"] [class~="bg-[#f1faf5]"],
+html[data-theme="dark"] [class~="bg-[#dff3e8]"],
+html[data-theme="dark"] [class~="bg-[#dff2e6]"] {background-color:#173126!important}
+html[data-theme="dark"] [class~="bg-[#fff1ed]"],
+html[data-theme="dark"] [class~="bg-[#fff0ed]"],
+html[data-theme="dark"] [class~="bg-[#fff0eb]"] {background-color:#3a211f!important}
+
+html[data-theme="dark"] [class~="text-[#143c63]"],
+html[data-theme="dark"] [class~="text-[#175a96]"] {color:#9dcef4!important}
+html[data-theme="dark"] [class~="text-[#8a6400]"],
+html[data-theme="dark"] [class~="text-[#8b6512]"],
+html[data-theme="dark"] [class~="text-[#93630a]"],
+html[data-theme="dark"] [class~="text-[#9a6b00]"],
+html[data-theme="dark"] [class~="text-[#a36a00]"],
+html[data-theme="dark"] [class~="text-[#725800]"],
+html[data-theme="dark"] [class~="text-[#765c1c]"] {color:#f4d474!important}
+html[data-theme="dark"] [class~="text-[#17603b]"],
+html[data-theme="dark"] [class~="text-[#20724b]"] {color:#8ed9af!important}
+html[data-theme="dark"] [class~="text-[#8b432f]"],
+html[data-theme="dark"] [class~="text-[#913e31]"],
+html[data-theme="dark"] [class~="text-[#9b3f2c]"],
+html[data-theme="dark"] [class~="text-[#9b4033]"],
+html[data-theme="dark"] [class~="text-[#9a4937]"],
+html[data-theme="dark"] [class~="text-[#a7442d]"],
+html[data-theme="dark"] [class~="text-[#b9412b]"] {color:#f1a698!important}
+html[data-theme="dark"] .dashboard-actions a>div>strong,
+html[data-theme="dark"] .dashboard-actions button>div>strong,
+html[data-theme="dark"] nav[aria-label="Primary navigation"] a,
+html[data-theme="dark"] nav[aria-label="Primary navigation"] button {color:var(--ink)}
 .wattson-conversation,
 #wattson > .thin-scrollbar {
   height: clamp(360px, 52vh, 520px) !important;
@@ -72,4 +133,38 @@ a.block.text-center.text-xs.font-bold.text-brand[href*="focus="]::after {
 html[data-theme="dark"] #wattson .bg-white {
   background-color: #fff !important;
   color: #14233a;
+}
+.pool-calculator-locked::before {
+  content: "Confirm a climate region before the calculator can be used.";
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--paper);
+  color: var(--muted);
+  padding: 0.75rem 0.875rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.pool-calculator-locked > label {
+  pointer-events: none;
+  opacity: 0.42;
+}
+.flex.justify-between:has(> button > .lucide-bot) {
+  justify-content: flex-start;
+}
+
+.flex:has(> button > .lucide-bot) > span {
+  color: var(--muted);
+}
+
+[role="status"]:has(> .lucide-check) {
+  padding-inline: 1rem;
+  color: #236438;
+}
+
+html[data-theme="dark"] [role="status"]:has(> .lucide-check) {
+  border-color: #467d59;
+  background: #173525;
+  color: #a9e4ba;
 }

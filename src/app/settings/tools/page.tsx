@@ -5,11 +5,12 @@ import { ApplianceRunningCalculator } from "@/components/appliance-running-calcu
 import { AzimuthCalculator } from "@/components/azimuth-calculator";
 import { BrandLogo } from "@/components/brand-logo";
 import { CableProtectionCalculator } from "@/components/cable-protection-calculator";
+import { PoolHeatingCalculator } from "@/components/pool-heating-calculator";
 import { SystemFinancials } from "@/components/system-financials";
 import type { SystemFinancialsState } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 
-export default async function ToolsPage({ searchParams }: { searchParams: Promise<{ site?: string; system?: string }> }) {
+export default async function ToolsPage({ searchParams }: { searchParams: Promise<{ site?: string; system?: string; calculator?: string; returnTo?: string }> }) {
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
@@ -29,6 +30,7 @@ export default async function ToolsPage({ searchParams }: { searchParams: Promis
   const projectSettings = (selectedProject?.settings ?? {}) as { systemFinancials?: SystemFinancialsState };
   const financials = projectSettings.systemFinancials ?? { currency: "NZD", entries: [] };
   const initialLocation = { latitude: Number(site?.latitude ?? 0), longitude: Number(site?.longitude ?? 0), label: site?.location || site?.name || "Enter a location" };
+  const calculatorReturnTo = query.returnTo?.startsWith("/") && !query.returnTo.startsWith("//") ? query.returnTo : undefined;
 
   return <main className="min-h-screen bg-canvas p-3 md:p-5"><div className="mx-auto max-w-4xl">
     <div className="flex items-center justify-between"><Link href="/settings" className="flex items-center gap-2 text-xs font-bold text-muted"><ArrowLeft size={15}/>Settings</Link><BrandLogo compact/></div>
@@ -44,6 +46,8 @@ export default async function ToolsPage({ searchParams }: { searchParams: Promis
     </section>
 
     <ApplianceRunningCalculator/>
+
+    <PoolHeatingCalculator locationLabel={initialLocation.label} returnTo={calculatorReturnTo}/>
 
     <section className="card mt-4 overflow-hidden">
       <div className="flex items-center gap-2.5 border-b border-line p-3 sm:px-4"><span className="grid size-8 place-items-center rounded-lg bg-[#fff1ac] text-brand"><Compass size={15}/></span><div><div className="eyebrow">Solar orientation</div><h2 className="mt-1 text-base font-extrabold">Azimuth &amp; tilt calculator</h2></div></div>
