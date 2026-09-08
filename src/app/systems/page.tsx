@@ -23,6 +23,8 @@ export default async function SystemsPage({ searchParams }: { searchParams: Prom
   const systems: SystemSummary[] = (systemRows.data ?? []).map((system) => {
     const settings = (system.settings ?? {}) as { designCalculator?: DesignCalculatorState };
     const completedAreas = system.phase === "discover" ? [] : ["setup"];
+    const reviewableComponents = (settings.designCalculator?.proposedAsBuiltDraft?.nodes ?? []).filter((node) => !node.authorityCheck);
+    if (reviewableComponents.length > 0 && reviewableComponents.every((node) => node.reviewed === true)) completedAreas.push("design");
     if (settings.designCalculator?.proposedChecklist?.["proposed-schematic"]) completedAreas.push("proposed-schematic");
     return { id: system.id, siteId: system.site_id, name: system.name, projectType: String(system.mode).replace("_", "-") as SystemSummary["projectType"], phase: system.phase as SystemSummary["phase"], completedAreas };
   });

@@ -3,7 +3,7 @@
 import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Eye, EyeOff, Minus, Plus, RotateCcw, Save, Sun, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
@@ -15,7 +15,25 @@ const projectIdFromHref = (href: string) => href.match(/\/systems\/([0-9a-f-]{36
 const projectSiteIdFromHref = (href: string) => href.match(/\/sites\/([0-9a-f-]{36})/i)?.[1];
 const planningCableForCurrent = (amps: number) => amps <= 10 ? 1.5 : amps <= 16 ? 2.5 : amps <= 25 ? 4 : amps <= 32 ? 6 : amps <= 50 ? 10 : amps <= 63 ? 16 : amps <= 80 ? 25 : amps <= 100 ? 35 : amps <= 125 ? 50 : amps <= 160 ? 70 : 95;
 const planningAcCableForCurrent = (amps: number) => amps <= 10 ? 1.5 : amps <= 20 ? 2.5 : amps <= 28 ? 4 : amps <= 40 ? 6 : planningCableForCurrent(amps);
-const planningProtectiveEarthForActive = (activeCableMm2: number) => activeCableMm2 <= 2.5 ? 1.5 : activeCableMm2 <= 6 ? 2.5 : activeCableMm2 <= 10 ? 4 : activeCableMm2 <= 16 ? 6 : activeCableMm2 <= 25 ? 10 : activeCableMm2 <= 35 ? 16 : activeCableMm2 <= 50 ? 25 : Math.ceil(activeCableMm2 / 2);
+const asNzsProtectiveEarthForActive = (activeCableMm2: number) => activeCableMm2 <= 2.5 ? 1.5 : activeCableMm2 <= 6 ? 2.5 : activeCableMm2 <= 10 ? 4 : activeCableMm2 <= 16 ? 6 : activeCableMm2 <= 25 ? 10 : activeCableMm2 <= 35 ? 16 : activeCableMm2 <= 50 ? 25 : Math.ceil(activeCableMm2 / 2);
+const iecProtectiveEarthForActive = (activeCableMm2: number) => activeCableMm2 <= 16 ? activeCableMm2 : activeCableMm2 <= 35 ? 16 : Math.ceil(activeCableMm2 / 2);
+const necEquipmentGroundingConductor = (protectionAmps: number) => [[15, 2.08], [20, 3.31], [60, 5.26], [100, 8.37], [200, 13.3], [300, 21.2], [400, 26.7], [500, 33.6], [600, 42.4]] as const satisfies ReadonlyArray<readonly [number, number]>;
+const inferElectricalStandard = (site: Site): NonNullable<DesignCalculatorState["electricalStandard"]> => {
+  const region = `${site.location} ${site.timezone}`.toLowerCase();
+  if (region.includes("new zealand") || region.includes("australia") || site.timezone === "Pacific/Auckland" || site.timezone.startsWith("Australia/")) return "as_nzs";
+  if (region.includes("united states") || region.includes(" usa") || site.timezone.startsWith("America/")) return "nec";
+  return "local_review";
+};
+const planningProtectiveEarth = (activeCableMm2: number, protectionAmps: number, standard: DesignCalculatorState["electricalStandard"], pvBond = false) => {
+  if (!activeCableMm2) return undefined;
+  if (standard === "as_nzs") return pvBond ? Math.max(4, asNzsProtectiveEarthForActive(activeCableMm2)) : asNzsProtectiveEarthForActive(activeCableMm2);
+  if (standard === "iec") return iecProtectiveEarthForActive(activeCableMm2);
+  if (standard === "nec") {
+    const table = necEquipmentGroundingConductor(protectionAmps);
+    return table.find(([rating]) => protectionAmps <= rating)?.[1];
+  }
+  return undefined;
+};
 const mountingLocationLabels: Record<string, string> = { main_roof: "Main roof", other_roof: "Garage, shed or another roof", ground: "Ground-mounted frame", fence: "Fence or vertical screen", wall_facade: "Wall or building facade", carport_pergola: "Carport, pergola or canopy", curved_lightweight: "Curved or weight-limited surface", mobile: "Vehicle, boat or movable structure", none: "No solar panels" };
 const discoveredMountingLocations = (project: Project) => String(project.designDiscovery?.proposed_panel_location?.value ?? "").split(",").map((value) => value.trim()).filter(Boolean);
 const mountingLocationText = (locations?: string[]) => locations?.length ? locations.map((value) => mountingLocationLabels[value] ?? value).join(" + ") : "Mounting location not recorded";
@@ -76,9 +94,115 @@ function suggestedInverterKw(project: Project) {
 }
 
 function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number], design: DesignCalculatorState) {
-  if (node.id === "solar") return { ...node, detail: `${design.panelCount ?? "?"} x ${design.panelWatts ?? "?"} W; ${mountingLocationText(design.mountingLocations)}; ${pvLayoutLabel(design)}` };
+  if (node.id === "solar" || node.id.startsWith("solar-pv-")) return { ...node, detail: `${node.id.startsWith("solar-pv-") ? design.panelsPerString ?? "?" : design.panelCount ?? "?"} x ${design.panelWatts ?? "?"} W; ${node.id.startsWith("solar-pv-") ? "one independent PV string" : pvLayoutLabel(design)}` };
   if (node.id.includes("inverter") && design.inverterKw) return { ...node, detail: `${design.inverterKw} kW continuous rating proposed` };
   return node;
+}
+
+function componentPlanningDetail(node: NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number], draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>, design: DesignCalculatorState, ready: boolean) {
+  const basic = planningNodeDetail(node, design);
+  if (!ready) return basic;
+  const touching = (draft.connections ?? []).filter((connection) => connection.from === node.id || connection.to === node.id);
+  const dc = touching.find((connection) => connection.kind === "solar-dc");
+  const ac = touching.find((connection) => connection.kind === "ac" && !connection.authorityCheck);
+  if (node.id.includes("solar-safety")) {
+    const stringVoc = n(design.panelVocV) * n(design.panelsPerString, 1);
+    const ratedVoltage = stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500;
+    const ratedCurrent = [16, 20, 25, 32, 40, 50, 63].find((amps) => amps >= Math.max(32, n(dc?.protectionAmps))) ?? Math.ceil(n(dc?.protectionAmps));
+    return { ...basic, detail: `${ratedVoltage} V DC · ${ratedCurrent} A minimum · DC-PV2 load-break isolator; confirm cold-corrected Voc, poles, enclosure and location` };
+  }
+  if (node.id === "ac-safety") return { ...basic, detail: `${design.connectionType === "ac_three" ? 400 : 230} V AC · ${ac?.protectionAmps ?? "rating to verify"} A protection; confirm poles, curve, fault rating and RCD requirements` };
+  return basic;
+}
+
+type ProposedNode = NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number];
+type ProposedDraft = NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>;
+type ComponentSpec = { label: string; value: string; note?: string };
+
+function componentSpecifications(node: ProposedNode, draft: ProposedDraft, design: DesignCalculatorState): ComponentSpec[] {
+  const touching = (draft.connections ?? []).filter((connection) => connection.from === node.id || connection.to === node.id);
+  const dc = touching.find((connection) => connection.kind === "solar-dc");
+  const batteryDc = touching.find((connection) => connection.kind === "battery-dc");
+  const ac = touching.find((connection) => connection.kind === "ac" && !connection.authorityCheck);
+  const earth = touching.find((connection) => connection.kind === "earth");
+  const value = (number: number | undefined, unit: string) => number ? `${number} ${unit}` : "To be confirmed";
+
+  if (node.id === "solar" || node.id.startsWith("solar-pv-")) {
+    const quantity = node.id.startsWith("solar-pv-") ? n(design.panelsPerString) : n(design.panelCount);
+    const panelWatts = n(design.panelWatts);
+    const panelWeight = n(design.panelWeightKg);
+    const stringPanels = node.id.startsWith("solar-pv-") ? quantity : n(design.panelsPerString);
+    return [
+      { label: "Quantity", value: quantity ? `${quantity} panels` : "To be confirmed" },
+      { label: "Module rating", value: value(design.panelWatts, "W each") },
+      { label: "Nameplate power", value: quantity && panelWatts ? `${round(quantity * panelWatts / 1000, 2)} kW` : "To be confirmed" },
+      { label: "Module dimensions", value: design.panelLengthMm && design.panelWidthMm ? `${design.panelLengthMm} × ${design.panelWidthMm} mm each` : "To be confirmed" },
+      { label: "Module weight", value: panelWeight ? `${panelWeight} kg each${quantity ? ` · ${round(panelWeight * quantity, 1)} kg total` : ""}` : "To be confirmed" },
+      { label: "Module Vmp / Voc", value: design.panelVmpV && design.panelVocV ? `${design.panelVmpV} / ${design.panelVocV} V` : "To be confirmed" },
+      { label: "String Vmp / Voc", value: stringPanels && design.panelVmpV && design.panelVocV ? `${round(stringPanels * design.panelVmpV, 1)} / ${round(stringPanels * design.panelVocV, 1)} V` : "To be confirmed", note: "Nameplate values; final maximum voltage needs the cold-temperature correction." },
+      { label: "Module Imp / Isc", value: design.panelImpA && design.panelIscA ? `${design.panelImpA} / ${design.panelIscA} A` : "To be confirmed" },
+      { label: "Mounting location", value: mountingLocationText(design.mountingLocations) },
+    ];
+  }
+
+  if (node.id.includes("solar-safety")) {
+    const stringVoc = n(design.panelVocV) * n(design.panelsPerString, 1);
+    const ratedVoltage = stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500;
+    const requiredCurrent = Math.max(32, n(dc?.protectionAmps));
+    const ratedCurrent = [16, 20, 25, 32, 40, 50, 63].find((amps) => amps >= requiredCurrent) ?? Math.ceil(requiredCurrent);
+    return [
+      { label: "Device", value: "DC rotary load-break isolator" },
+      { label: "Utilisation category", value: "DC-PV2" },
+      { label: "Minimum voltage rating", value: `${ratedVoltage} V DC`, note: `String nameplate Voc ${round(stringVoc, 1)} V; confirm cold-corrected maximum.` },
+      { label: "Minimum current rating", value: `${ratedCurrent} A` },
+      { label: "Poles / enclosure", value: "Confirm for the selected inverter, location and installation method" },
+    ];
+  }
+
+  if (node.id.includes("inverter")) return [
+    { label: "Continuous output", value: value(design.inverterKw, "kW") },
+    { label: "Arrangement", value: design.architecture?.replaceAll("_", " ") ?? "To be confirmed" },
+    { label: "AC system", value: `${design.connectionType === "ac_three" ? 400 : 230} V AC` },
+    { label: "PV inputs", value: design.pvStrings ? `${design.pvStrings} independent MPPT input${design.pvStrings === 1 ? "" : "s"} required` : "To be confirmed" },
+    { label: "Connected AC circuit", value: ac?.protectionAmps ? `${ac.protectionAmps} A planning protection · ${value(ac.cableSizeMm2, "mm² cable")}` : "Complete the route configuration" },
+  ];
+
+  if (node.id === "ac-safety") return [
+    { label: "Device", value: "AC protective switching device" },
+    { label: "Voltage rating", value: `${design.connectionType === "ac_three" ? 400 : 230} V AC` },
+    { label: "Current rating", value: ac?.protectionAmps ? `${ac.protectionAmps} A` : "Complete the route configuration" },
+    { label: "Connected cable", value: value(ac?.cableSizeMm2, "mm²") },
+    { label: "Final checks", value: "Poles, trip curve, fault rating and RCD requirements" },
+  ];
+
+  if (node.id === "battery") return [
+    { label: "Quantity", value: design.batteryQuantity ? `${design.batteryQuantity}` : "To be confirmed" },
+    { label: "Nominal voltage", value: value(design.batteryVoltage, "V each") },
+    { label: "Capacity", value: value(design.batteryAh, "Ah each") },
+    { label: "Chemistry", value: design.batteryChemistry ?? "To be confirmed" },
+    { label: "Planning usable", value: design.usableBatteryPercent ? `${design.usableBatteryPercent}%` : "To be confirmed" },
+  ];
+
+  if (node.id === "battery-safety") return [
+    { label: "Device", value: "Battery-rated DC fuse and disconnect" },
+    { label: "System voltage", value: value(design.batteryVoltage, "V DC") },
+    { label: "Protection rating", value: batteryDc?.protectionAmps ? `${batteryDc.protectionAmps} A` : "Complete the route configuration" },
+    { label: "Connected cable", value: value(batteryDc?.cableSizeMm2, "mm²") },
+    { label: "Final checks", value: "DC interrupt rating, fuse class, polarity and enclosure" },
+  ];
+
+  const connectionSpecs = touching.map((connection) => ({
+    label: connection.label,
+    value: [connection.cableSizeMm2 ? `${connection.cableSizeMm2} mm² cable` : "Cable to confirm", connection.protectionAmps ? `${connection.protectionAmps} A protection` : connection.kind === "earth" ? "No overcurrent device" : "Protection to confirm"].join(" · "),
+    note: connection.lengthM ? `${connection.lengthM} m ${connection.lengthBasis ?? "estimated"} one-way route` : undefined,
+  }));
+  return [
+    { label: "Function", value: node.detail },
+    ...(node.id === "switchboard" ? [{ label: "AC system", value: `${design.connectionType === "ac_three" ? 400 : 230} V AC` }] : []),
+    ...(node.id === "earth" && earth?.cableSizeMm2 ? [{ label: "Protective conductor", value: `${earth.cableSizeMm2} mm²` }] : []),
+    ...connectionSpecs,
+    ...(node.notes ? [{ label: "Recorded note", value: node.notes }] : []),
+  ];
 }
 
 function batteryAdjustedDraft(draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>, includeBattery: boolean) {
@@ -116,15 +240,19 @@ function upgradePvStringIsolationDraft(draft: NonNullable<DesignCalculatorState[
 
 function ensurePvArrayEarth(draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) {
   const nodes = draft.nodes ?? [];
-  if (!nodes.some((node) => node.id === "earth")) return draft;
+  const inverter = nodes.find((node) => node.id === "inverter" || node.id.includes("inverter"));
+  if (!inverter) return draft;
   const solarNodes = nodes.filter((node) => node.id === "solar" || node.id.startsWith("solar-pv-"));
-  const existing = draft.connections ?? [];
-  const additions = solarNodes.filter((node) => !existing.some((connection) => connection.from === node.id && connection.kind === "earth")).map((node, index) => ({
+  const originalConnections = draft.connections ?? [];
+  const existing = originalConnections.filter((connection) => !(connection.kind === "earth" && /array frame earth/i.test(connection.label)));
+  const alreadyCorrect = solarNodes.length > 0 && solarNodes.every((node, index) => existing.some((connection) => connection.from === node.id && connection.to === (solarNodes[index + 1]?.id ?? inverter.id) && /array frame bond/i.test(connection.label)));
+  if (alreadyCorrect) return existing.length === originalConnections.length ? draft : { ...draft, connections: existing };
+  const additions = solarNodes.map((node, index) => ({
     from: node.id,
-    to: "earth",
-    label: `${node.id.startsWith("solar-pv-") ? `PV${node.id.split("-").at(-1)}` : `PV${index + 1}`} array frame earth`,
+    to: solarNodes[index + 1]?.id ?? inverter.id,
+    label: `${node.id.startsWith("solar-pv-") ? `PV${node.id.split("-").at(-1)}` : `PV${index + 1}`} array frame bond`,
     kind: "earth" as const,
-    notes: "Protective bonding for PV module frames and mounting structure; verify the earthing arrangement and installation requirements.",
+    notes: "Continuous protective bonding of PV module frames and mounting structure back to the installation earthing system through the inverter earthing point; verify the final topology against the selected equipment and AS/NZS requirements.",
   }));
   return additions.length ? { ...draft, connections: [...existing, ...additions] } : draft;
 }
@@ -133,13 +261,15 @@ function preliminaryConnectionValues(connection: NonNullable<NonNullable<DesignC
   if (connection.configured === true) return connection;
   if (!connection.lengthM && connection.kind !== "earth") return connection;
   if (connection.kind === "earth") {
-    if (/\bPV\d* array frame earth\b/i.test(connection.label)) {
+    if (/\bPV\d* array frame bond\b/i.test(connection.label)) {
       const pvCableMm2 = planningCableForCurrent(n(design.panelIscA) * 1.25);
-      return { ...connection, cableSizeMm2: connection.cableSizeMm2 ?? Math.max(4, planningProtectiveEarthForActive(pvCableMm2)), protectionAmps: undefined };
+      const earthCableMm2 = planningProtectiveEarth(pvCableMm2, Math.ceil(n(design.panelIscA) * 1.25), design.electricalStandard, true);
+      return { ...connection, cableSizeMm2: connection.cableSizeMm2 ?? earthCableMm2, protectionAmps: undefined, notes: connection.notes ?? (earthCableMm2 ? `Preliminary PV bonding size calculated using the ${design.electricalStandard} regional profile.` : "Protective bonding size requires the Site's applicable electrical standard.") };
     }
     const acCurrent = n(design.inverterKw) * 1000 / 230;
     const activeCableMm2 = planningAcCableForCurrent(acCurrent);
-    return { ...connection, cableSizeMm2: connection.cableSizeMm2 ?? planningProtectiveEarthForActive(activeCableMm2), protectionAmps: undefined };
+    const earthCableMm2 = planningProtectiveEarth(activeCableMm2, Math.ceil(acCurrent * 1.25), design.electricalStandard);
+    return { ...connection, cableSizeMm2: connection.cableSizeMm2 ?? earthCableMm2, protectionAmps: undefined, notes: connection.notes ?? (earthCableMm2 ? `Preliminary protective-earth size calculated using the ${design.electricalStandard} regional profile.` : "Protective-earth size requires the Site's applicable electrical standard.") };
   }
   if (connection.authorityCheck) return connection;
   const voltage = connection.kind === "solar-dc" ? n(design.panelVmpV) * n(design.panelsPerString) : connection.kind === "battery-dc" ? n(design.batteryVoltage) : 230;
@@ -208,13 +338,12 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       batteryQuantity: saved.batteryQuantity ?? 1,
       inverterKw: saved.inverterKw ?? suggestedInverterKw(project),
       usableBatteryPercent,
+      electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site),
       azimuthDegrees: saved.azimuthDegrees ?? (hasCoordinates ? (Number(site.latitude) < 0 ? 0 : 180) : undefined),
       tiltDegrees: saved.tiltDegrees ?? (hasCoordinates ? Math.min(90, Math.abs(Number(site.latitude))) : undefined),
     };
   });
   const [status, setStatus] = useState("");
-  const [componentSaveTargetsReady, setComponentSaveTargetsReady] = useState(false);
-  useEffect(() => setComponentSaveTargetsReady(true), []);
   const set = <K extends keyof DesignCalculatorState>(key: K, value: DesignCalculatorState[K]) => setDesign((current) => ({ ...current, [key]: value }));
   const results = useMemo(() => {
     const pvKw = n(design.panelWatts) * n(design.panelCount) / 1000 || n(design.targetPvKw);
@@ -241,7 +370,10 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
   }, [design, project.peakSunHours, site.latitude]);
   const overviewDraft = useMemo(() => {
     const draft = batteryAdjustedDraft(ensurePvArrayEarth(upgradePvStringIsolationDraft(ensureGridSupply(design.proposedAsBuiltDraft ?? createProposedAsBuiltDraft(design, project.projectType !== "off-grid"), project.projectType !== "off-grid"), design)), includeBattery);
-    return { ...draft, nodes: draft.nodes?.map((node) => planningNodeDetail(node, design)) };
+    const connections = draft.connections?.map((connection) => preliminaryConnectionValues(connection, design));
+    const calculatedDraft = { ...draft, connections };
+    const routesReady = (connections ?? []).filter((connection) => !connection.authorityCheck).every((connection) => connection.configured === true);
+    return { ...calculatedDraft, nodes: draft.nodes?.map((node) => componentPlanningDetail(node, calculatedDraft, design, routesReady)) };
   }, [design, includeBattery, project.projectType]);
 
   async function save(nextDesign: DesignCalculatorState = design) {
@@ -253,19 +385,15 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       setStatus("Working design saved");
     } catch (problem) { setStatus(problem instanceof Error ? problem.message : "Could not save design"); }
   }
-  function updateOverviewNode(nodeId: string, changes: Partial<NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number]>) {
-    setDesign((current) => ({ ...current, proposedAsBuiltDraft: { ...overviewDraft, nodes: (overviewDraft.nodes ?? []).map((node) => node.id === nodeId ? { ...node, ...changes } : node) } }));
-  }
-
   return <div className="animate-rise space-y-4">
-    <div><div className="eyebrow">{commissioned ? "Installed system record" : "System planning record"}</div><h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">{project.name} System Overview</h1><p className="mt-1.5 max-w-3xl text-xs leading-5 text-muted">{commissioned ? "The commissioned specification and as-built component record. Keep it current when equipment, settings or connections change." : "The planning numbers behind the working schematic. Wattson prefills these from discovery and completes them as routes and equipment are confirmed."}</p><div className="mt-4 max-w-4xl rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><p className="mt-2 text-sm font-semibold leading-6">{systemScopeSummary(project, design)}</p></div>{status && <p className="mt-1.5 text-[9px] font-bold text-brand">{status}</p>}</div>
+    <div><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><div className="eyebrow">{commissioned ? "Installed system record" : "System planning record"}</div><h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">{project.name} System Overview</h1><p className="mt-1.5 max-w-3xl text-xs leading-5 text-muted">{commissioned ? "The commissioned specification and as-built component record. Keep it current when equipment, settings or connections change." : "The planning numbers behind the working schematic. Wattson prefills these from discovery and completes them as routes and equipment are confirmed."}</p></div>{!commissioned ? <Link href={`/sites/${project.siteId}/systems/${project.id}/design/schematic`} className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">← Back to schematic</Link> : null}</div><div className="mt-4 max-w-4xl rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><p className="mt-2 text-sm font-semibold leading-6">{systemScopeSummary(project, design)}</p></div>{status && <p className="mt-1.5 text-[9px] font-bold text-brand">{status}</p>}</div>
 
     <section className="card overflow-hidden">
       <div className="border-b border-line bg-[#eef5fc] p-5"><div className="eyebrow">{commissioned ? "As-built equipment schedule" : "Schematic equipment schedule"}</div><h2 className="mt-2 text-lg font-extrabold">Every component in this system</h2><p className="mt-1 max-w-3xl text-xs leading-5 text-muted">{commissioned ? "This is the commissioned system record. The equipment schedule, technical specifications and schematic describe what is installed." : "This list and the schematic are the same working record. Proposed items become the verified as-built record when installation and commissioning are completed."}</p></div>
       <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-        {(overviewDraft.nodes ?? []).map((node) => <Link key={node.id} href={`#tech-${node.id}`} className={`flex items-center gap-3 rounded-xl border p-3 transition hover:border-brand ${node.installed ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-line bg-white"}`}>
+        {(overviewDraft.nodes ?? []).map((node) => <Link key={node.id} href={`#tech-${node.id}`} className={`flex items-center gap-3 rounded-xl border p-3 transition hover:border-brand ${node.reviewed ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-line bg-white"}`}>
           <span className="relative size-14 shrink-0 overflow-hidden rounded-lg bg-[#f4f7fa]"><Image src={node.image} alt="" fill sizes="56px" className="object-contain p-1"/></span>
-          <span className="min-w-0"><strong className="block text-xs">{node.label}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">{node.detail}</span><span className={`mt-1.5 inline-flex rounded-full px-2 py-0.5 text-[8px] font-bold uppercase ${node.installed ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#fff1cc] text-[#805d00]"}`}>{node.installed ? "Installed" : "Proposed"}</span></span>
+          <span className="min-w-0"><strong className="block text-xs">{node.label}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">{node.detail}</span><span className={`mt-1.5 inline-flex rounded-full px-2 py-0.5 text-[8px] font-bold uppercase ${node.reviewed ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#fff1cc] text-[#805d00]"}`}>{node.reviewed ? "Specification accepted" : "Proposed · review"}</span></span>
         </Link>)}
         {(overviewDraft.connections ?? []).map((connection, index) => { const configured = connection.configured === true; return <Link key={`${connection.from}-${connection.to}-${index}`} href={`/sites/${project.siteId}/systems/${project.id}/design/schematic`} className={`flex items-center gap-3 rounded-xl border p-3 transition hover:border-brand ${configured ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-[#e56b5d] bg-[#fff8f6]"}`}><span className="grid size-14 shrink-0 place-items-center rounded-lg bg-[#eef3f8] text-brand"><Cable size={22}/></span><span className="min-w-0"><strong className="block text-xs">{connection.label}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">{[connection.cableSizeMm2 ? `${connection.cableSizeMm2} mm² cable` : "Cable size required", connection.protectionAmps ? `${connection.protectionAmps} A protection` : connection.kind === "earth" ? "Earth connection" : "Protection size required"].join(" · ")}</span><span className={`mt-1.5 inline-flex rounded-full px-2 py-0.5 text-[8px] font-bold uppercase ${configured ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#ffebe7] text-[#b53222]"}`}>{configured ? "Configured" : "Configure"}</span></span></Link>; })}
       </div>
@@ -274,16 +402,33 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     <details open className="card overflow-hidden">
       <summary className="cursor-pointer list-none p-5"><div className="flex items-center justify-between gap-4"><div><div className="eyebrow">Technical details</div><h2 className="mt-2 text-base font-extrabold">{commissioned ? "As-built system numbers" : "Advanced planning numbers"}</h2><p className="mt-1 text-xs leading-5 text-muted">{commissioned ? "These are the installed system values. Update them whenever an as-built component, setting or connection changes." : "These are estimated proposal figures, to be checked and corrected as the system is built or components are purchased."}</p></div><span className="shrink-0 rounded-xl border border-line bg-white px-3 py-2 text-xs font-bold text-brand">Show details</span></div></summary>
       <div className="space-y-6 border-t border-line bg-[#f7fafc] p-5">
-    {componentSaveTargetsReady ? (overviewDraft.nodes ?? []).map((node) => {
-      const target = document.getElementById(`tech-${node.id}`);
-      return target ? createPortal(<>
-        {node.id === "solar" ? <div className="mt-4 border-t border-line pt-4"><span className="text-xs font-bold">Panel mounting</span><p className="mt-1 text-[10px] leading-4 text-muted">Choose and save the mounting arrangement for this proposed array.</p><div className="mt-3 flex flex-wrap gap-2">{Object.entries(mountingLocationLabels).filter(([value]) => value !== "none").map(([value, label]) => { const selected = design.mountingLocations?.includes(value) ?? false; return <button key={value} type="button" onClick={() => set("mountingLocations", selected ? (design.mountingLocations ?? []).filter((item) => item !== value) : [...(design.mountingLocations ?? []), value])} className={`rounded-full border px-3 py-2 text-[10px] font-bold ${selected ? "border-[#6eb58a] bg-[#eaf8ef] text-[#17603b]" : "border-line bg-white text-muted"}`}>{selected ? "✓ " : ""}{label}</button>; })}</div></div> : null}
-        <button type="button" onClick={() => void save()} className="ml-2 mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand px-3 text-[10px] font-bold text-white"><Save size={12}/>Save</button>
-      </>, target) : null;
-    }) : null}
     {(design.startingStage || design.expansionPath || design.nextValidation) && <section className="card p-5"><div className="eyebrow">Wattson’s staged plan</div><div className="mt-4 grid gap-4 md:grid-cols-3"><div><strong className="text-sm">Start useful</strong><p className="mt-1 text-xs leading-5 text-muted">{design.startingStage || "Not proposed yet"}</p></div><div><strong className="text-sm">Expand cleanly</strong><p className="mt-1 text-xs leading-5 text-muted">{design.expansionPath || "Not proposed yet"}</p></div><div><strong className="text-sm">Validate next</strong><p className="mt-1 text-xs leading-5 text-muted">{design.nextValidation || "Not proposed yet"}</p></div></div></section>}
 
-    <section className="card overflow-hidden"><div className="border-b border-line bg-[#eef5fc] p-5"><div className="eyebrow">Component technical register</div><h2 className="mt-2 text-base font-extrabold">Schematic components and specifications</h2><p className="mt-1 text-xs leading-5 text-muted">These cards are the editable technical detail behind the schematic schedule above. Replace proposal values as actual products are chosen and installed.</p></div><div className="grid gap-4 p-5 lg:grid-cols-2">{(overviewDraft.nodes ?? []).map((node) => <article key={node.id} id={`tech-${node.id}`} className="scroll-mt-24 rounded-2xl border border-line bg-white p-4"><div className="flex items-start gap-3"><span className="relative size-14 shrink-0 overflow-hidden rounded-xl bg-[#f4f7fa]"><Image src={node.image} alt="" fill sizes="56px" className="object-contain p-1"/></span><div><div className="eyebrow">{node.installed ? "Installed component" : "Proposed component"}</div><h3 className="mt-2 text-sm font-extrabold">{node.label}</h3><p className="mt-1 text-[10px] leading-4 text-muted">{node.detail}</p></div></div>{node.id === "solar" ? <div className="mt-4 grid gap-3 sm:grid-cols-2"><NumberField label="Panel rating" value={design.panelWatts} unit="W" onChange={(value) => set("panelWatts", value)}/><NumberField label="Panel count" value={design.panelCount} onChange={(value) => set("panelCount", Math.round(value))}/><NumberField label="PV strings" value={design.pvStrings} onChange={(value) => set("pvStrings", Math.round(value))}/><NumberField label="Panels per string" value={design.panelsPerString} onChange={(value) => set("panelsPerString", Math.round(value))}/><NumberField label="Panel Vmp" value={design.panelVmpV} unit="V" onChange={(value) => set("panelVmpV", value)}/><NumberField label="Panel Voc" value={design.panelVocV} unit="V" onChange={(value) => set("panelVocV", value)}/><NumberField label="Panel Imp" value={design.panelImpA} unit="A" onChange={(value) => set("panelImpA", value)}/><NumberField label="Panel Isc" value={design.panelIscA} unit="A" onChange={(value) => set("panelIscA", value)}/></div> : node.id === "battery" ? <div className="mt-4 grid gap-3 sm:grid-cols-2"><NumberField label="Battery voltage" value={design.batteryVoltage} unit="V" onChange={(value) => set("batteryVoltage", value)}/><NumberField label="Capacity per battery" value={design.batteryAh} unit="Ah" onChange={(value) => set("batteryAh", value)}/><NumberField label="Quantity" value={design.batteryQuantity} onChange={(value) => set("batteryQuantity", Math.round(value))}/><NumberField label="Planning usable" value={design.usableBatteryPercent} unit="%" max={100} onChange={(value) => set("usableBatteryPercent", value)}/></div> : node.id.includes("inverter") || node.id === "inverter" ? <div className="mt-4"><NumberField label="Continuous inverter rating" value={design.inverterKw} unit="kW" onChange={(value) => set("inverterKw", value)}/></div> : null}<label className="mt-4 block text-xs font-bold"><span>Technical notes</span><textarea value={node.notes ?? ""} onChange={(event) => updateOverviewNode(node.id, { notes: event.target.value })} placeholder="Model, rating, limits, location or evidence to confirm" className="mt-1.5 min-h-20 w-full rounded-xl border border-line bg-white p-3 text-xs font-normal outline-none focus:border-brand"/></label><Link href={`/sites/${project.siteId}/systems/${project.id}/design/schematic`} className="mt-3 inline-flex text-[10px] font-bold text-brand">Open on schematic →</Link></article>)}</div></section>
+    <section className="card overflow-hidden">
+      <div className="border-b border-line bg-[#eef5fc] p-5">
+        <div className="eyebrow">Component technical register</div>
+        <h2 className="mt-2 text-base font-extrabold">Schematic components and specifications</h2>
+        <p className="mt-1 max-w-3xl text-xs leading-5 text-muted">A read-only overview of what each schematic unit contains and the ratings currently required. Accepted components feed the Build It shopping list; changes are made from the schematic or advanced planning sections.</p>
+      </div>
+      <div className="grid gap-4 p-5 lg:grid-cols-2">
+        {(overviewDraft.nodes ?? []).map((node) => {
+          const specs = componentSpecifications(node, overviewDraft, design);
+          const wattsonPrompt = `Explain the proposed ${node.label} for ${project.name}. Use its current specification (${specs.map((spec) => `${spec.label}: ${spec.value}`).join("; ")}) and answer questions specifically about selecting or sourcing this component.`;
+          return <article key={node.id} id={`tech-${node.id}`} className={`flex scroll-mt-24 flex-col rounded-2xl border p-4 ${node.reviewed ? "border-[#9bd2ad] bg-[#f7fcf8]" : "border-line bg-white"}`}>
+            <div className="flex items-start gap-3">
+              <span className="relative size-14 shrink-0 overflow-hidden rounded-xl bg-[#f4f7fa]"><Image src={node.image} alt="" fill sizes="56px" className="object-contain p-1"/></span>
+              <div className="min-w-0 flex-1"><div className="eyebrow">{node.reviewed ? "Specification accepted" : node.installed ? "Installed component" : "Proposed component"}</div><h3 className="mt-2 text-sm font-extrabold">{node.label}</h3><p className="mt-1 text-[10px] leading-4 text-muted">{node.detail}</p></div>
+            </div>
+            <dl className="mt-4 grid gap-2 sm:grid-cols-2">
+              {specs.map((spec, index) => <div key={`${spec.label}-${index}`} className="rounded-xl border border-line bg-[#f8fafc] p-3"><dt className="text-[9px] font-bold uppercase tracking-[.12em] text-muted">{spec.label}</dt><dd className="mt-1 text-[11px] font-extrabold leading-4 text-ink">{spec.value}</dd>{spec.note ? <p className="mt-1 text-[9px] leading-4 text-muted">{spec.note}</p> : null}</div>)}
+            </dl>
+            <div className="mt-auto flex justify-end pt-4">
+              <Link href={`/sites/${project.siteId}/systems/${project.id}?view=wattson`} onClick={() => window.sessionStorage.setItem("pvintell:wattson-prompt", wattsonPrompt)} className="inline-flex h-9 items-center justify-center rounded-xl border border-brand bg-white px-4 text-[10px] font-bold text-brand">Ask Wattson about this component</Link>
+            </div>
+          </article>;
+        })}
+      </div>
+    </section>
 
     <section className="card overflow-hidden"><div className="flex items-center gap-3 border-b border-line bg-[#fff8d8] p-5"><Sun className="text-[#d99b00]" size={20}/><div><h2 className="font-extrabold">Solar array and physical fit</h2><p className="text-[10px] text-muted">Azimuth defaults to equator-facing and tilt defaults to the Site latitude for both roof and ground proposals. Replace them with the actual mounting angles when known.</p></div></div><div className="grid gap-6 p-5 xl:grid-cols-[1.4fr_.8fr]"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><label className="space-y-1.5 text-xs font-bold"><span>Panel type</span><select value={design.panelType} onChange={(e) => set("panelType", e.target.value as DesignCalculatorState["panelType"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="bifacial">Bifacial</option><option value="monofacial">Monofacial</option><option value="other">Other</option><option value="not_selected">Not selected</option></select></label><NumberField label="Panel rating" value={design.panelWatts} unit="W" onChange={(v) => set("panelWatts", v)}/><NumberField label="Panel count" value={design.panelCount} onChange={(v) => set("panelCount", Math.round(v))}/><NumberField label="Panel length" value={design.panelLengthMm} unit="mm" onChange={(v) => set("panelLengthMm", v)}/><NumberField label="Panel width" value={design.panelWidthMm} unit="mm" onChange={(v) => set("panelWidthMm", v)}/><NumberField label="Panel weight" value={design.panelWeightKg} unit="kg" onChange={(v) => set("panelWeightKg", v)}/><NumberField label="Azimuth (location default)" value={design.azimuthDegrees} unit="°" max={360} onChange={(v) => set("azimuthDegrees", v)}/><NumberField label="Tilt (latitude default)" value={design.tiltDegrees} unit="°" max={90} onChange={(v) => set("tiltDegrees", v)}/><NumberField label="Peak sun hours" value={design.peakSunHours} unit="h/day" max={24} onChange={(v) => set("peakSunHours", v)}/><NumberField label="Planning efficiency" value={design.systemEfficiencyPercent} unit="%" max={100} onChange={(v) => set("systemEfficiencyPercent", v)}/><label className="space-y-1.5 text-xs font-bold sm:col-span-2"><span>Physical fit status</span><select value={design.fitStatus} onChange={(e) => set("fitStatus", e.target.value as DesignCalculatorState["fitStatus"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="unverified">Not checked yet</option><option value="verified">Verified against usable area</option><option value="does_not_fit">Does not fit</option></select></label></div><div className="grid grid-cols-2 gap-3"><Result label="PV rating" value={`${round(results.pvKw, 2)} kW`} detail="Panel nameplate total"/><Result label="Module area" value={`${round(results.rawArea, 1)} m²`} detail="Panels only; add mounting gaps and required clearances"/><Result label="Panel weight" value={`${round(results.totalWeight, 0)} kg`} detail="Modules only; structure and mounting still require assessment"/><Result label="Planning output" value={`${round(results.dailyKwh, 1)} kWh/day`} detail={`Illustrative yield using ${round(results.orientationFactor * 100, 0)}% orientation factor; not a production guarantee`}/></div></div>{design.panelType === "bifacial" && <p className="border-t border-line bg-[#f5f8fb] px-5 py-3 text-[10px] leading-4 text-muted">Bifacial is evaluated by default, but rear-side gain is not counted here. It depends on clearance, spacing and the surface below the panel; a flush roof can provide little extra rear yield.</p>}</section>
 
@@ -332,7 +477,7 @@ function ProposedPlan({ project, design, onToggle }: { project: Project; design:
   return <section className="card overflow-hidden"><div className="border-b border-line bg-[#fff1ee] p-5"><div className="eyebrow text-[#b9412b]">Proposed system outline</div><h2 className="mt-2 text-xl font-extrabold">What Wattson is planning</h2><p className="mt-2 max-w-3xl text-xs leading-5 text-muted">These are not installed components. A green tick means you have reviewed the planning requirements for that item — not that it has been purchased, wired or approved.</p></div><div className="grid gap-4 p-5 md:grid-cols-2">{items.map((item) => { const complete = design.proposedChecklist?.[item.id] ?? false; return <article key={item.id} className={`rounded-2xl border p-4 ${complete ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-[#ecaaa0] bg-[#fff7f5]"}`}><div className="flex items-start justify-between gap-3"><div><div className={`text-[10px] font-bold uppercase tracking-[.12em] ${complete ? "text-[#17603b]" : "text-[#b9412b]"}`}>{complete ? "Planning reviewed" : "Needs planning"}</div><h3 className="mt-2 text-sm font-extrabold">{item.title}</h3></div><button type="button" onClick={() => onToggle(item.id)} className={`grid size-9 shrink-0 place-items-center rounded-xl border ${complete ? "border-[#74bd8d] bg-white text-[#17603b]" : "border-[#e79b91] bg-white text-[#b9412b]"}`} title={complete ? "Mark planning as needing review" : "Mark planning requirements reviewed"}>{complete ? <CheckCircle2 size={18}/> : <Circle size={18}/>}</button></div><p className="mt-3 text-[11px] leading-5 text-muted">{item.detail}</p><details className="mt-3 rounded-xl bg-white/70 p-3 text-[11px] leading-5 text-muted"><summary className="cursor-pointer font-bold text-brand">What do I need to check?</summary><p className="mt-2">{item.help}</p></details><Link href={`${base}?view=wattson`} className="mt-4 inline-flex text-[11px] font-bold text-brand">Ask Wattson about this component →</Link></article>; })}</div><div className="flex flex-col justify-between gap-3 border-t border-line bg-[#f7fafc] p-5 sm:flex-row sm:items-center"><p className="text-xs leading-5 text-muted">{planningComplete ? "Outline accepted. Next, review how these parts connect in the proposed build schematic." : "Review all four proposed components to unlock the proposed build schematic."}</p>{planningComplete ? <Link href={`${base}/design/schematic`} className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-brand px-5 text-xs font-bold text-white">Continue to proposed schematic →</Link> : <span className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-[#dce7f1] px-5 text-xs font-bold text-[#6d7f91]">Continue to proposed schematic</span>}</div></section>;
 }
 
-export function ProposedBuildSchematic({ project }: { project: Project }) {
+export function ProposedBuildSchematic({ project, site }: { project: Project; site: Site }) {
   const router = useRouter();
   const includeBattery = proposalIncludesBattery(project);
   const [design, setDesign] = useState<DesignCalculatorState>(() => {
@@ -340,7 +485,7 @@ export function ProposedBuildSchematic({ project }: { project: Project }) {
     const panelWatts = n(saved.panelWatts, 440);
     const panelCount = Math.max(1, Math.round(n(saved.panelCount, 8)));
     const typical = panelWatts >= 430 && panelWatts <= 450;
-    return { ...saved, panelWatts, panelCount, mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project), pvStrings: saved.pvStrings ?? (panelCount % 2 === 0 ? 2 : 1), panelsPerString: saved.panelsPerString ?? (panelCount % 2 === 0 ? panelCount / 2 : panelCount), panelVmpV: saved.panelVmpV ?? (typical ? 33.2 : undefined), panelVocV: saved.panelVocV ?? (typical ? 39.8 : undefined), panelImpA: saved.panelImpA ?? (typical ? 13.25 : undefined), panelIscA: saved.panelIscA ?? (typical ? 14.05 : undefined), inverterKw: saved.inverterKw ?? suggestedInverterKw(project), batteryVoltage: includeBattery ? saved.batteryVoltage ?? 51.2 : undefined, batteryUsableKwh: includeBattery ? saved.batteryUsableKwh : undefined, batteryAh: includeBattery ? saved.batteryAh : undefined };
+    return { ...saved, panelWatts, panelCount, mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project), pvStrings: saved.pvStrings ?? (panelCount % 2 === 0 ? 2 : 1), panelsPerString: saved.panelsPerString ?? (panelCount % 2 === 0 ? panelCount / 2 : panelCount), panelVmpV: saved.panelVmpV ?? (typical ? 33.2 : undefined), panelVocV: saved.panelVocV ?? (typical ? 39.8 : undefined), panelImpA: saved.panelImpA ?? (typical ? 13.25 : undefined), panelIscA: saved.panelIscA ?? (typical ? 14.05 : undefined), inverterKw: saved.inverterKw ?? suggestedInverterKw(project), batteryVoltage: includeBattery ? saved.batteryVoltage ?? 51.2 : undefined, batteryUsableKwh: includeBattery ? saved.batteryUsableKwh : undefined, batteryAh: includeBattery ? saved.batteryAh : undefined, electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site) };
   });
   const [status, setStatus] = useState("");
   const base = `/sites/${project.siteId}/systems/${project.id}`;
@@ -388,7 +533,7 @@ export function ProposedBuildSchematic({ project }: { project: Project }) {
     router.push(`${base}?view=build`);
   }
 
-  return <div className="animate-rise space-y-5"><div><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p></div><section className="card overflow-hidden"><ProposedSchematic projectName={project.name} gridConnected={project.projectType === "hybrid" || project.projectType === "grid-tied"} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}<Link href={`${base}/design`} className="inline-flex text-xs font-bold text-brand">Open System Overview and planning numbers →</Link></div>;
+  return <div className="animate-rise space-y-5"><div><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p></div><section className="card overflow-hidden"><ProposedSchematic projectName={project.name} gridConnected={project.projectType === "hybrid" || project.projectType === "grid-tied"} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}</div>;
 }
 
 function ProposedSchematic({ projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref }: { projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string }) {
@@ -396,16 +541,27 @@ function ProposedSchematic({ projectName, gridConnected, includeBattery, design,
   const upgradedDraft = upgradePvStringIsolationDraft(rawDraft, design);
   const earthedDraft = ensurePvArrayEarth(upgradedDraft);
   const sourceDraft = batteryAdjustedDraft(earthedDraft, includeBattery);
+  const upgradeSignature = JSON.stringify(earthedDraft);
+  const savedDraftSignature = JSON.stringify(design.proposedAsBuiltDraft);
+  const lastSavedUpgrade = useRef("");
   useEffect(() => {
-    if (earthedDraft !== rawDraft) onDraftChange(earthedDraft);
-  }, [onDraftChange, rawDraft, earthedDraft]);
-  const draft = { ...sourceDraft, nodes: sourceDraft.nodes?.map((node) => planningNodeDetail(node, design)), connections: sourceDraft.connections?.map((connection) => preliminaryConnectionValues(connection, design)) };
+    if (upgradeSignature === savedDraftSignature || upgradeSignature === lastSavedUpgrade.current) return;
+    lastSavedUpgrade.current = upgradeSignature;
+    onDraftChange(earthedDraft);
+  }, [earthedDraft, onDraftChange, savedDraftSignature, upgradeSignature]);
+  const calculatedConnections = sourceDraft.connections?.map((connection) => preliminaryConnectionValues(connection, design));
+  const routesReady = (calculatedConnections ?? []).filter((connection) => !connection.authorityCheck).every((connection) => connection.configured === true);
+  const draftWithConnections = { ...sourceDraft, connections: calculatedConnections };
+  const draft = { ...draftWithConnections, nodes: sourceDraft.nodes?.map((node) => componentPlanningDetail(node, draftWithConnections, design, routesReady)) };
   const overviewHref = `${wattsonHref.split("?")[0]}/design`;
   const connectionsToConfigure = (draft.connections ?? []).filter((connection) => !connection.authorityCheck);
   const configuredConnections = connectionsToConfigure.filter((connection) => connection.configured === true).length;
   const connectionsComplete = connectionsToConfigure.length > 0 && configuredConnections === connectionsToConfigure.length;
-  const overviewComplete = ["solar-array", "inverter", "battery", "protection"].every((item) => design.proposedChecklist?.[item]);
-  const reviewComplete = reviewed && connectionsComplete;
+  const componentsToReview = (draft.nodes ?? []).filter((node) => !node.authorityCheck);
+  const reviewedComponents = componentsToReview.filter((node) => node.reviewed === true).length;
+  const componentsComplete = componentsToReview.length > 0 && reviewedComponents === componentsToReview.length;
+  const overviewComplete = componentsComplete;
+  const readyForBuild = overviewComplete && connectionsComplete && componentsComplete;
 
   return <section className="border-t border-line bg-[#f6f9fc] p-5">
     <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
@@ -423,15 +579,15 @@ function ProposedSchematic({ projectName, gridConnected, includeBattery, design,
       <div className="eyebrow">Before Build It</div>
       <h4 className="mt-2 text-sm font-extrabold">Finish the working design in this order</h4>
       <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <Link href={overviewHref} className={`rounded-xl border p-3 hover:border-brand ${overviewComplete ? "border-[#86c79a] bg-[#f1faf4]" : "border-line bg-[#f7fafc]"}`}><span className="flex items-center justify-between gap-2"><span className={`text-[10px] font-bold ${overviewComplete ? "text-[#17603b]" : "text-brand"}`}>1 · SYSTEM OVERVIEW</span>{overviewComplete ? <CheckCircle2 size={18} className="shrink-0 text-[#17603b]" aria-label="Completed"/> : null}</span><strong className="mt-1 block text-xs">Check equipment and planning values</strong><span className="mt-1 block text-[10px] leading-4 text-muted">Complete the panel, inverter and other visible component sections, then save them.</span></Link>
+        <Link href={overviewHref} className={`rounded-xl border p-3 hover:border-brand ${overviewComplete ? "border-[#86c79a] bg-[#f1faf4]" : "border-line bg-[#f7fafc]"}`}><span className="flex items-center justify-between gap-2"><span className={`text-[10px] font-bold ${overviewComplete ? "text-[#17603b]" : "text-brand"}`}>1 · SYSTEM OVERVIEW</span>{overviewComplete ? <CheckCircle2 size={18} className="shrink-0 text-[#17603b]" aria-label="Completed"/> : null}</span><strong className="mt-1 block text-xs">Check equipment and planning values</strong><span className="mt-1 block text-[10px] leading-4 text-muted">Review the calculated component specifications and return here to accept each item.</span></Link>
         <div className={`rounded-xl border p-3 ${connectionsComplete ? "border-[#86c79a] bg-[#f1faf4]" : "border-[#e4bd54] bg-[#fff9df]"}`}><span className="flex items-center justify-between gap-2"><span className={`text-[10px] font-bold ${connectionsComplete ? "text-[#17603b]" : "text-[#765918]"}`}>2 · CONNECTIONS · {configuredConnections}/{connectionsToConfigure.length}</span>{connectionsComplete ? <CheckCircle2 size={18} className="shrink-0 text-[#17603b]" aria-label="Completed"/> : null}</span><strong className="mt-1 block text-xs">Add every route distance</strong><span className="mt-1 block text-[10px] leading-4 text-muted">Select each Configure label, enter its measured or estimated one-way distance, then save the calculated cable and protection values.</span></div>
-        <div className={`rounded-xl border p-3 ${reviewComplete ? "border-[#86c79a] bg-[#f1faf4]" : "border-line bg-[#f7fafc]"}`}><span className="flex items-center justify-between gap-2"><span className={`text-[10px] font-bold ${reviewComplete ? "text-[#17603b]" : "text-brand"}`}>3 · REVIEW</span>{reviewComplete ? <CheckCircle2 size={18} className="shrink-0 text-[#17603b]" aria-label="Completed"/> : null}</span><strong className="mt-1 block text-xs">Approve the complete schematic</strong><span className="mt-1 block text-[10px] leading-4 text-muted">Check the components and connections together. Build It opens after all connection records are complete.</span></div>
+        <div className={`rounded-xl border p-3 ${componentsComplete ? "border-[#86c79a] bg-[#f1faf4]" : "border-line bg-[#f7fafc]"}`}><span className="flex items-center justify-between gap-2"><span className={`text-[10px] font-bold ${componentsComplete ? "text-[#17603b]" : "text-brand"}`}>3 · COMPONENTS · {reviewedComponents}/{componentsToReview.length}</span>{componentsComplete ? <CheckCircle2 size={18} className="shrink-0 text-[#17603b]" aria-label="Completed"/> : null}</span><strong className="mt-1 block text-xs">Accept the equipment schedule</strong><span className="mt-1 block text-[10px] leading-4 text-muted">Open each component, review its full specification and accept it. Build It opens when every component is green.</span></div>
       </div>
+      <button type="button" disabled={!readyForBuild} onClick={onToggle} className={`mt-4 flex h-12 w-full items-center justify-between rounded-xl px-4 text-left text-xs font-extrabold transition disabled:cursor-not-allowed disabled:bg-[#dce7f1] disabled:text-[#6d7f91] ${readyForBuild ? "bg-[#238653] text-white hover:bg-[#1b7045]" : ""}`}><span>{reviewed ? "Open Build It" : "Approve completed plan and open Build It"}</span>{readyForBuild ? <CheckCircle2 size={19}/> : <Circle size={19}/>}</button>
     </div>
 
     <div className="mt-4 rounded-xl border border-[#e6cc74] bg-[#fff9df] p-3 text-[11px] leading-5 text-[#624b14]"><strong>This is a plan, not permission to wire it.</strong> The actual equipment models, cable sizes, fuses, isolators, ventilation, mounting and local rules must be checked before any work begins.</div>
     <p className="mt-4 text-[11px] leading-5 text-muted">When you review this picture, PVIntell saves it as a potential draft for the later as-built schematic. The real as-built record stays empty until you confirm the actual equipment and connections.</p>
-    <button type="button" disabled={!connectionsComplete} onClick={onToggle} className={`mt-5 flex w-full items-center justify-between rounded-xl border p-3 text-left text-xs font-bold disabled:cursor-not-allowed disabled:opacity-50 ${reviewed && connectionsComplete ? "border-[#9bd2ad] bg-[#f2fbf5] text-[#17603b]" : "border-[#8ab0d2] bg-white text-brand"}`}><span>{!connectionsComplete ? `Complete ${connectionsToConfigure.length - configuredConnections} connection${connectionsToConfigure.length - configuredConnections === 1 ? "" : "s"} before Build It` : reviewed ? "Proposal complete — open Build It" : "Approve the completed proposal and open Build It"}</span>{reviewed && connectionsComplete ? <CheckCircle2 size={18}/> : <Circle size={18}/>}</button>
   </section>;
 }
 
@@ -479,19 +635,20 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
   }, [selectedNode]);
   const overviewHref = `${wattsonHref.split("?")[0]}/design`;
   const pvNames = Array.from({ length: Math.max(1, n(design.pvStrings, 1)) }, (_, index) => `PV${index + 1}`);
-  const connectionDisplayLabel = (connection: (typeof connections)[number]) => connection.kind === "solar-dc" && connection.from === "solar" ? `${pvNames.join(" / ")} · ${n(design.panelsPerString, 1)} panels per string` : connection.kind === "solar-dc" && connection.from === "solar-safety" ? `${pvNames.join(" / ")} to inverter/MPPT inputs` : connection.label;
+  const connectionDisplayLabel = (connection: (typeof connections)[number]) => connection.authorityCheck && connection.from === "grid-supply" ? "Public grid AC supply to isolation" : connection.authorityCheck && connection.to === "switchboard" ? "Grid AC feed to power board" : connection.kind === "solar-dc" && connection.from === "solar" ? `${pvNames.join(" / ")} · ${n(design.panelsPerString, 1)} panels per string` : connection.kind === "solar-dc" && connection.from === "solar-safety" ? `${pvNames.join(" / ")} to inverter/MPPT inputs` : connection.label;
   const pvCircuitId = (connection: (typeof connections)[number]) => connection.kind === "solar-dc" ? connection.label.match(/\bPV\d+\b/i)?.[0].toUpperCase() : undefined;
   const standardCable = (minimum: number) => [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120].find((size) => size >= minimum) ?? Math.ceil(minimum);
   const routeElectricals = (connection: (typeof connections)[number], lengthM: number) => {
     if (connection.kind === "earth") {
-      if (/\bPV\d* array frame earth\b/i.test(connection.label)) {
+      if (/\bPV\d* array frame bond\b/i.test(connection.label)) {
         const pvCircuit = pvCircuitId(connection);
         const pvCableMm2 = connections.filter((item) => item.kind === "solar-dc" && (!pvCircuit || pvCircuitId(item) === pvCircuit)).reduce((largest, item) => Math.max(largest, n(item.cableSizeMm2)), planningCableForCurrent(n(design.panelIscA) * 1.25));
-        return { cableSizeMm2: Math.max(4, planningProtectiveEarthForActive(pvCableMm2)), protectionAmps: undefined };
+        return { cableSizeMm2: planningProtectiveEarth(pvCableMm2, Math.ceil(n(design.panelIscA) * 1.25), design.electricalStandard, true), protectionAmps: undefined };
       }
       const calculatedAcCable = planningAcCableForCurrent(n(design.inverterKw) * 1000 / 230);
       const recordedAcCable = connections.filter((item) => item.kind === "ac").reduce((largest, item) => Math.max(largest, n(item.cableSizeMm2)), 0);
-      return { cableSizeMm2: planningProtectiveEarthForActive(Math.max(calculatedAcCable, recordedAcCable)), protectionAmps: undefined };
+      const acProtection = Math.ceil(n(design.inverterKw) * 1000 / 230 * 1.25);
+      return { cableSizeMm2: planningProtectiveEarth(Math.max(calculatedAcCable, recordedAcCable), acProtection, design.electricalStandard), protectionAmps: undefined };
     }
     const voltage = connection.kind === "solar-dc" ? n(design.panelVmpV) * n(design.panelsPerString, 1) : connection.kind === "battery-dc" ? n(design.batteryVoltage, 48) : 230;
     const stringCurrent = n(design.panelIscA) * 1.25;
@@ -547,6 +704,11 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
     setPendingSizing(undefined);
     setSelectedConnectionKey(undefined);
   };
+  const acceptComponent = () => {
+    if (!selectedNode) return;
+    onChange({ ...draft, nodes: nodes.map((node) => node.id === selectedNode.id ? { ...node, reviewed: true } : node) });
+    setSelectedNodeId(undefined);
+  };
   const moveNode = (event: DragEvent<HTMLDivElement>) => {
     if (!movingNodeId) return;
     event.preventDefault();
@@ -588,7 +750,7 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
   return <div className="mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><button type="button" onClick={tidyLayout} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={addItem} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">+ Add item</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div><div className="thin-scrollbar overflow-auto overscroll-contain">
     {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5"><div className="eyebrow">Full component specification</div><dl className="mt-3 grid gap-3 sm:grid-cols-2">{selectedNodeSpecs.map(([label, value]) => <div key={label} className="rounded-xl border border-line bg-[#f7fafc] p-3"><dt className="text-[9px] font-bold uppercase tracking-[.12em] text-muted">{label}</dt><dd className="mt-1 text-xs font-extrabold">{value}</dd></div>)}</dl><Link href={`${overviewHref}#tech-${selectedNode.id}`} className="mt-4 flex h-11 items-center justify-center rounded-xl border border-brand px-3 text-center text-xs font-bold text-brand">Edit full specification in System Overview</Link><button type="button" onClick={removeSelectedNode} className="mt-2 h-9 w-full rounded-lg border border-[#e7b7af] text-[10px] font-bold text-[#a7442d]">Delete this item</button></div>, componentModalTarget) : null}
     <div className="w-[1120px] origin-top-left" style={{ zoom }}>
-    <div className="flex min-w-[1120px] items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted"><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery cable</span><span><b className="text-[#d99500]">Gold</b> = power to the building</span><span><b className="text-[#25875a]">Green</b> = safety earth</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
+    <div className="flex min-w-[1120px] items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted"><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery DC</span><span><b className="text-[#d99500]">Gold</b> = inverter AC to the building</span><span><b className="text-[#9b3db5]">Purple</b> = controlled public-grid AC</span><span><b className="text-[#25875a]">Green</b> = protective earth / bonding</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
     <div className="relative h-[610px] w-[1120px] bg-[radial-gradient(circle,#c8d7e4_1px,transparent_1px),radial-gradient(circle_at_50%_45%,rgba(246,201,69,.12),transparent_22rem)] bg-[size:20px_20px,auto]" role="img" aria-label="Draft proposed solar power system schematic" onDragOver={(event) => event.preventDefault()} onDrop={moveNode}>
       <svg viewBox="0 0 1120 610" className="absolute inset-0 h-full w-full" aria-hidden>
         {connections.map((connection) => {
@@ -612,7 +774,7 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
           <span className="relative block h-[72px] overflow-hidden rounded-xl bg-[#f4f7fa]"><Image src={node.image} alt="" fill sizes="124px" className="object-contain p-1.5"/></span>
           <span className="mt-1.5 block text-[10px] font-extrabold text-[#102d4d]">{node.label}</span>
           <span className="mt-1 block text-[8px] leading-3 text-muted">{node.detail}</span>
-          <span className={`mt-1.5 inline-flex rounded-full px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-[.08em] ${node.installed ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#fff1cc] text-[#805d00]"}`}>{node.installed ? "✓ Installed" : "Proposed · open record"}</span>
+          <span className={`mt-1.5 inline-flex rounded-full px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-[.08em] ${node.reviewed ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#fff1cc] text-[#805d00]"}`}>{node.reviewed ? "✓ Specification accepted" : "Proposed · review"}</span>
         </span>
       </button>)}
     </div></div></div>
@@ -620,13 +782,13 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
     {(selectedNode || selectedConnection) ? <div className="fixed inset-0 z-[80] grid place-items-center bg-[#102d4d]/45 p-4" onMouseDown={(event) => { if (event.currentTarget === event.target) { setSelectedNodeId(undefined); setSelectedConnectionKey(undefined); setPendingSizing(undefined); } }}>
       <section id={selectedNode ? "schematic-component-record-modal" : undefined} className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-3"><div><div className="eyebrow">{selectedNode ? "Proposed component" : "Planning connection"}</div><h3 className="mt-2 text-xl font-extrabold">{selectedNode?.label ?? selectedConnection?.label}</h3></div><button type="button" onClick={() => { setSelectedNodeId(undefined); setSelectedConnectionKey(undefined); setPendingSizing(undefined); }} className="grid size-9 place-items-center rounded-xl border border-line"><X size={16}/></button></div>
-        {selectedNode ? <div className="mt-5 space-y-4"><p className="text-xs leading-5 text-muted">{selectedNode.detail}</p><Link href={overviewHref} className="flex h-11 items-center justify-center rounded-xl bg-brand px-4 text-xs font-bold text-white">Review in System Overview</Link><Link href={`${wattsonHref}&focus=${encodeURIComponent(selectedNode.label)}`} className="flex h-11 items-center justify-center rounded-xl border border-brand px-4 text-xs font-bold text-brand">Ask Wattson about this component</Link><p className="rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 text-[10px] leading-4 text-muted">Keep this as a proposed component until the whole schematic is reviewed. Installation records begin later in Build It.</p></div> : null}
+        {selectedNode ? <div className="mt-5 space-y-4"><p className="text-xs leading-5 text-muted">{selectedNode.detail}</p><Link href={overviewHref} className="flex h-11 items-center justify-center rounded-xl border border-brand px-4 text-xs font-bold text-brand">Review full technical details</Link><button type="button" onClick={() => openContextChat("ask")} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Ask Wattson about this component</button><button type="button" onClick={acceptComponent} className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-xs font-bold transition ${selectedNode.reviewed ? "border border-[#86c79a] bg-[#dff3e8] text-[#17603b]" : "bg-[#238653] text-white hover:bg-[#1b7045]"}`}><CheckCircle2 size={16}/>{selectedNode.reviewed ? "Specification accepted" : "Accept specification"}</button><p className="rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 text-[10px] leading-4 text-muted">Acceptance adds this proposed item to the Build It shopping list. It does not mark it purchased, installed or certified.</p></div> : null}
         {selectedConnection ? <div className="mt-5 space-y-4"><p className="text-xs leading-5 text-muted">Record the measured or estimated one-way route so Wattson can suggest planning values for this connection. You will review the complete schematic before Build It opens.</p><NumberField label="One-way route length" value={routeLength} unit="m" onChange={setRouteLength}/><label className="block text-xs font-bold">Distance quality<select value={routeBasis} onChange={(event) => setRouteBasis(event.target.value as "estimated" | "measured")} className="mt-1.5 h-11 w-full rounded-xl border border-line bg-white px-3"><option value="estimated">Estimated</option><option value="measured">Measured</option></select></label><button type="button" disabled={routeLength <= 0} onClick={saveRoute} className="h-11 w-full rounded-xl bg-brand px-4 text-xs font-bold text-white disabled:opacity-40">Calculate and review planning values</button><button type="button" onClick={() => openContextChat("ask")} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Ask Wattson about this connection</button><p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[10px] leading-4 text-[#765918]">Final conductor and protection selection still depends on equipment limits, installation method, temperature, grouping, fault level and local electrical rules.</p></div> : null}
       </section>
     </div> : null}
     </div>
     {selectedConnection && pendingSizing && !chatOpen ? <div className="fixed inset-0 z-[90] grid place-items-center bg-[#102d4d]/55 p-4"><section className="w-full max-w-lg overflow-hidden rounded-2xl border border-[#9bd2ad] bg-white shadow-2xl"><div className="flex items-start justify-between border-b border-[#b9dfc6] bg-[#f2fbf5] p-5"><div><div className="eyebrow text-[#17603b]">Wattson sizing suggestion</div><h3 className="mt-2 text-xl font-extrabold">{connectionDisplayLabel(selectedConnection)}</h3><p className="mt-2 text-[10px] leading-4 text-muted">Review these planning values before adding them to the working design.</p></div><button type="button" onClick={() => setPendingSizing(undefined)} className="grid size-9 place-items-center rounded-xl border border-line bg-white"><X size={16}/></button></div><div className="grid gap-3 p-5 sm:grid-cols-2"><Result label="Cable" value={pendingSizing.cableSizeMm2 ? `${pendingSizing.cableSizeMm2} mm²` : "Needs review"} detail="Suggested conductor size"/><Result label="Protection" value={pendingSizing.protectionAmps ? `${pendingSizing.protectionAmps} A` : "Not applicable"} detail="Suggested fuse or breaker"/><Result label="Route length" value={`${routeLength} m`} detail={routeBasis === "measured" ? "Measured route" : "Estimated route"}/><Result label="Circuit" value={selectedConnection.kind === "solar-dc" ? "PV DC" : selectedConnection.kind === "battery-dc" ? "Battery DC" : selectedConnection.kind === "earth" ? "Safety earth" : "AC"} detail="Working design circuit"/></div><div className="grid gap-2 border-t border-line bg-[#f7fafc] p-5 sm:grid-cols-2"><button type="button" onClick={() => setPendingSizing(undefined)} className="h-11 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Go back</button><button type="button" onClick={acceptSizing} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">Accept and record</button></div></section></div> : null}
-    {chatOpen && (selectedConnection || selectedNode) ? <div className="fixed inset-0 z-[90] grid place-items-center bg-[#102d4d]/55 p-4"><section className="flex max-h-[82dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"><div className="flex items-start justify-between border-b border-line bg-[#eef5fc] p-4"><div><div className="eyebrow">Wattson · {chatIntent === "redesign" ? "redesign" : chatIntent === "install" ? "Build It walkthrough" : "item questions"}</div><h3 className="mt-2 text-lg font-extrabold">{selectedNode?.label ?? (selectedConnection ? connectionDisplayLabel(selectedConnection) : "System item")}</h3></div><button type="button" onClick={() => setChatOpen(false)} className="grid size-9 place-items-center rounded-xl border border-line bg-white"><X size={16}/></button></div><div className="flex gap-2 border-b border-line p-3"><button type="button" onClick={() => openContextChat("ask")} className={`rounded-lg px-3 py-2 text-[10px] font-bold ${chatIntent === "ask" ? "bg-brand text-white" : "bg-[#eef3f8] text-brand"}`}>Ask Wattson</button><button type="button" onClick={() => openContextChat("install")} className={`rounded-lg px-3 py-2 text-[10px] font-bold ${chatIntent === "install" ? "bg-brand text-white" : "bg-[#eef3f8] text-brand"}`}>Walk through Build It</button><button type="button" onClick={() => openContextChat("redesign")} className={`rounded-lg px-3 py-2 text-[10px] font-bold ${chatIntent === "redesign" ? "bg-brand text-white" : "bg-[#eef3f8] text-brand"}`}>Redesign</button></div><div className="thin-scrollbar min-h-56 flex-1 space-y-3 overflow-y-auto p-4">{chatMessages.map((message, index) => <div key={index} className={`max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-5 ${message.role === "user" ? "ml-auto bg-brand text-white" : "bg-[#eef3f8] text-ink"}`}><FormattedChatMessage content={message.content}/></div>)}{chatBusy ? <div className="text-xs font-semibold text-muted">Wattson is checking this item…</div> : null}</div><div className="flex gap-2 border-t border-line p-4"><textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendConnectionChat(); } }} placeholder="Ask about this item, installation or a design change…" className="min-h-12 flex-1 resize-none rounded-xl border border-line p-3 text-xs outline-none focus:border-brand"/><button type="button" disabled={!chatInput.trim() || chatBusy} onClick={() => void sendConnectionChat()} className="rounded-xl bg-brand px-4 text-xs font-bold text-white disabled:opacity-40">Send</button></div></section></div> : null}
+    {chatOpen && (selectedConnection || selectedNode) ? <div className="fixed inset-0 z-[90] grid place-items-center bg-[#102d4d]/55 p-4"><section className="flex max-h-[82dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl"><div className="flex items-start justify-between border-b border-line bg-[#eef5fc] p-4"><div><div className="eyebrow">Wattson · questions about this item</div><h3 className="mt-2 text-lg font-extrabold">{selectedNode?.label ?? (selectedConnection ? connectionDisplayLabel(selectedConnection) : "System item")}</h3></div><button type="button" onClick={() => setChatOpen(false)} className="grid size-9 place-items-center rounded-xl border border-line bg-white"><X size={16}/></button></div><div className="thin-scrollbar min-h-56 flex-1 space-y-3 overflow-y-auto p-4">{chatMessages.map((message, index) => <div key={index} className={`max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-5 ${message.role === "user" ? "ml-auto bg-brand text-white" : "bg-[#eef3f8] text-ink"}`}><FormattedChatMessage content={message.content}/></div>)}{chatBusy ? <div className="text-xs font-semibold text-muted">Wattson is checking this item…</div> : null}</div><div className="flex gap-2 border-t border-line p-4"><textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendConnectionChat(); } }} placeholder={`Ask about ${selectedNode?.label ?? (selectedConnection ? connectionDisplayLabel(selectedConnection) : "this item")}…`} className="min-h-12 flex-1 resize-none rounded-xl border border-line p-3 text-xs outline-none focus:border-brand"/><button type="button" disabled={!chatInput.trim() || chatBusy} onClick={() => void sendConnectionChat()} className="rounded-xl bg-brand px-4 text-xs font-bold text-white disabled:opacity-40">Send</button></div></section></div> : null}
   </div>;
 }
 

@@ -10,7 +10,7 @@ const calculatorSchema = z.object({
       createdAt: z.string().datetime(),
       architecture: z.enum(["combined_hybrid_inverter", "separate_solar_controller_and_inverter", "ac_coupled", "not_decided"]).optional(),
       flow: z.array(z.string().max(100)).min(2).max(8),
-      nodes: z.array(z.object({ id: z.string().max(50), label: z.string().max(100), detail: z.string().max(200), image: z.string().max(200), x: finite, y: finite, installed: z.boolean().optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional() })).max(12).optional(),
+      nodes: z.array(z.object({ id: z.string().max(50), label: z.string().max(100), detail: z.string().max(200), image: z.string().max(200), x: finite, y: finite, installed: z.boolean().optional(), reviewed: z.boolean().optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional() })).max(12).optional(),
       connections: z.array(z.object({ from: z.string().max(50), to: z.string().max(50), label: z.string().max(100), kind: z.enum(["solar-dc", "battery-dc", "ac", "earth"]), lengthM: finite.optional(), lengthBasis: z.enum(["estimated", "measured"]).optional(), cableSizeMm2: finite.optional(), protectionAmps: finite.optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional(), configured: z.boolean().optional() })).max(20).optional(),
       panelCount: finite.optional(), panelWatts: finite.optional(), pvStrings: finite.optional(), panelsPerString: finite.optional(),
       panelVmpV: finite.optional(), panelVocV: finite.optional(), panelImpA: finite.optional(), panelIscA: finite.optional(), batteryVoltage: finite.optional(),
@@ -32,14 +32,22 @@ const calculatorSchema = z.object({
     peakSunHours: finite.max(24).optional(), systemEfficiencyPercent: finite.max(100).optional(),
     inverterKw: finite.optional(), batteryChemistry: z.string().max(100).optional(), batteryVoltage: finite.optional(),
     batteryAh: finite.optional(), batteryQuantity: finite.optional(), usableBatteryPercent: finite.max(100).optional(),
-    batteryUsableKwh: finite.optional(), connectionType: z.enum(["dc", "ac_single", "ac_three"]).optional(),
+    batteryUsableKwh: finite.optional(), electricalStandard: z.enum(["as_nzs", "nec", "iec", "local_review"]).optional(), connectionType: z.enum(["dc", "ac_single", "ac_three"]).optional(),
     connectionVoltage: finite.optional(), connectionCurrent: finite.optional(), connectionLengthM: finite.optional(),
     cableSizeMm2: finite.optional(), breakerAmps: finite.optional(), maxVoltageDropPercent: finite.max(20).optional(),
   }),
 });
 
 export async function PUT(request: Request) {
-  const parsed = calculatorSchema.safeParse(await request.json());
+  let payload: unknown;
+  try {
+    const body = await request.text();
+    if (!body.trim()) return Response.json({ error: "Missing calculator values." }, { status: 400 });
+    payload = JSON.parse(body);
+  } catch {
+    return Response.json({ error: "Invalid calculator values." }, { status: 400 });
+  }
+  const parsed = calculatorSchema.safeParse(payload);
   if (!parsed.success) return Response.json({ error: "Invalid calculator values." }, { status: 400 });
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();

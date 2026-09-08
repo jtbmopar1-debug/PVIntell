@@ -168,3 +168,26 @@ html[data-theme="dark"] [role="status"]:has(> .lucide-check) {
   background: #173525;
   color: #a9e4ba;
 }
+
+@media print {
+  body.shopping-list-print * {
+    visibility: hidden;
+  }
+
+  body.shopping-list-print #build-shopping-list,
+  body.shopping-list-print #build-shopping-list * {
+    visibility: visible;
+  }
+
+  body.shopping-list-print #build-shopping-list {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    border: 0;
+    box-shadow: none;
+  }
+
+  body.shopping-list-print .shopping-list-actions {
+    display: none !important;
+  }
+}

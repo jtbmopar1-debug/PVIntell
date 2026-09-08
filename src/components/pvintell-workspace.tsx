@@ -13,18 +13,22 @@ import {
   ChevronRight,
   CircleGauge,
   ClipboardCheck,
+  Download,
   HelpCircle,
   Home,
   LayoutDashboard,
   Lightbulb,
   MapPin,
+  Mail,
   Menu,
   Package,
   PlugZap,
+  Printer,
   Send,
   Sparkles,
   Sun,
   Waypoints,
+  WalletCards,
   Wrench,
   X,
   Zap,
@@ -75,6 +79,7 @@ import { SystemEquipmentOverview } from "@/components/system-equipment-overview"
 import { SystemTechnicalOverview } from "@/components/system-technical-overview";
 import { DesignCalculator, ProposedBuildSchematic } from "@/components/design-calculator";
 import type { SolarArrayForecastInput } from "@/weather/forecast";
+import { usePurchasePromptPreference } from "@/preferences/financials";
 
 export type WorkspaceView =
   | "site"
@@ -733,7 +738,7 @@ export function PVIntellWorkspace({
             <SolarWeather site={initialSite} solarArrayKw={installedSolarKw} solarArrays={installedSolarArrays} />
           )}{" "}
           {view === "design" && <DesignCalculator project={project} site={initialSite} />}{" "}
-          {view === "proposed-schematic" && <ProposedBuildSchematic project={project} />}{" "}
+          {view === "proposed-schematic" && <ProposedBuildSchematic project={project} site={initialSite} />}{" "}
           {view === "overview" && (
             <SystemTechnicalOverview
               project={project}
@@ -1570,10 +1575,214 @@ export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceH
 }
 
 function Build({ project }: { project: Project }) {
+  type ShoppingItem = { name: string; specification: string; quantity: string; regulated: boolean; basis?: string };
   const done = project.installationSteps.filter((s) => s.complete).length;
   const nextStep = project.installationSteps.find((step) => !step.complete) ?? project.installationSteps.at(-1);
   const manual = allHowToGuides.find((guide) => guide.id === "mc4") ?? allHowToGuides[0];
   const base = `/sites/${project.siteId}/systems/${project.id}`;
+  const acquiredStorageKey = `pvintell:shopping-acquired:${project.id}`;
+  const [acquired, setAcquired] = useState<Record<string, boolean>>({});
+  const { enabled: purchasePromptsEnabled } = usePurchasePromptPreference();
+  const [purchaseItem, setPurchaseItem] = useState<ShoppingItem | null>(null);
+  const [purchaseDraft, setPurchaseDraft] = useState({ date: new Date().toISOString().slice(0, 10), amount: "", vendor: "", notes: "" });
+  const [purchaseSaving, setPurchaseSaving] = useState(false);
+  const [purchaseError, setPurchaseError] = useState("");
+  const [purchaseNotice, setPurchaseNotice] = useState("");
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const stored = window.localStorage.getItem(acquiredStorageKey);
+        if (stored) setAcquired(JSON.parse(stored) as Record<string, boolean>);
+      } catch { /* A blocked or damaged local store must not stop the shopping list. */ }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [acquiredStorageKey]);
+  const decimal = (value: number, places = 1) => Number.isFinite(value) ? value.toFixed(places) : "—";
+  const proposal = project.designCalculator?.proposedAsBuiltDraft;
+  const acceptedComponents = (proposal?.nodes ?? []).filter((node) => node.reviewed);
+  const acceptedConnections = (proposal?.connections ?? []).filter((connection) => connection.configured);
+  const design = project.designCalculator ?? {};
+  const acceptedPvNodes = acceptedComponents.filter((node) => node.id === "solar" || node.id.startsWith("solar-pv-"));
+  const acceptedPanelCount = acceptedPvNodes.reduce((total, node) => total + (node.id.startsWith("solar-pv-") ? Number(design.panelsPerString ?? 0) : Number(design.panelCount ?? 0)), 0);
+  const acceptedPvStrings = acceptedPvNodes.length || (acceptedPanelCount ? 1 : 0);
+  const panelsPerAcceptedRow = acceptedPvStrings ? Math.max(1, Math.ceil(acceptedPanelCount / acceptedPvStrings)) : 0;
+  const panelWidthM = Number(design.panelWidthMm ?? 0) / 1000;
+  const assumedRowLengthM = panelsPerAcceptedRow && panelWidthM ? panelsPerAcceptedRow * panelWidthM + Math.max(0, panelsPerAcceptedRow - 1) * .02 : 0;
+  const mountingLocations = design.mountingLocations ?? [];
+  const hasGroundMount = mountingLocations.includes("ground");
+  const groundOnly = mountingLocations.length > 0 && mountingLocations.every((location) => location === "ground");
+  const groundRows = hasGroundMount ? groundOnly ? acceptedPvStrings : Math.max(1, Math.floor(acceptedPvStrings / Math.max(1, mountingLocations.length))) : 0;
+  const railRows = Math.max(0, acceptedPvStrings - groundRows);
+  const railRuns = railRows * 2;
+  const railStockLengthM = 4;
+  const railLinearM = assumedRowLengthM * railRuns;
+  const railStockQuantity = railLinearM ? Math.ceil(railLinearM / railStockLengthM) : 0;
+  const railJoinQuantity = assumedRowLengthM > railStockLengthM ? railRuns * Math.ceil(assumedRowLengthM / railStockLengthM - 1) : 0;
+  const middleClampQuantity = acceptedPvStrings * Math.max(0, panelsPerAcceptedRow - 1) * 2;
+  const endClampQuantity = acceptedPvStrings * 4;
+  const routeLengthWithAllowance = (lengthM: number) => Math.ceil(lengthM * 1.1);
+  const groupedRoutes = acceptedConnections.reduce((groups, connection) => {
+    if (!connection.lengthM || !connection.cableSizeMm2) return groups;
+    const key = `${connection.kind}:${connection.cableSizeMm2}`;
+    const current = groups.get(key) ?? { kind: connection.kind, cableSizeMm2: connection.cableSizeMm2, lengthM: 0, routeCount: 0 };
+    current.lengthM += connection.lengthM;
+    current.routeCount += 1;
+    groups.set(key, current);
+    return groups;
+  }, new Map<string, { kind: "solar-dc" | "battery-dc" | "ac" | "earth"; cableSizeMm2: number; lengthM: number; routeCount: number }>());
+  const pvRouteLength = acceptedConnections.filter((connection) => connection.kind === "solar-dc").reduce((total, connection) => total + Number(connection.lengthM ?? 0), 0);
+  const isolators = acceptedComponents.filter((node) => node.id.includes("solar-safety"));
+  const stringVoc = Number(design.panelVocV ?? 0) * Number(design.panelsPerString ?? 0);
+  const isolatorVoltage = stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500;
+  const pvProtection = acceptedConnections.filter((connection) => connection.kind === "solar-dc").reduce((largest, connection) => Math.max(largest, Number(connection.protectionAmps ?? 0)), 0);
+  const isolatorCurrent = [20, 25, 32, 40, 50, 63].find((rating) => rating >= Math.max(20, pvProtection)) ?? Math.ceil(Math.max(20, pvProtection));
+  const acProtection = acceptedConnections.filter((connection) => connection.kind === "ac" && !connection.authorityCheck).reduce((largest, connection) => Math.max(largest, Number(connection.protectionAmps ?? 0)), 0);
+  const shoppingItems: ShoppingItem[] = [];
+
+  if (acceptedPanelCount) {
+    shoppingItems.push({
+      name: "Solar PV module",
+      specification: `${design.panelWatts ?? "Rating to confirm"} W${design.panelLengthMm && design.panelWidthMm ? ` · ${design.panelLengthMm} × ${design.panelWidthMm} mm` : ""}${design.panelWeightKg ? ` · ${design.panelWeightKg} kg` : ""}${design.panelVocV ? ` · Voc ${design.panelVocV} V` : ""}`,
+      quantity: `${acceptedPanelCount} panels`,
+      regulated: false,
+      basis: `${acceptedPvStrings} accepted PV string${acceptedPvStrings === 1 ? "" : "s"}`,
+    });
+    if (groundRows) {
+      shoppingItems.push(
+        { name: "Ground-mount structural frame", specification: `Frame and cross-members sized for ${groundRows * panelsPerAcceptedRow} modules`, quantity: `${groundRows} row set${groundRows === 1 ? "" : "s"}`, regulated: false, basis: groundOnly ? "Accepted ground-mount location" : "Planning split across the accepted ground and building locations" },
+        { name: "Ground-frame foundation / anchor set", specification: "To suit the confirmed soil, wind zone and frame engineering", quantity: `${groundRows} row set${groundRows === 1 ? "" : "s"}`, regulated: false },
+      );
+    }
+    if (railRows) {
+      shoppingItems.push(
+        { name: "Solar panel mounting rail", specification: `${railStockLengthM} m rail lengths · compatible with selected module clamps`, quantity: railStockQuantity ? `${railStockQuantity} lengths` : "Layout confirmation required", regulated: false, basis: `${decimal(railLinearM, 1)} linear m plus cutting allocation; assumes one portrait row per accepted string` },
+        { name: "Rail splice / extension kit", specification: "Matched to the selected rail system", quantity: `${railJoinQuantity} kits`, regulated: false, basis: "One splice at each planned rail extension" },
+        { name: "Roof mounting feet / brackets", specification: "Matched to roof cladding, structure and rail system", quantity: railLinearM ? `${railRuns * (Math.ceil(assumedRowLengthM / 1.2) + 1)} mounts` : "Layout confirmation required", regulated: false, basis: "Planning spacing of no more than 1.2 m; final engineering controls" },
+      );
+    }
+    shoppingItems.push(
+      { name: "Panel centre clamp", specification: "Matched to module frame thickness and rail system", quantity: `${middleClampQuantity}`, regulated: false },
+      { name: "Panel end clamp", specification: "Matched to module frame thickness and rail system", quantity: `${endClampQuantity}`, regulated: false },
+      { name: "PV frame earth / bonding clamp", specification: "Compatible listed bonding hardware", quantity: `${Math.max(2, acceptedPvStrings * 2)}`, regulated: true },
+      { name: "MC4-compatible connector pair", specification: "Same connector family approved for the selected modules and inverter leads", quantity: `${acceptedPvStrings} pairs`, regulated: true },
+    );
+  }
+
+  if (isolators.length) shoppingItems.push({ name: "PV DC isolator", specification: `${isolatorVoltage} V DC · ${isolatorCurrent} A minimum · DC-PV2 load-break · poles and IP rating to suit location`, quantity: `${isolators.length}`, regulated: true, basis: "One accepted isolator per independent PV string" });
+
+  for (const route of groupedRoutes.values()) {
+    const purchaseLength = routeLengthWithAllowance(route.lengthM);
+    if (route.kind === "solar-dc") {
+      shoppingItems.push(
+        { name: "Red solar PV cable", specification: `${route.cableSizeMm2} mm² · PV1-F or locally compliant equivalent`, quantity: `${purchaseLength} m`, regulated: true, basis: `${decimal(route.lengthM, 1)} m configured route plus 10% termination allowance` },
+        { name: "Black solar PV cable", specification: `${route.cableSizeMm2} mm² · PV1-F or locally compliant equivalent`, quantity: `${purchaseLength} m`, regulated: true, basis: `${decimal(route.lengthM, 1)} m configured route plus 10% termination allowance` },
+      );
+    } else if (route.kind === "battery-dc") {
+      shoppingItems.push(
+        { name: "Red battery cable", specification: `${route.cableSizeMm2} mm² flexible DC cable`, quantity: `${purchaseLength} m`, regulated: true, basis: `${decimal(route.lengthM, 1)} m configured route plus 10% termination allowance` },
+        { name: "Black battery cable", specification: `${route.cableSizeMm2} mm² flexible DC cable`, quantity: `${purchaseLength} m`, regulated: true, basis: `${decimal(route.lengthM, 1)} m configured route plus 10% termination allowance` },
+        { name: "Battery cable lug", specification: `To suit ${route.cableSizeMm2} mm² cable and selected terminal studs`, quantity: `${route.routeCount * 4}`, regulated: true },
+      );
+    } else if (route.kind === "ac") {
+      shoppingItems.push({ name: "AC power cable", specification: `${route.cableSizeMm2} mm² ${design.connectionType === "ac_three" ? "4C+E" : "2C+E"} · installation type to suit route`, quantity: `${purchaseLength} m`, regulated: true, basis: `${decimal(route.lengthM, 1)} m configured route plus 10% termination allowance` });
+    } else {
+      shoppingItems.push({ name: "Green/yellow protective earth cable", specification: `${route.cableSizeMm2} mm²`, quantity: `${purchaseLength} m`, regulated: true, basis: `${decimal(route.lengthM, 1)} m configured route plus 10% termination allowance` });
+    }
+  }
+
+  if (pvRouteLength) shoppingItems.push(
+    { name: "UV-rated conduit for PV routes", specification: "Conduit diameter to final cable-fill and installation calculation", quantity: `${routeLengthWithAllowance(pvRouteLength)} m`, regulated: true, basis: `${decimal(pvRouteLength, 1)} m configured PV route plus 10% allowance` },
+    { name: "PV conduit saddles / supports", specification: "UV-resistant and matched to selected conduit", quantity: `${Math.ceil(routeLengthWithAllowance(pvRouteLength) / .75)}`, regulated: false, basis: "Planning support spacing of 750 mm; final installation method controls" },
+    { name: "PV cable glands and entries", specification: "IP-rated, UV-resistant and matched to cable / enclosure", quantity: `${Math.max(4, acceptedPvStrings * 4)}`, regulated: true },
+    { name: "PV DC labels and warning set", specification: "Complete durable identification set for array, isolators, routes and inverter", quantity: "1 set", regulated: true },
+  );
+
+  for (const node of acceptedComponents) {
+    if (node.id === "solar" || node.id.startsWith("solar-pv-") || node.id.includes("solar-safety")) continue;
+    if (node.id.includes("inverter")) shoppingItems.push({ name: node.label, specification: `${design.inverterKw ?? "Rating to confirm"} kW continuous · ${node.detail}`, quantity: "1", regulated: true });
+    else if (node.id === "ac-safety") shoppingItems.push({ name: "AC circuit breaker / safety switch", specification: `${design.connectionType === "ac_three" ? 400 : 230} V AC · ${acProtection || "rating to confirm"} A · poles, curve, fault rating and RCD type to final design`, quantity: "1", regulated: true });
+    else if (node.id === "battery-safety") shoppingItems.push({ name: "Battery DC fuse and isolator", specification: node.detail, quantity: "1 set", regulated: true });
+    else if (node.id === "earth") shoppingItems.push({ name: "Earthing electrode and termination kit", specification: node.detail, quantity: "1 set", regulated: true });
+    else shoppingItems.push({ name: node.label, specification: node.detail, quantity: "1", regulated: node.id.includes("switchboard") || node.id.includes("controller") || node.authorityCheck === true });
+  }
+  const itemKey = (item: ShoppingItem) => `${item.name}::${item.specification}::${item.quantity}`;
+  const acquiredCount = shoppingItems.filter((item) => acquired[itemKey(item)]).length;
+  const toggleAcquired = (item: ShoppingItem) => {
+    const key = itemKey(item);
+    const willBeAcquired = !acquired[key];
+    setAcquired((current) => {
+      const next = { ...current, [key]: !current[key] };
+      try { window.localStorage.setItem(acquiredStorageKey, JSON.stringify(next)); } catch { /* Keep the checkbox usable for this session. */ }
+      return next;
+    });
+    if (willBeAcquired && purchasePromptsEnabled) {
+      setPurchaseDraft({ date: new Date().toISOString().slice(0, 10), amount: "", vendor: "", notes: "" });
+      setPurchaseError("");
+      setPurchaseNotice("");
+      setPurchaseItem(item);
+    }
+  };
+  const addPurchase = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!purchaseItem) return;
+    const amount = Number(purchaseDraft.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setPurchaseError("Enter the total amount paid for this item.");
+      return;
+    }
+    setPurchaseSaving(true);
+    setPurchaseError("");
+    try {
+      const response = await fetch("/api/system-financials", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id,
+          purchase: {
+            date: purchaseDraft.date,
+            description: `${purchaseItem.name} · ${purchaseItem.quantity}`,
+            amount,
+            vendor: purchaseDraft.vendor.trim() || undefined,
+            notes: [purchaseItem.specification, purchaseDraft.notes.trim()].filter(Boolean).join(" · "),
+          },
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not add this purchase.");
+      setPurchaseItem(null);
+      setPurchaseNotice(`${purchaseItem.name} added to Financials.`);
+    } catch (problem) {
+      setPurchaseError(problem instanceof Error ? problem.message : "Could not add this purchase.");
+    } finally {
+      setPurchaseSaving(false);
+    }
+  };
+  const exportRows = () => shoppingItems.map((item) => ({ ...item, acquired: acquired[itemKey(item)] ? "Yes" : "No" }));
+  const downloadCsv = () => {
+    const csvCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
+    const rows = exportRows();
+    const csv = [
+      ["Acquired", "Item", "Specification", "Quantity", "Requirement", "Calculation basis"],
+      ...rows.map((item) => [item.acquired, item.name, item.specification, item.quantity, item.regulated ? "Certification check" : "General material", item.basis ?? ""]),
+    ].map((row) => row.map(csvCell).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${project.name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "system"}-shopping-list.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+  const emailList = () => {
+    const body = exportRows().map((item) => `${item.acquired === "Yes" ? "[x]" : "[ ]"} ${item.name} — ${item.quantity}\n${item.specification}${item.basis ? `\nBasis: ${item.basis}` : ""}`).join("\n\n");
+    window.location.href = `mailto:?subject=${encodeURIComponent(`${project.name} shopping list`)}&body=${encodeURIComponent(body)}`;
+  };
+  const printList = () => {
+    const cleanup = () => document.body.classList.remove("shopping-list-print");
+    document.body.classList.add("shopping-list-print");
+    window.addEventListener("afterprint", cleanup, { once: true });
+    window.print();
+    window.setTimeout(cleanup, 1500);
+  };
   return (
     <div className="animate-rise space-y-6">
       <Heading eyebrow="Build · simple guide" title="One job at a time" description="Use the How to menu for pictures and plain steps. Open the full build sheets only when you need the detailed record." />
@@ -1593,10 +1802,40 @@ function Build({ project }: { project: Project }) {
           />
         </div>
       </div>
+      <section id="build-shopping-list" className="card overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-line bg-[#eef5fc] p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3"><Package size={18} className="mt-0.5 shrink-0 text-brand"/><div><div className="eyebrow">Accepted design shopping list</div><h2 className="mt-1 text-base font-extrabold">Everything required for this build</h2><p className="mt-1 max-w-2xl text-[10px] leading-4 text-muted">Accepted components expand into products, supporting hardware and calculated cable lengths.</p><p className="mt-1 text-[10px] font-bold text-brand">{acquiredCount}/{shoppingItems.length} acquired</p>{purchaseNotice ? <p className="mt-1 text-[10px] font-bold text-[#17603b]">✓ {purchaseNotice} <Link href={`${base}/financials`} className="underline">View Financials</Link></p> : null}</div></div>
+          {shoppingItems.length ? <div className="shopping-list-actions flex flex-wrap gap-1.5"><button type="button" onClick={downloadCsv} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand px-3 text-[10px] font-bold text-white"><Download size={13}/>Download CSV</button><button type="button" onClick={printList} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-brand bg-white px-3 text-[10px] font-bold text-brand"><Printer size={13}/>Print / PDF</button><button type="button" onClick={emailList} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-brand bg-white px-3 text-[10px] font-bold text-brand"><Mail size={13}/>Email list</button></div> : null}
+        </div>
+        {shoppingItems.length ? <div className="p-3 sm:p-4"><div className="overflow-hidden rounded-xl border border-line"><div className="hidden grid-cols-[2rem_minmax(9rem,1fr)_minmax(14rem,1.8fr)_6rem_8rem] gap-2 bg-[#edf5fc] px-3 py-2 text-[8px] font-extrabold uppercase tracking-[.08em] text-muted sm:grid"><span>Got</span><span>Item</span><span>Specification</span><span>Quantity</span><span>Requirement</span></div>{shoppingItems.map((item, index) => { const checked = acquired[itemKey(item)] ?? false; return <article key={`${item.name}-${index}`} className={`grid grid-cols-[1.75rem_minmax(0,1fr)_auto] gap-x-2 gap-y-1 border-t border-line px-3 py-2.5 first:border-t-0 sm:grid-cols-[2rem_minmax(9rem,1fr)_minmax(14rem,1.8fr)_6rem_8rem] sm:items-start ${item.regulated ? "bg-[#fff9df]" : "bg-white"} ${checked ? "opacity-60" : ""}`}><label className="row-span-2 flex min-h-6 cursor-pointer items-start pt-0.5 sm:row-span-1" title={`Mark ${item.name} as acquired`}><input type="checkbox" checked={checked} onChange={() => toggleAcquired(item)} className="size-4 accent-[#238653]"/><span className="sr-only">{item.name} acquired</span></label><strong className={`min-w-0 text-[10px] leading-4 ${checked ? "line-through" : ""}`}>{item.name}</strong><strong className="text-right text-[10px] leading-4 text-brand sm:text-left">{item.quantity}</strong><div className="col-span-2 col-start-2 min-w-0 sm:col-span-1 sm:col-start-3 sm:row-start-1"><p className="text-[9px] font-semibold leading-4 text-ink">{item.specification}</p>{item.basis ? <p className="text-[8px] leading-3 text-muted">{item.basis}</p> : null}</div><span className="col-span-2 col-start-2 sm:col-span-1 sm:col-start-5 sm:row-start-1">{item.regulated ? <span className="inline-flex items-center gap-1 rounded-full bg-[#fff0bd] px-2 py-1 text-[7px] font-extrabold uppercase tracking-[.04em] text-[#765918]"><AlertTriangle size={9}/>Certification check</span> : <span className="inline-flex rounded-full bg-[#e8f5ed] px-2 py-1 text-[7px] font-extrabold uppercase tracking-[.04em] text-[#17603b]">General material</span>}</span></article>; })}</div></div> : <p className="p-5 text-xs text-muted">Accept component specifications on the proposed schematic to build this list.</p>}
+        <div className="border-t border-[#efd98e] bg-[#fff9e3] px-4 py-2 text-[9px] leading-4 text-[#765918]">“Certification check” means a registered electrical worker must confirm the product, installation, testing, certification and any required inspection before energisation.</div>
+      </section>
       {nextStep && <section className="card border-[#8eb5d8] p-6"><div className="eyebrow">Your next job</div><div className="mt-3 flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><h2 className="text-xl font-extrabold">{buildStepTitle(nextStep.title)}</h2><p className="mt-2 max-w-2xl text-xs leading-5 text-muted">{buildStepDescription(nextStep.title, nextStep.description)}</p></div><Link href={`${base}/build/${nextStep.id}`} className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-brand px-5 text-xs font-bold text-white">Open this job →</Link></div></section>}
       <section className="card overflow-hidden"><div className="grid gap-5 p-5 lg:grid-cols-[260px_1fr]"><div className="relative h-52 overflow-hidden rounded-2xl bg-[#f2f5f8]"><Image src={manual.image} alt="" fill sizes="260px" className="object-contain"/></div><div><div className="eyebrow">How to · visual manual</div><h2 className="mt-2 text-xl font-extrabold">{manual.title}</h2><p className="mt-2 text-xs leading-5 text-muted">{manual.summary}</p><ol className="mt-4 grid gap-2 sm:grid-cols-2">{manual.steps.map((step, index) => <li key={step} className="flex gap-3 rounded-xl bg-[#f4f7fa] p-3 text-[11px] leading-5"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-[10px] font-bold text-white">{index + 1}</span>{step}</li>)}</ol><div className="mt-4 rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[10px] leading-4 text-[#765918]">This guide helps you recognise the job; it does not replace the exact product manual or required electrical testing. {manual.sourceUrl ? <a href={manual.sourceUrl} target="_blank" rel="noreferrer" className="ml-1 font-bold underline">Source: {manual.source}</a> : <span className="ml-1 font-bold">{manual.source}</span>}</div></div></div></section>
       <details className="card overflow-hidden"><summary className="cursor-pointer list-none p-5"><div className="flex items-center justify-between"><div><div className="eyebrow">Detailed records</div><h2 className="mt-2 text-base font-extrabold">All build sheets</h2><p className="mt-1 text-xs text-muted">Open these when you need detailed checks, equipment records and completion tracking.</p></div><span className="rounded-xl border border-line px-3 py-2 text-xs font-bold text-brand">Show all</span></div></summary><div className="grid gap-3 border-t border-line bg-[#f7fafc] p-5 lg:grid-cols-2">{project.installationSteps.map((s, i) => <Link key={s.id} href={`${base}/build/${s.id}`} className="card flex gap-4 p-4"><span className={`grid size-8 shrink-0 place-items-center rounded-full border ${s.complete ? "bg-brand text-white" : "bg-white"}`}>{s.complete ? <Check size={15}/> : i + 1}</span><div><h3 className="text-xs font-bold">{buildStepTitle(s.title)}</h3><p className="mt-1 text-[10px] leading-4 text-muted">{buildStepDescription(s.title, s.description)}</p></div><ChevronRight className="ml-auto shrink-0 text-brand" size={15}/></Link>)}</div></details>
       <Safety />
+      {purchaseItem ? createPortal(
+        <div className="fixed inset-0 z-[100] grid place-items-center bg-[#17324d]/55 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !purchaseSaving) setPurchaseItem(null); }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="purchase-dialog-title" className="w-full max-w-md overflow-hidden rounded-2xl border border-[#a8c9b4] bg-white shadow-[0_24px_70px_rgba(9,35,58,.35)]">
+            <header className="flex items-start justify-between gap-3 border-b border-[#b9ddc5] bg-[#f1faf4] p-5">
+              <div className="flex items-start gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#dff3e8] text-[#17603b]"><WalletCards size={19}/></span><div><div className="eyebrow text-[#17603b]">Item acquired</div><h2 id="purchase-dialog-title" className="mt-1 text-lg font-extrabold">Add this purchase to Financials?</h2></div></div>
+              <button type="button" disabled={purchaseSaving} onClick={() => setPurchaseItem(null)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-line bg-white text-muted disabled:opacity-50" aria-label="No thanks, close"><X size={17}/></button>
+            </header>
+            <form onSubmit={addPurchase} className="p-5">
+              <div className="rounded-xl bg-[#eef5fc] p-3"><strong className="block text-xs">{purchaseItem.name} · {purchaseItem.quantity}</strong><p className="mt-1 text-[10px] leading-4 text-muted">{purchaseItem.specification}</p></div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="text-[10px] font-bold text-muted">Purchase date<input required type="date" className="field" value={purchaseDraft.date} onChange={(event) => setPurchaseDraft({ ...purchaseDraft, date: event.target.value })}/></label>
+                <label className="text-[10px] font-bold text-muted">Total amount paid<input required autoFocus type="number" min="0.01" step="0.01" inputMode="decimal" className="field" placeholder="0.00" value={purchaseDraft.amount} onChange={(event) => setPurchaseDraft({ ...purchaseDraft, amount: event.target.value })}/></label>
+                <label className="text-[10px] font-bold text-muted sm:col-span-2">Supplier (optional)<input className="field" placeholder="Shop or supplier" value={purchaseDraft.vendor} onChange={(event) => setPurchaseDraft({ ...purchaseDraft, vendor: event.target.value })}/></label>
+                <label className="text-[10px] font-bold text-muted sm:col-span-2">Notes (optional)<input className="field" placeholder="Receipt number, delivery, discount…" value={purchaseDraft.notes} onChange={(event) => setPurchaseDraft({ ...purchaseDraft, notes: event.target.value })}/></label>
+              </div>
+              {purchaseError ? <p className="mt-3 rounded-lg bg-[#fff0eb] p-3 text-[10px] text-[#913e31]">{purchaseError}</p> : null}
+              <div className="mt-5 grid gap-2 sm:grid-cols-2"><button type="button" disabled={purchaseSaving} onClick={() => setPurchaseItem(null)} className="h-11 rounded-xl border border-brand bg-white text-xs font-bold text-brand disabled:opacity-50">No thanks</button><button disabled={purchaseSaving} className="h-11 rounded-xl bg-[#238653] text-xs font-bold text-white disabled:opacity-50">{purchaseSaving ? "Adding…" : "Add to Financials"}</button></div>
+              <p className="mt-3 text-center text-[9px] leading-4 text-muted">You can turn off these prompts in Settings → Preferences.</p>
+            </form>
+          </section>
+        </div>, document.body,
+      ) : null}
     </div>
   );
 }
