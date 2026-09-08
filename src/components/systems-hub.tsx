@@ -1,9 +1,9 @@
 "use client";
 
-import { Activity, ArrowRight, CheckCircle2, ClipboardCheck, FileSearch, LayoutDashboard, MapPin, Menu, Network, Package, Ruler, Sparkles, Trash2, WalletCards, Wrench, X } from "lucide-react";
+import { Activity, ArrowRight, CheckCircle2, ClipboardCheck, FileSearch, LayoutDashboard, MapPin, Menu, Network, Package, Ruler, ShoppingCart, Sparkles, Trash2, WalletCards, Wrench, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BrandLogo } from "@/components/brand-logo";
 import type { Site, SystemSummary } from "@/domain/models";
 
@@ -41,7 +41,8 @@ const discoveryActions = [
   ["design", "System Overview", "Discovery-prefilled sizing and planning numbers.", Ruler],
   ["proposed-schematic", "System schematic", "The working proposal and component centrepoint.", Network],
   ["build", "Build It", "Installation guidance, routes and records.", Wrench],
-  ["commission", "Commission", "Checks and results before service.", ClipboardCheck],
+  ["shopping-list", "Shopping List", "Products, quantities and acquired items.", ShoppingCart],
+  ["commission", "Startup & Handover", "Initial operation, settings and supplied records.", ClipboardCheck],
   ["financials", "Financials", "Costs, purchases, rebates and buy-back.", WalletCards],
 ] as const;
 
@@ -50,10 +51,22 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
   const [menuOpen, setMenuOpen] = useState(false);
   const [savingDefault, setSavingDefault] = useState(false);
   const [dashboardDefaultSystemId, setDashboardDefaultSystemId] = useState(defaultSystemId);
+  const [locallyCompletedBuilds, setLocallyCompletedBuilds] = useState<Record<string, boolean>>({});
   const selectedSite = sites.find((site) => site.id === selectedSiteId) ?? sites[0];
   const visibleSystems = selectedSite ? systems.filter((system) => system.siteId === selectedSite.id) : systems;
   const visibleDrafts = selectedSite ? drafts.filter((draft) => !draft.siteId || draft.siteId === selectedSite.id) : drafts;
   const localDate = new Intl.DateTimeFormat("en-NZ", { weekday: "long", day: "numeric", month: "long", timeZone: selectedSite?.timezone ?? "UTC" }).format(new Date());
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const completion: Record<string, boolean> = {};
+      for (const system of systems) {
+        try { completion[system.id] = window.localStorage.getItem(`pvintell:build-complete:${system.id}`) === "true"; }
+        catch { completion[system.id] = false; }
+      }
+      setLocallyCompletedBuilds(completion);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [systems]);
 
   const siteQuery = selectedSite ? `?site=${selectedSite.id}` : "";
   async function remove(kind: "system" | "draft", id: string, name: string) {
@@ -106,7 +119,7 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
               <div className="flex flex-wrap items-center justify-end gap-2"><label className="flex min-h-8 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-muted"><input type="checkbox" checked={dashboardDefaultSystemId === system.id} disabled={savingDefault} onChange={(event) => void setDashboardDefault(system.id, event.target.checked)} className="size-3.5 accent-[#1768a6]"/>Dashboard default</label><Link href={actionHref(system, installed ? "overview" : system.phase === "discover" ? "setup" : "proposed-schematic")} className="flex items-center gap-2 text-[11px] font-bold text-brand">Open system <ArrowRight size={14}/></Link><button type="button" onClick={() => void remove("system", system.id, system.name)} className="grid size-8 place-items-center rounded-lg border border-[#e7b7af] text-[#a7442d]" aria-label={`Delete ${system.name}`}><Trash2 size={14}/></button></div>
             </div>
             <div className={`grid gap-2 p-2 sm:grid-cols-2 ${installed ? "lg:grid-cols-5" : "lg:grid-cols-3"}`}>
-              {actions.map(([id, title, detail, Icon]) => { const complete = system.completedAreas?.includes(id); return <Link key={id} href={actionHref(system, id)} className={`group flex min-h-14 items-center gap-2.5 rounded-lg border px-2.5 py-2 ${complete ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-line bg-white hover:border-[#8ab0d2] hover:bg-[#f8fbfe]"}`}><span className={`grid size-8 shrink-0 place-items-center rounded-lg ${complete ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#eaf2fb] text-brand"}`}>{complete ? <CheckCircle2 size={16}/> : <Icon size={15}/>}</span><span className="min-w-0"><strong className="block text-[11px] leading-4">{title}</strong><span className="block truncate text-[9px] leading-4 text-muted">{complete ? "Complete" : detail}</span></span><ArrowRight size={12} className="ml-auto shrink-0 text-[#9aabba] group-hover:text-brand"/></Link>; })}
+              {actions.map(([id, title, detail, Icon]) => { const complete = system.completedAreas?.includes(id) || (id === "build" && locallyCompletedBuilds[system.id]); return <Link key={id} href={actionHref(system, id)} className={`group flex min-h-14 items-center gap-2.5 rounded-lg border px-2.5 py-2 ${complete ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-line bg-white hover:border-[#8ab0d2] hover:bg-[#f8fbfe]"}`}><span className={`grid size-8 shrink-0 place-items-center rounded-lg ${complete ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#eaf2fb] text-brand"}`}>{complete ? <CheckCircle2 size={16}/> : <Icon size={15}/>}</span><span className="min-w-0"><strong className="block text-[11px] leading-4">{title}</strong><span className="block truncate text-[9px] leading-4 text-muted">{complete ? "Complete" : detail}</span></span><ArrowRight size={12} className="ml-auto shrink-0 text-[#9aabba] group-hover:text-brand"/></Link>; })}
             </div>
           </article>;
         })}

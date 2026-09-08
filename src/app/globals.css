@@ -56,6 +56,70 @@ html[data-theme="dark"] [class~="bg-[#fff1ed]"],
 html[data-theme="dark"] [class~="bg-[#fff0ed]"],
 html[data-theme="dark"] [class~="bg-[#fff0eb]"] {background-color:#3a211f!important}
 
+/* Complete dark-theme surface audit. Application cards use a broad set of
+   pale Tailwind arbitrary colours; every pale family must become a dark
+   surface before inherited theme text is applied. Semantic green, amber and
+   red surfaces are restored below the neutral fallback. */
+html[data-theme="dark"] [class*="bg-[#d"],
+html[data-theme="dark"] [class*="bg-[#e"],
+html[data-theme="dark"] [class*="bg-[#f1"],
+html[data-theme="dark"] [class*="bg-[#f2"],
+html[data-theme="dark"] [class*="bg-[#f3"],
+html[data-theme="dark"] [class*="bg-[#f4"],
+html[data-theme="dark"] [class*="bg-[#f5"],
+html[data-theme="dark"] [class*="bg-[#f7"],
+html[data-theme="dark"] [class*="bg-[#f8"],
+html[data-theme="dark"] [class*="bg-[#fb"] {background-color:#192a3d!important}
+
+html[data-theme="dark"] [class~="bg-[#dcefe5]"],
+html[data-theme="dark"] [class~="bg-[#dff2e6]"],
+html[data-theme="dark"] [class~="bg-[#dff3e8]"],
+html[data-theme="dark"] [class~="bg-[#e2f3e9]"],
+html[data-theme="dark"] [class~="bg-[#e8f5ed]"],
+html[data-theme="dark"] [class~="bg-[#e8f6ec]"],
+html[data-theme="dark"] [class~="bg-[#eaf8ef]"],
+html[data-theme="dark"] [class~="bg-[#eef7f2]"],
+html[data-theme="dark"] [class~="bg-[#f1faf4]"],
+html[data-theme="dark"] [class~="bg-[#f1faf5]"],
+html[data-theme="dark"] [class~="bg-[#f2fbf5]"],
+html[data-theme="dark"] [class~="bg-[#f7fcf8]"] {background-color:#173126!important}
+
+html[data-theme="dark"] [class~="bg-[#fff0a8]"],
+html[data-theme="dark"] [class~="bg-[#fff0a9]"],
+html[data-theme="dark"] [class~="bg-[#fff0bd]"],
+html[data-theme="dark"] [class~="bg-[#fff1ac]"],
+html[data-theme="dark"] [class~="bg-[#fff1b8]"],
+html[data-theme="dark"] [class~="bg-[#fff1bc]"],
+html[data-theme="dark"] [class~="bg-[#fff1cc]"],
+html[data-theme="dark"] [class~="bg-[#fff1cf]"],
+html[data-theme="dark"] [class~="bg-[#fff2b8]"],
+html[data-theme="dark"] [class~="bg-[#fff3b4]"],
+html[data-theme="dark"] [class~="bg-[#fff4c5]"],
+html[data-theme="dark"] [class~="bg-[#fff4d6]"],
+html[data-theme="dark"] [class~="bg-[#fff5d9]"],
+html[data-theme="dark"] [class~="bg-[#fff6cf]"],
+html[data-theme="dark"] [class~="bg-[#fff7d6]"],
+html[data-theme="dark"] [class~="bg-[#fff8d8]"],
+html[data-theme="dark"] [class~="bg-[#fff8d9]"],
+html[data-theme="dark"] [class~="bg-[#fff8df]"],
+html[data-theme="dark"] [class~="bg-[#fff8e7]"],
+html[data-theme="dark"] [class~="bg-[#fff9df]"],
+html[data-theme="dark"] [class~="bg-[#fff9e3]"] {background-color:#302a17!important}
+
+html[data-theme="dark"] [class~="bg-[#ffebe7]"],
+html[data-theme="dark"] [class~="bg-[#fff0eb]"],
+html[data-theme="dark"] [class~="bg-[#fff0ed]"],
+html[data-theme="dark"] [class~="bg-[#fff1ed]"],
+html[data-theme="dark"] [class~="bg-[#fff1ee]"],
+html[data-theme="dark"] [class~="bg-[#fff2ed]"],
+html[data-theme="dark"] [class~="bg-[#fff7f5]"],
+html[data-theme="dark"] [class~="bg-[#fff8f6]"],
+html[data-theme="dark"] [class~="bg-[#fffaf8]"] {background-color:#3a211f!important}
+
+html[data-theme="dark"] [class~="hover:bg-[#eef3f8]"]:hover,
+html[data-theme="dark"] [class~="hover:bg-[#eaf2fb]"]:hover,
+html[data-theme="dark"] [class~="hover:bg-[#f8fbfe]"]:hover {background-color:#22364b!important}
+
 html[data-theme="dark"] [class~="text-[#143c63]"],
 html[data-theme="dark"] [class~="text-[#175a96]"] {color:#9dcef4!important}
 html[data-theme="dark"] [class~="text-[#8a6400]"],
@@ -74,16 +138,67 @@ html[data-theme="dark"] [class~="text-[#9b4033]"],
 html[data-theme="dark"] [class~="text-[#9a4937]"],
 html[data-theme="dark"] [class~="text-[#a7442d]"],
 html[data-theme="dark"] [class~="text-[#b9412b]"] {color:#f1a698!important}
+html[data-theme="dark"] [class~="text-[#102d4d]"],
+html[data-theme="dark"] [class~="text-[#11395e]"],
+html[data-theme="dark"] [class~="text-[#12649f]"],
+html[data-theme="dark"] [class~="text-[#14233a]"],
+html[data-theme="dark"] [class~="text-[#165d9c]"],
+html[data-theme="dark"] [class~="text-[#1974b8]"],
+html[data-theme="dark"] [class~="text-[#20334a]"],
+html[data-theme="dark"] [class~="text-[#3373aa]"],
+html[data-theme="dark"] [class~="text-[#4285f4]"] {color:#9dcef4!important}
+html[data-theme="dark"] [class~="text-[#3c4043]"],
+html[data-theme="dark"] [class~="text-[#3f5870]"],
+html[data-theme="dark"] [class~="text-[#4d6176]"],
+html[data-theme="dark"] [class~="text-[#52657a]"],
+html[data-theme="dark"] [class~="text-[#566579]"],
+html[data-theme="dark"] [class~="text-[#66758a]"],
+html[data-theme="dark"] [class~="text-[#6d7f91]"],
+html[data-theme="dark"] [class~="text-[#728195]"],
+html[data-theme="dark"] [class~="text-[#7890a5]"],
+html[data-theme="dark"] [class~="text-[#7b8a9c]"] {color:#b8c8d9!important}
+html[data-theme="dark"] [class~="text-[#16613a]"],
+html[data-theme="dark"] [class~="text-[#197554]"],
+html[data-theme="dark"] [class~="text-[#207554]"],
+html[data-theme="dark"] [class~="text-[#237847]"],
+html[data-theme="dark"] [class~="text-[#246548]"],
+html[data-theme="dark"] [class~="text-[#247557]"],
+html[data-theme="dark"] [class~="text-[#25845f]"],
+html[data-theme="dark"] [class~="text-[#25875a]"],
+html[data-theme="dark"] [class~="text-[#288253]"] {color:#8ed9af!important}
+html[data-theme="dark"] [class~="text-[#624b14]"],
+html[data-theme="dark"] [class~="text-[#684d0d]"],
+html[data-theme="dark"] [class~="text-[#6f5518]"],
+html[data-theme="dark"] [class~="text-[#735800]"],
+html[data-theme="dark"] [class~="text-[#765918]"],
+html[data-theme="dark"] [class~="text-[#805d00]"],
+html[data-theme="dark"] [class~="text-[#b77d00]"],
+html[data-theme="dark"] [class~="text-[#c58e00]"],
+html[data-theme="dark"] [class~="text-[#d99500]"],
+html[data-theme="dark"] [class~="text-[#d99b00]"] {color:#f4d474!important}
+html[data-theme="dark"] [class~="text-[#7f3422]"],
+html[data-theme="dark"] [class~="text-[#a52f22]"],
+html[data-theme="dark"] [class~="text-[#a9442f]"],
+html[data-theme="dark"] [class~="text-[#b53222]"],
+html[data-theme="dark"] [class~="text-[#bd5f47]"],
+html[data-theme="dark"] [class~="text-[#d94141]"] {color:#f1a698!important}
+html[data-theme="dark"] [class~="bg-[#f6c945]"][class~="text-[#143c63]"] {color:#143c63!important}
 html[data-theme="dark"] .dashboard-actions a>div>strong,
 html[data-theme="dark"] .dashboard-actions button>div>strong,
 html[data-theme="dark"] nav[aria-label="Primary navigation"] a,
-html[data-theme="dark"] nav[aria-label="Primary navigation"] button {color:var(--ink)}
+html[data-theme="dark"] nav[aria-label="Primary navigation"] button {color:#143c63!important}
+html[data-theme="dark"] .dashboard-actions a p,
+html[data-theme="dark"] .dashboard-actions button p,
+html[data-theme="dark"] .dashboard-actions a .text-brand,
+html[data-theme="dark"] .dashboard-actions button .text-brand {color:#143c63!important}
 .wattson-conversation,
 #wattson > .thin-scrollbar {
   height: clamp(360px, 52vh, 520px) !important;
 }
 .mobile-nav-item{display:block;width:100%;border-radius:7px;padding:8px 10px;text-align:left;font-size:11px;font-weight:700;color:var(--muted)}
 .mobile-nav-item:hover{background:#eaf1f7;color:var(--blue)}
+html[data-theme="dark"] .mobile-nav-item:hover{background:#22364b;color:var(--blue)}
+.schematic-rotate-hint{display:none}
 .pv-map-marker-shell{background:transparent!important;border:0!important}.pv-map-marker{position:relative;z-index:1;display:block;width:30px;height:30px;margin-left:5px;border:1px solid #447b13;border-radius:50%;background:radial-gradient(circle at 34% 27%,#efffcf 0 5%,#b6e75c 13%,#83c52c 42%,#57951a 72%,#356b0d 100%);box-shadow:0 2px 5px rgba(15,35,58,.4),inset -2px -3px 5px rgba(30,77,3,.28);transform:scale(var(--pv-marker-scale,.7));transform-origin:50% 100%}.pv-map-marker:before{content:"";position:absolute;z-index:-1;top:25px;left:11px;width:7px;height:23px;border:1px solid #73808b;border-radius:0 0 2px 2px;background:linear-gradient(90deg,#7e8992,#f5f7f8 42%,#aeb8bf 72%,#687680);box-shadow:0 2px 3px rgba(15,35,58,.28)}.pv-map-marker:after{content:"";position:absolute;z-index:-2;top:46px;left:7px;width:16px;height:5px;border-radius:50%;background:rgba(27,38,48,.55);box-shadow:0 1px 3px rgba(15,35,58,.32)}.pv-map-marker.is-mobile{border-color:#ad5013;background:radial-gradient(circle at 34% 27%,#fff0cb 0 5%,#ffc066 13%,#ef8b2d 44%,#cf5d18 74%,#8e350d 100%)}.pv-map-marker.is-approximate{border-style:dashed}.pv-map-marker.is-active{outline:2px solid #fff;box-shadow:0 0 0 4px #285c0e,0 3px 7px rgba(15,35,58,.5),inset -2px -3px 5px rgba(30,77,3,.28)}.pv-map-marker.is-active.is-mobile{box-shadow:0 0 0 4px #87330d,0 3px 7px rgba(15,35,58,.5),inset -2px -3px 5px rgba(100,36,4,.25)}.pv-map-label{border:1px solid #cbd8e5!important;border-radius:6px!important;padding:3px 7px!important;color:#143c63!important;font:700 11px/1.2 var(--font-body)!important;box-shadow:0 2px 7px rgba(15,35,58,.15)!important}.pv-map-label.is-active{background:#f5faef!important;border-color:#76a947!important}.pv-map-label:before{display:none!important}
 
 @media (max-width:640px){
@@ -99,6 +214,28 @@ html[data-theme="dark"] nav[aria-label="Primary navigation"] button {color:var(-
   .field{min-height:42px}
   .dashboard-actions a,.dashboard-actions button{min-height:0;padding:16px}
   .dashboard-actions>div{gap:10px}
+}
+
+@media (max-width:767px) and (orientation:portrait){
+  .schematic-rotate-hint{display:flex;min-height:220px;align-items:center;justify-content:center;gap:14px;padding:28px;text-align:left;color:var(--blue)}
+  .schematic-rotate-hint>svg{flex:none;transform:rotate(90deg)}
+  .schematic-rotate-hint strong{display:block;font-size:14px;line-height:1.3}
+  .schematic-rotate-hint span{display:block;margin-top:6px;max-width:260px;color:var(--muted);font-size:11px;line-height:1.5}
+  .schematic-mobile-canvas-content{display:none}
+}
+
+@media (max-height:600px) and (orientation:landscape){
+  .schematic-workspace-content,.schematic-mobile-main{max-width:none!important;padding:8px!important}
+  .proposed-schematic-page{gap:8px!important}
+  .proposed-schematic-page>.schematic-page-intro,.schematic-mobile-main .schematic-page-intro{margin:0!important;padding:4px 6px}
+  .proposed-schematic-page>.schematic-page-intro p,.schematic-mobile-main .schematic-page-intro p{display:none}
+  .proposed-schematic-page>.schematic-page-intro h1,.schematic-mobile-main .schematic-page-intro h1{margin-top:3px!important;font-size:18px!important;line-height:1.2}
+  .proposed-schematic-shell{border-radius:10px!important}
+  .proposed-schematic-shell>section{padding:8px!important}
+  .proposed-schematic-shell>section>div:first-child{display:none}
+  .proposed-schematic-canvas{margin-top:0!important;border-radius:9px!important}
+  .schematic-canvas-toolbar{gap:5px!important;padding:5px 7px!important}
+  .schematic-canvas-toolbar button{height:28px!important;min-height:28px!important}
 }
 /* System navigation now lives on the Systems hub rather than in a second header. */
 nav[aria-label="System navigation"] {

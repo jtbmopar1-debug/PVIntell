@@ -3,7 +3,7 @@ import { PVIntellWorkspace, type WorkspaceView } from "@/components/pvintell-wor
 import { loadSiteWorkspace } from "@/data/cloud-project";
 import { createClient } from "@/lib/supabase/server";
 
-const workspaceViews = new Set<WorkspaceView>(["wattson", "equipment", "weather", "design", "overview", "system", "build", "commission", "monitor"]);
+const workspaceViews = new Set<WorkspaceView>(["wattson", "equipment", "weather", "design", "overview", "system", "build", "shopping-list", "commission", "monitor"]);
 
 export default async function PowerSystemPage({ params, searchParams }: { params: Promise<{ id: string; systemId: string }>; searchParams: Promise<{ view?: string; conversation?: string; focus?: string }> }) {
   const supabase = await createClient(); const claims = await supabase.auth.getClaims(); const userId = claims.data?.claims?.sub;

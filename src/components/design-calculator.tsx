@@ -1,6 +1,6 @@
 "use client";
 
-import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Eye, EyeOff, Minus, Plus, RotateCcw, Save, Sun, X } from "lucide-react";
+import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Eye, EyeOff, Minus, Plus, RotateCcw, Save, Smartphone, Sun, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
@@ -301,6 +301,18 @@ function pvLayoutCountMismatch(design: Pick<DesignCalculatorState, "pvStrings" |
   return design.pvStrings * design.panelsPerString !== design.panelCount;
 }
 
+function discoveredAcSupply(project: Project) {
+  const phase = String(project.designDiscovery?.ac_phase_arrangement?.value ?? "").toLowerCase();
+  const recordedVoltage = String(project.designDiscovery?.nominal_ac_voltage?.value ?? "").toLowerCase();
+  const connectionType = /three|3[ -]?phase/.test(phase) ? "ac_three" as const : /single|split/.test(phase) ? "ac_single" as const : undefined;
+  const voltage = recordedVoltage.includes("440_480") || /440\s*[–-]\s*480/.test(recordedVoltage) ? 480
+    : recordedVoltage.includes("380_415") || /380\s*[–-]\s*415/.test(recordedVoltage) ? 400
+      : recordedVoltage.includes("200_240") || /200\s*[–-]\s*240/.test(recordedVoltage) ? 230
+        : recordedVoltage.includes("110_120") || /110\s*[–-]\s*120/.test(recordedVoltage) ? 120
+          : Number(recordedVoltage.match(/\d+(?:\.\d+)?/)?.[0]) || undefined;
+  return { connectionType, voltage };
+}
+
 export function DesignCalculator({ project, site }: { project: Project; site: Site }) {
   const commissioned = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
   const includeBattery = proposalIncludesBattery(project);
@@ -314,11 +326,14 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     const proposedBatteryUsableKwh = includeBattery ? n(saved.batteryUsableKwh, discoveredDailyKwh * Math.max(project.autonomyDays, .25)) : 0;
     const batteryVoltage = includeBattery ? n(saved.batteryVoltage, 51.2) : 0;
     const usableBatteryPercent = n(saved.usableBatteryPercent, 80);
+    const discoveredAc = discoveredAcSupply(project);
     return {
       panelType: "bifacial", fitStatus: "unverified", peakSunHours: project.peakSunHours,
       systemEfficiencyPercent: 80,
-      connectionType: "dc", maxVoltageDropPercent: 2,
+      maxVoltageDropPercent: 2,
       ...saved,
+      connectionType: discoveredAc.connectionType ?? saved.connectionType ?? "dc",
+      connectionVoltage: saved.connectionVoltage ?? discoveredAc.voltage,
       panelWatts,
       panelCount,
       mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project),
@@ -533,7 +548,7 @@ export function ProposedBuildSchematic({ project, site }: { project: Project; si
     router.push(`${base}?view=build`);
   }
 
-  return <div className="animate-rise space-y-5"><div><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p></div><section className="card overflow-hidden"><ProposedSchematic projectName={project.name} gridConnected={project.projectType === "hybrid" || project.projectType === "grid-tied"} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}</div>;
+  return <div className="proposed-schematic-page animate-rise space-y-5"><div className="schematic-page-intro"><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p></div><section className="proposed-schematic-shell card overflow-hidden"><ProposedSchematic projectName={project.name} gridConnected={project.projectType === "hybrid" || project.projectType === "grid-tied"} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}</div>;
 }
 
 function ProposedSchematic({ projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref }: { projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string }) {
@@ -607,11 +622,22 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
   const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
   const [movingNodeId, setMovingNodeId] = useState<string>();
   const [componentModalTarget, setComponentModalTarget] = useState<HTMLElement | null>(null);
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      if (window.innerWidth < 1100) setZoom(Math.max(.25, Math.min(1, (window.innerWidth - 72) / 1120)));
-    });
-    return () => window.cancelAnimationFrame(frame);
+    const viewport = canvasViewportRef.current;
+    if (!viewport) return;
+    const fit = () => {
+      if (window.innerWidth < 1100) setZoom(Math.max(.25, Math.min(1, viewport.clientWidth / 1120)));
+    };
+    const frame = window.requestAnimationFrame(fit);
+    const observer = new ResizeObserver(fit);
+    observer.observe(viewport);
+    window.addEventListener("orientationchange", fit);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("orientationchange", fit);
+    };
   }, []);
   const nodeWidth = 140;
   const nodeCentre = 70;
@@ -730,24 +756,31 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
     onChange({ ...draft, nodes: nodes.filter((node) => node.id !== selectedNode.id), connections: connections.filter((connection) => connection.from !== selectedNode.id && connection.to !== selectedNode.id) });
     setSelectedNodeId(undefined);
   };
-  const pathFor = (fromId: string, toId: string, offset = 0) => {
+  const connectionGeometry = (fromId: string, toId: string, offset = 0) => {
     const from = byId.get(fromId);
     const to = byId.get(toId);
-    if (!from || !to) return "";
-    const x1 = from.x + nodeWidth;
-    const y1 = from.y + 58 + offset;
-    const x2 = to.x;
-    const y2 = to.y + 58 + offset;
-    if (x2 >= x1) {
-      const bend = Math.max(45, Math.abs(x2 - x1) * .5);
-      return `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
-    }
-    const fromCentre = from.x + nodeCentre + offset;
-    const toCentre = to.x + nodeCentre + offset;
-    return `M ${fromCentre} ${from.y + 122} C ${fromCentre} ${from.y + 185}, ${toCentre} ${to.y - 65}, ${toCentre} ${to.y}`;
+    if (!from || !to) return { path: "", labelX: 0, labelY: 0 };
+    const nodeHeight = 122;
+    const fromCx = from.x + nodeCentre;
+    const fromCy = from.y + nodeHeight / 2;
+    const toCx = to.x + nodeCentre;
+    const toCy = to.y + nodeHeight / 2;
+    const dx = toCx - fromCx;
+    const dy = toCy - fromCy;
+    const horizontal = Math.abs(dx) >= Math.abs(dy);
+    const x1 = horizontal ? fromCx + Math.sign(dx || 1) * nodeCentre : fromCx + offset;
+    const y1 = horizontal ? fromCy + offset : fromCy + Math.sign(dy || 1) * nodeHeight / 2;
+    const x2 = horizontal ? toCx - Math.sign(dx || 1) * nodeCentre : toCx + offset;
+    const y2 = horizontal ? toCy + offset : toCy - Math.sign(dy || 1) * nodeHeight / 2;
+    const bend = Math.max(35, (horizontal ? Math.abs(x2 - x1) : Math.abs(y2 - y1)) * .45);
+    const path = horizontal
+      ? `M ${x1} ${y1} C ${x1 + Math.sign(dx || 1) * bend} ${y1}, ${x2 - Math.sign(dx || 1) * bend} ${y2}, ${x2} ${y2}`
+      : `M ${x1} ${y1} C ${x1} ${y1 + Math.sign(dy || 1) * bend}, ${x2} ${y2 - Math.sign(dy || 1) * bend}, ${x2} ${y2}`;
+    return { path, labelX: (x1 + x2) / 2, labelY: (y1 + y2) / 2 };
   };
+  const pathFor = (fromId: string, toId: string, offset = 0) => connectionGeometry(fromId, toId, offset).path;
 
-  return <div className="mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><button type="button" onClick={tidyLayout} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={addItem} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">+ Add item</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div><div className="thin-scrollbar overflow-auto overscroll-contain">
+  return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><button type="button" onClick={tidyLayout} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={addItem} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">+ Add item</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div><div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto overscroll-contain">
     {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5"><div className="eyebrow">Full component specification</div><dl className="mt-3 grid gap-3 sm:grid-cols-2">{selectedNodeSpecs.map(([label, value]) => <div key={label} className="rounded-xl border border-line bg-[#f7fafc] p-3"><dt className="text-[9px] font-bold uppercase tracking-[.12em] text-muted">{label}</dt><dd className="mt-1 text-xs font-extrabold">{value}</dd></div>)}</dl><Link href={`${overviewHref}#tech-${selectedNode.id}`} className="mt-4 flex h-11 items-center justify-center rounded-xl border border-brand px-3 text-center text-xs font-bold text-brand">Edit full specification in System Overview</Link><button type="button" onClick={removeSelectedNode} className="mt-2 h-9 w-full rounded-lg border border-[#e7b7af] text-[10px] font-bold text-[#a7442d]">Delete this item</button></div>, componentModalTarget) : null}
     <div className="w-[1120px] origin-top-left" style={{ zoom }}>
     <div className="flex min-w-[1120px] items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted"><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery DC</span><span><b className="text-[#d99500]">Gold</b> = inverter AC to the building</span><span><b className="text-[#9b3db5]">Purple</b> = controlled public-grid AC</span><span><b className="text-[#25875a]">Green</b> = protective earth / bonding</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
@@ -767,7 +800,8 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
         const to = byId.get(connection.to);
         if (!from || !to) return null;
         const complete = connection.configured === true;
-        return <button type="button" onClick={() => { setSelectedConnectionKey(`${connection.from}:${connection.to}`); setRouteLength(connection.lengthM ?? 0); setRouteBasis(connection.lengthBasis ?? "estimated"); setChatOpen(false); }} key={`label:${connection.from}:${connection.to}`} title={complete ? `${connectionDisplayLabel(connection)} — ${connection.cableSizeMm2} mm²${connection.protectionAmps ? `, ${connection.protectionAmps} A protection` : ""}` : `Configure ${connectionDisplayLabel(connection)}`} className={`absolute z-30 -translate-x-1/2 rounded-full border px-2.5 py-1 text-[8px] font-bold shadow-sm ${complete ? "border-line bg-white/95 text-[#4d6176]" : "border-[#d94a3a] bg-[#fff1ee] text-[#a52f22]"}`} style={{ left: (from.x + nodeWidth + to.x) / 2, top: (from.y + to.y) / 2 + 48 }}>{complete ? connectionDisplayLabel(connection) : "Configure"}</button>;
+        const geometry = connectionGeometry(connection.from, connection.to);
+        return <button type="button" onClick={() => { setSelectedConnectionKey(`${connection.from}:${connection.to}`); setRouteLength(connection.lengthM ?? 0); setRouteBasis(connection.lengthBasis ?? "estimated"); setChatOpen(false); }} key={`label:${connection.from}:${connection.to}`} title={complete ? `${connectionDisplayLabel(connection)} — ${connection.cableSizeMm2} mm²${connection.protectionAmps ? `, ${connection.protectionAmps} A protection` : ""}` : `Configure ${connectionDisplayLabel(connection)}`} className={`absolute z-30 -translate-x-1/2 -translate-y-1/2 rounded-full border px-2.5 py-1 text-[8px] font-bold shadow-sm ${complete ? "border-line bg-white/95 text-[#4d6176]" : "border-[#d94a3a] bg-[#fff1ee] text-[#a52f22]"}`} style={{ left: geometry.labelX, top: geometry.labelY }}>{complete ? connectionDisplayLabel(connection) : "Configure"}</button>;
       })}
       {nodes.map((node) => <button type="button" draggable key={node.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; setMovingNodeId(node.id); }} onClick={() => setSelectedNodeId(node.id)} className="absolute z-20 w-[140px] cursor-grab text-center active:cursor-grabbing" style={{ left: node.x, top: node.y }} title={`Drag to move or select to open ${node.label}`}>
         <span className="block overflow-hidden rounded-2xl border border-[#b8cce0] bg-white p-2 shadow-[0_8px_22px_rgba(20,60,99,.12)] transition hover:-translate-y-0.5 hover:border-brand">

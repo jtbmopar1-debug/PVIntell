@@ -14,6 +14,22 @@ function componentSpecLines(components: ComponentSpec[]) {
   return components.flatMap((component) => Object.entries(component.specs).map(([label, value]) => ({ label, value: String(value) }))).slice(0, 3);
 }
 
+function systemVoltageLabel(project: Project) {
+  const phase = String(project.designDiscovery?.ac_phase_arrangement?.value ?? "").toLowerCase();
+  const recorded = String(project.designDiscovery?.nominal_ac_voltage?.value ?? "");
+  const designVoltage = project.designCalculator?.connectionVoltage;
+  if (designVoltage) return `${designVoltage} V AC`;
+  if (/440[_ –-]480/.test(recorded)) return "480 V AC";
+  if (/380[_ –-]415/.test(recorded)) return "400 V AC";
+  if (/200[_ –-]240/.test(recorded)) return "230 V AC";
+  if (/110[_ –-]120/.test(recorded)) return "120 V AC";
+  const exact = Number(recorded.match(/\d+(?:\.\d+)?/)?.[0]);
+  if (exact) return `${exact} V AC`;
+  if (/three|3[ -]?phase/.test(phase)) return "400 V AC";
+  if (/single|split/.test(phase)) return "230 V AC";
+  return project.systemVoltage > 0 ? `${project.systemVoltage} V DC` : "Supply voltage not recorded";
+}
+
 function SummaryCard({ icon: Icon, eyebrow, value, description, facts = [] }: { icon: typeof Sun; eyebrow: string; value: string; description: string; facts?: Array<{ label: string; value: string }> }) {
   return <article className="card p-4">
     <div className="flex items-start justify-between gap-3"><div><div className="eyebrow">{eyebrow}</div><div className="mt-2 font-display text-2xl font-extrabold tracking-[-.04em]">{value}</div></div><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#eaf2fb] text-brand"><Icon size={17}/></span></div>
@@ -60,7 +76,7 @@ export function SystemTechnicalOverview({ project, onAskWattson, onOpenMonitor }
     <section>
       <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="eyebrow">System specification</div><h2 className="mt-2 text-lg font-extrabold">Installed system at a glance</h2></div><div className="flex gap-2"><button onClick={() => router.push(`${base}/pv-strings/new`)} className="flex h-9 items-center gap-2 rounded-lg bg-brand px-3 text-[11px] font-bold text-white"><Plus size={14}/>Add PV string</button><button onClick={() => router.push(`${base}/equipment/new`)} className="flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[11px] font-bold"><Plus size={14}/>Add equipment</button></div></div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard icon={Cable} eyebrow="System" value={project.systemVoltage > 0 ? `${project.systemVoltage} V` : "Voltage not recorded"} description={`${project.projectType} · ${installed ? "Installed" : project.phase}`} facts={[{ label: "Installed records", value: String(project.components.length + arrays.length) }, { label: "Connections", value: String(project.connections.length) }, { label: "Other equipment", value: String(otherComponents.length) }]}/>
+        <SummaryCard icon={Cable} eyebrow="System" value={systemVoltageLabel(project)} description={`${project.projectType} · ${installed ? "Installed" : project.phase}`} facts={[{ label: "Installed records", value: String(project.components.length + arrays.length) }, { label: "Connections", value: String(project.connections.length) }, { label: "Other equipment", value: String(otherComponents.length) }]}/>
         <SummaryCard icon={Sun} eyebrow="PV array" value={totalPvWatts > 0 ? `${(totalPvWatts / 1000).toFixed(2)} kW` : "Not recorded"} description={arrays.length ? arrays.map((array) => array.name).join(" · ") : "Add the installed array specification."} facts={pvFacts}/>
         <SummaryCard icon={PlugZap} eyebrow="Inverter" value={inverterQuantity ? `${inverterQuantity} installed` : "Not recorded"} description={inverters.length ? inverters.map(componentTitle).join(" · ") : "Add the installed inverter specification."} facts={inverterFacts}/>
         <SummaryCard icon={BatteryCharging} eyebrow="Battery" value={batteryQuantity ? `${batteryQuantity} installed` : "Not recorded"} description={batteries.length ? batteries.map(componentTitle).join(" · ") : "Add the installed battery-bank specification."} facts={batteryFacts}/>

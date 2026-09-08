@@ -25,6 +25,7 @@ import {
   PlugZap,
   Printer,
   Send,
+  ShoppingCart,
   Sparkles,
   Sun,
   Waypoints,
@@ -68,6 +69,7 @@ import { componentHowToGuides } from "@/guides/how-to-components";
 import { howToGuideDetails } from "@/guides/how-to-details";
 import { batteryHardwareHowToGuides } from "@/guides/how-to-battery-hardware";
 import { coreHardwareHowToGuides } from "@/guides/how-to-core-hardware";
+import { practicalBasicsHowToGuides } from "@/guides/how-to-practical-basics";
 import { evChargingHowToGuides } from "@/guides/how-to-ev-charging";
 import { windGenerationHowToGuides } from "@/guides/how-to-wind-generation";
 import { solarHotWaterHowToGuides } from "@/guides/how-to-solar-hot-water";
@@ -77,6 +79,7 @@ import { WattsonHeaderAction } from "@/components/wattson-header-action";
 import { SiteOverview } from "@/components/site-overview";
 import { SystemEquipmentOverview } from "@/components/system-equipment-overview";
 import { SystemTechnicalOverview } from "@/components/system-technical-overview";
+import { FormattedChatMessage } from "@/components/formatted-chat-message";
 import { DesignCalculator, ProposedBuildSchematic } from "@/components/design-calculator";
 import type { SolarArrayForecastInput } from "@/weather/forecast";
 import { usePurchasePromptPreference } from "@/preferences/financials";
@@ -92,6 +95,7 @@ export type WorkspaceView =
   | "system"
   | "schematic"
   | "build"
+  | "shopping-list"
   | "commission"
   | "monitor";
 type View = WorkspaceView;
@@ -531,12 +535,13 @@ export function PVIntellWorkspace({
     { id: "system" as View, label: "As-built equipment", icon: Package },
     { id: "schematic" as View, label: "As-built schematic", icon: Waypoints },
     { id: "build" as View, label: "Build", icon: Wrench },
-    { id: "commission" as View, label: "Commission", icon: ClipboardCheck },
+    { id: "shopping-list" as View, label: "Shopping list", icon: ShoppingCart },
+    { id: "commission" as View, label: "Startup & Handover", icon: ClipboardCheck },
     { id: "monitor" as View, label: "Monitor", icon: CircleGauge },
   ];
   const outlineReady = ["solar-array", "inverter", "battery", "protection"].every((id) => project.designCalculator?.proposedChecklist?.[id]);
   const proposedSchematicReviewed = project.designCalculator?.proposedChecklist?.["proposed-schematic"] ?? false;
-  const currentViewLabel = view === "proposed-schematic" ? "Proposed schematic" : nav.find((item) => item.id === view)?.label ?? "Project planning";
+  const currentViewLabel = monitorOnly && view === "wattson" ? "Installed system" : view === "proposed-schematic" ? "Proposed schematic" : nav.find((item) => item.id === view)?.label ?? (monitorOnly ? "Installed system" : "Project planning");
   async function askGuide(guide: NoviceHowToGuide, question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) {
     if (!cloud) {
       const terms = question.toLowerCase().split(/\W+/).filter((term) => term.length > 3);
@@ -652,12 +657,12 @@ export function PVIntellWorkspace({
           <div className="mx-auto flex h-[64px] max-w-[1440px] items-center gap-4 px-4 md:px-6">
             <Link href="/dashboard" className="shrink-0"><Logo /></Link>
             {cloud && <WattsonHeaderAction siteId={initialSite.id}/>} 
-            {cloud && <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{initialSite.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div><div className="space-y-1">{sites.map((site) => <Link key={site.id} href={`/sites/${site.id}`} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === initialSite.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}><MapPin size={12}/><span className="truncate">{site.name}</span></Link>)}</div><Link href="/discovery/new-system" className="mt-3 flex items-center gap-2 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]"><Sparkles size={13}/>New independent Site</Link></div></details>}
+            {cloud && <details className="relative hidden shrink-0 md:block"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{initialSite.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div><div className="space-y-1">{sites.map((site) => <Link key={site.id} href={`/sites/${site.id}`} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === initialSite.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}><MapPin size={12}/><span className="truncate">{site.name}</span></Link>)}</div><Link href="/discovery/new-system" className="mt-3 flex items-center gap-2 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]"><Sparkles size={13}/>New independent Site</Link></div></details>}
              <div className="hidden min-w-0 flex-1 border-l border-line pl-4 md:block">
               <div className="eyebrow text-[8px]">{currentViewLabel}</div>
-              <div className="mt-1 truncate text-xs font-extrabold">{project.name} <span className="font-medium text-muted">· {project.location} · {project.systemVoltage > 0 ? `${project.systemVoltage} V` : "voltage to confirm"} · {project.projectType}</span></div>
+               <div className="mt-1 truncate text-xs font-extrabold">{project.name} <span className="font-medium text-muted">· {project.location} · {project.projectType}</span></div>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="ml-auto flex shrink-0 items-center gap-2">
               {cloud && <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><Link href={`/how-to?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link><Link href={`/settings?site=${initialSite.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>}
               <button type="button" onClick={() => setMenu((open) => !open)} className="grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>{menu ? <X size={17}/> : <Menu size={18}/>}</button>
               </div>
@@ -665,8 +670,8 @@ export function PVIntellWorkspace({
             {view !== "monitor" && <nav className="mx-auto hidden max-w-[1440px] flex-wrap items-center gap-1 border-t border-line px-6 py-1.5 md:flex" aria-label="System navigation">
             <button type="button" onClick={() => setView("site")} className={`shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold ${view === "site" ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>Site</button>
             {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Plan ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery?system=${project.id}`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Discovery brief</Link><button type="button" onClick={() => setView("wattson")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Continue planning with Wattson</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed system outline</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#b9412b] hover:bg-[#fff1ee]">Proposed build schematic</Link> : <span className="block rounded-xl px-3 py-2 text-[11px] font-bold text-[#9aa8b6]">Proposed schematic · locked</span>}</div></details>}
-            {monitorOnly && hasProjectHistory && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Project history ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original discovery brief</Link><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed design</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed schematic</Link> : null}<button type="button" onClick={() => setView("build")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build record</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning record</button></div></details>}
-            {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" disabled={!proposedSchematicReviewed} onClick={() => setView("build")} className={`block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold ${proposedSchematicReviewed ? "text-muted hover:bg-[#eef3f8]" : "cursor-not-allowed text-[#9aa8b6]"}`}>{proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Commissioning</button></div></details>}
+            {monitorOnly && hasProjectHistory && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Project history ▾</summary><div className="fixed left-auto z-50 mt-1 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><Link href={`/sites/${initialSite.id}/discovery`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original discovery brief</Link><Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed design</Link>{outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Original proposed schematic</Link> : null}<button type="button" onClick={() => setView("build")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build record</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Startup & handover record</button></div></details>}
+            {!monitorOnly && <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Build ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" disabled={!proposedSchematicReviewed} onClick={() => setView("build")} className={`block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold ${proposedSchematicReviewed ? "text-muted hover:bg-[#eef3f8]" : "cursor-not-allowed text-[#9aa8b6]"}`}>{proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button><button type="button" onClick={() => setView("commission")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Startup & Handover</button></div></details>}
             <details className="relative shrink-0"><summary className="cursor-pointer list-none rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">System records ▾</summary><div className="fixed left-auto z-50 mt-1 w-56 rounded-2xl border border-line bg-white p-2 shadow-xl"><button type="button" onClick={() => setView("overview")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">System overview</button><button type="button" onClick={() => setView("system")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built equipment</button><Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="block rounded-xl px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">As-built schematic</Link><button type="button" onClick={() => setView("equipment")} className="block w-full rounded-xl px-3 py-2 text-left text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Site equipment</button></div></details>
             {monitorOnly && <button type="button" onClick={() => setView("monitor")} className="shrink-0 rounded-lg px-3 py-2 text-[11px] font-bold text-muted hover:bg-[#eef3f8]">Monitor</button>}
            </nav>}
@@ -678,7 +683,7 @@ export function PVIntellWorkspace({
               <Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="mobile-nav-item">{monitorOnly ? "Original proposed design" : "Proposed design"}</Link>
               {outlineReady ? <Link href={`/sites/${initialSite.id}/systems/${project.id}/design/schematic`} className="mobile-nav-item">{monitorOnly ? "Original proposed schematic" : "Proposed schematic"}</Link> : null}
               <button type="button" disabled={!monitorOnly && !proposedSchematicReviewed} onClick={() => { setView("build"); setMenu(false); }} className="mobile-nav-item disabled:opacity-45">{monitorOnly ? "Build record" : proposedSchematicReviewed ? "Build schedule" : "Build schedule · locked"}</button>
-              <button type="button" onClick={() => { setView("commission"); setMenu(false); }} className="mobile-nav-item">{monitorOnly ? "Commissioning record" : "Commissioning"}</button></>}
+              <button type="button" onClick={() => { setView("commission"); setMenu(false); }} className="mobile-nav-item">{monitorOnly ? "Startup & handover record" : "Startup & Handover"}</button></>}
               <button type="button" onClick={() => { setView("overview"); setMenu(false); }} className="mobile-nav-item">System overview</button>
               <button type="button" onClick={() => { setView("system"); setMenu(false); }} className="mobile-nav-item">As-built equipment</button>
               <Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="mobile-nav-item">As-built schematic</Link>
@@ -689,7 +694,7 @@ export function PVIntellWorkspace({
               <Link href={`/settings?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link>
             </div></nav> : null}
          </header>
-         <div className="mx-auto max-w-[1320px] p-4 md:p-6">
+         <div className={`mx-auto max-w-[1320px] p-4 md:p-6 ${view === "proposed-schematic" || view === "schematic" ? "schematic-workspace-content" : ""}`}>
            {systemPage && <Link href={`/systems?site=${initialSite.id}`} className="mb-4 inline-flex items-center gap-2 text-[11px] font-bold text-brand"><ArrowLeft size={14}/>Back to systems</Link>}
            {viewingProjectHistory ? <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#efd98e] bg-[#fff9e3] px-4 py-3 text-[11px] leading-5 text-[#765918]"><ClipboardCheck className="mt-0.5 shrink-0" size={15}/><p><strong>Project history.</strong> This is the retained discovery, proposal, build or commissioning record for an installed system. Current equipment belongs in the as-built records.</p></div> : null}
           {view === "site" && (
@@ -752,7 +757,8 @@ export function PVIntellWorkspace({
               onAskWattson={() => setView("wattson")}
             />
           )}{" "}
-          {view === "build" && <Build project={project} />}{" "}
+          {view === "build" && <Build project={project} location={initialSite.location} onAskGuide={askGuide} />}{" "}
+          {view === "shopping-list" && <Build project={project} location={initialSite.location} onAskGuide={askGuide} shoppingListOnly />}{" "}
           {view === "commission" && (
             <Commission project={project} complete={completeCommissioning} />
           )}{" "}
@@ -836,6 +842,10 @@ function Wattson({
   inverter,
 }: any) {
   const conversationRef = useRef<HTMLDivElement>(null);
+  const installed = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
+  const installedPvWatts = project.pvArrays.reduce((total: number, array: { panelWatts?: number; panelCount?: number }) => total + Number(array.panelWatts ?? 0) * Number(array.panelCount ?? 0), 0);
+  const installedBatteryCount = project.components.filter((component: { kind?: string; name?: string }) => component.kind === "battery" || /\bbatter(?:y|ies)\b/i.test(component.name ?? "")).reduce((total: number, component: { quantity?: number }) => total + Number(component.quantity ?? 1), 0);
+  const installedInverterCount = project.components.filter((component: { kind?: string; name?: string }) => component.kind === "inverter" || /\binverter\b/i.test(component.name ?? "")).reduce((total: number, component: { quantity?: number }) => total + Number(component.quantity ?? 1), 0);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       const conversation = conversationRef.current;
@@ -852,10 +862,10 @@ function Wattson({
             <div>
               <div className="eyebrow">System-specific Wattson</div>
               <h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">
-                Ask about this proposed system
+                {installed ? "Ask about this installed system" : "Ask about this proposed system"}
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
-                Wattson already has this system’s discovery, calculations and proposed arrangement. Ask about a component, connection or design decision without starting over.
+                {installed ? "Wattson uses this system’s as-built equipment, connections, saved knowledge and monitoring records. Ask about operation, expansion, maintenance or a fault without reopening the proposed build." : "Wattson already has this system’s discovery, calculations and proposed arrangement. Ask about a component, connection or design decision without starting over."}
               </p>
             </div>
           </div>
@@ -885,7 +895,7 @@ function Wattson({
                     />
                   </a>
                 )}
-                <div>{m.content}</div>
+                <FormattedChatMessage content={m.content}/>
                 {m.citations?.length ? (
                   <div className="mt-3 border-t border-[#d4dee8] pt-2 text-[10px]">
                     <strong>Sources</strong>
@@ -920,7 +930,7 @@ function Wattson({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             rows={2}
-            placeholder="I’m building a small cabin and need a fridge, lights and water pump…"
+            placeholder={installed ? "Ask about this system, a reading, fault, setting or possible expansion…" : "I’m building a small cabin and need a fridge, lights and water pump…"}
             className="min-h-14 flex-1 resize-none bg-transparent px-3 py-2 text-base leading-6 outline-none sm:min-h-0 sm:text-xs sm:leading-5"
           />
           <button
@@ -934,47 +944,44 @@ function Wattson({
       <aside className="space-y-5">
         <div className="card p-5">
           <div className="flex justify-between">
-            <div className="eyebrow">Working design</div>
+            <div className="eyebrow">{installed ? "Installed record" : "Working design"}</div>
             <Badge>{project.assumptions.length} assumptions</Badge>
           </div>
           <div className="mt-5 space-y-4">
             <Rec
               icon={Sun}
               label="Solar"
-              value={`${(solar.suggestedWatts / 1000).toFixed(1)} kW`}
-              detail={`${solar.panelCount} × ${solar.panelWatts} W panels`}
+              value={`${((installed ? installedPvWatts : solar.suggestedWatts) / 1000).toFixed(1)} kW`}
+              detail={installed ? `${project.pvArrays.length} recorded PV string${project.pvArrays.length === 1 ? "" : "s"}` : `${solar.panelCount} × ${solar.panelWatts} W panels`}
             />
             <Rec
               icon={BatteryCharging}
               label="Battery"
-              value={`${battery.usableKWh} kWh`}
-              detail={`${battery.nominalKWh} kWh nominal`}
+              value={installed ? (installedBatteryCount ? `${installedBatteryCount} recorded` : "None recorded") : `${battery.usableKWh} kWh`}
+              detail={installed ? "Installed battery records" : `${battery.nominalKWh} kWh nominal`}
             />
             <Rec
               icon={PlugZap}
               label="Inverter"
-              value={`${(inverter.recommendedWatts / 1000).toFixed(1)} kW`}
-              detail="Includes surge headroom"
+              value={installed ? (installedInverterCount ? `${installedInverterCount} recorded` : "None recorded") : `${(inverter.recommendedWatts / 1000).toFixed(1)} kW`}
+              detail={installed ? "Installed inverter records" : "Includes surge headroom"}
             />
           </div>
           <button
-            onClick={() => send("Why do I need this inverter size?")}
+            onClick={() => send(installed ? "Summarise my installed system record and identify any missing details." : "Why do I need this inverter size?")}
             className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#e8f0f8] py-2.5 text-xs font-bold"
           >
             <HelpCircle size={14} />
-            Explain this design
+            {installed ? "Summarise this system" : "Explain this design"}
           </button>
         </div>
         <div className="card p-5">
           <div className="eyebrow">What Wattson knows</div>
           <div className="mt-4 space-y-3">
-            <Fact label="Daily energy" value={`${loads.dailyKWh} kWh`} />
-            <Fact label="Tracked loads" value={`${project.loads.length}`} />
-            <Fact label="Reserve" value={`${project.autonomyDays} days`} />
+            {installed ? <><Fact label="PV strings" value={`${project.pvArrays.length}`} /><Fact label="Equipment records" value={`${project.components.length}`} /><Fact label="Connections" value={`${project.connections.length}`} /></> : <><Fact label="Daily energy" value={`${loads.dailyKWh} kWh`} /><Fact label="Tracked loads" value={`${project.loads.length}`} /><Fact label="Reserve" value={`${project.autonomyDays} days`} /></>}
           </div>
           <p className="mt-4 rounded-xl bg-[#fff5d9] p-3 text-[10px] text-[#765c1c]">
-            <Lightbulb className="mr-1 inline" size={12} /> Estimates stay
-            visible until confirmed.
+            <Lightbulb className="mr-1 inline" size={12} /> {installed ? "Answers use the installed record, not the old proposal." : "Estimates stay visible until confirmed."}
           </p>
         </div>
       </aside>
@@ -1215,43 +1222,6 @@ function Flow({ technical }: { technical: boolean }) {
   );
 }
 
-function Safety() {
-  return (
-    <div className="flex gap-3 rounded-2xl border border-[#ecd9aa] bg-[#fff8e7] p-4 text-[#6f5518]">
-      <AlertTriangle size={18} />
-      <div>
-        <div className="text-xs font-bold">Important safety note</div>
-        <p className="mt-1 text-[10px] leading-4">
-          High-current DC and mains work can cause fire, serious injury, or
-          death. Follow the exact equipment instructions, work within your
-          knowledge and equipment limits, and get competent help when needed.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function buildStepDescription(title: string, fallback: string) {
-  const name = title.toLowerCase();
-  if (name.includes("planning")) return "Confirm locations, cable routes, access, manuals and any site-specific approvals you choose to track.";
-  if (name.includes("battery")) return "Mount the batteries as specified and verify isolation, protection and conductors before connection.";
-  if (name.includes("dc protection")) return "Plan and verify fusing, isolation and over-current protection for every DC conductor section.";
-  if (name.includes("inverter")) return "Mount the inverter with the required clearances and keep DC, AC and communication routes organised.";
-  if (name.includes("pv installation")) return "Install the array, earthing, cabling, labels and isolation shown in the recorded design.";
-  if (name.includes("ac wiring")) return "Complete and verify the planned AC connections, protection, changeover and isolation.";
-  if (name.includes("communication")) return "Connect and verify inverter, BMS, meter and monitoring communications.";
-  if (name.includes("configuration")) return "Apply equipment-approved limits and record the system's operating priorities.";
-  if (name.includes("pre-power")) return "Verify polarity, torque, insulation, protective devices and the as-built record before energising.";
-  if (name.includes("commission")) return "Follow the equipment startup sequence and record the initial measurements and behaviour.";
-  return fallback;
-}
-
-function buildStepTitle(title: string) {
-  return title.toLowerCase().includes("planning")
-    ? "Planning & site preparation"
-    : title;
-}
-
 export type NoviceHowToGuide = {
   group: string;
   id: string;
@@ -1361,7 +1331,7 @@ const supersededHowToGuideIds = new Set([
   "dc-strings-combiners",
   "earthing-bonding",
 ]);
-const rawHowToGuides: readonly NoviceHowToGuide[] = [...noviceHowToGuides, ...additionalHowToGuides, ...compatibilityHowToGuides, ...componentPlanningHowToGuides, ...expandedHowToGuides, ...componentHowToGuides, ...batteryHardwareHowToGuides, ...coreHardwareHowToGuides, ...evChargingHowToGuides, ...solarHotWaterHowToGuides, ...windGenerationHowToGuides].filter((guide) => !supersededHowToGuideIds.has(guide.id));
+const rawHowToGuides: readonly NoviceHowToGuide[] = [...noviceHowToGuides, ...additionalHowToGuides, ...compatibilityHowToGuides, ...componentPlanningHowToGuides, ...expandedHowToGuides, ...componentHowToGuides, ...batteryHardwareHowToGuides, ...coreHardwareHowToGuides, ...practicalBasicsHowToGuides, ...evChargingHowToGuides, ...solarHotWaterHowToGuides, ...windGenerationHowToGuides].filter((guide) => !supersededHowToGuideIds.has(guide.id));
 export const allHowToGuides: readonly NoviceHowToGuide[] = rawHowToGuides.map((guide) => {
   const detail = howToGuideDetails[guide.id as keyof typeof howToGuideDetails];
   const enriched: NoviceHowToGuide = detail ? { ...guide, ...detail } : guide;
@@ -1574,37 +1544,52 @@ export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceH
   );
 }
 
-function Build({ project }: { project: Project }) {
+function Build({ project, location, onAskGuide, shoppingListOnly = false }: { project: Project; location?: string; onAskGuide: (guide: NoviceHowToGuide, question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) => Promise<GuideChatReply>; shoppingListOnly?: boolean }) {
+  const isPoolSystem = /pool|spa|swimming/.test(`${project.name} ${project.projectType} ${JSON.stringify(project.designDiscovery ?? {})}`.toLowerCase());
   type ShoppingItem = { name: string; specification: string; quantity: string; regulated: boolean; basis?: string };
-  const done = project.installationSteps.filter((s) => s.complete).length;
-  const nextStep = project.installationSteps.find((step) => !step.complete) ?? project.installationSteps.at(-1);
-  const manual = allHowToGuides.find((guide) => guide.id === "mc4") ?? allHowToGuides[0];
   const base = `/sites/${project.siteId}/systems/${project.id}`;
   const acquiredStorageKey = `pvintell:shopping-acquired:${project.id}`;
+  const moduleCompletionStorageKey = `pvintell:build-modules:${project.id}`;
   const [acquired, setAcquired] = useState<Record<string, boolean>>({});
+  const [completedModules, setCompletedModules] = useState<Record<string, boolean>>({});
   const { enabled: purchasePromptsEnabled } = usePurchasePromptPreference();
   const [purchaseItem, setPurchaseItem] = useState<ShoppingItem | null>(null);
   const [purchaseDraft, setPurchaseDraft] = useState({ date: new Date().toISOString().slice(0, 10), amount: "", vendor: "", notes: "" });
   const [purchaseSaving, setPurchaseSaving] = useState(false);
   const [purchaseError, setPurchaseError] = useState("");
   const [purchaseNotice, setPurchaseNotice] = useState("");
+  const [selectedBuildModuleId, setSelectedBuildModuleId] = useState("");
+  const [moduleChatGuide, setModuleChatGuide] = useState<NoviceHowToGuide | null>(null);
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
       try {
         const stored = window.localStorage.getItem(acquiredStorageKey);
         if (stored) setAcquired(JSON.parse(stored) as Record<string, boolean>);
+        const completed = window.localStorage.getItem(moduleCompletionStorageKey);
+        if (completed) setCompletedModules(JSON.parse(completed) as Record<string, boolean>);
       } catch { /* A blocked or damaged local store must not stop the shopping list. */ }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [acquiredStorageKey]);
+  }, [acquiredStorageKey, moduleCompletionStorageKey]);
+  const setModuleCompleted = (moduleId: string, complete: boolean) => setCompletedModules((current) => {
+    const next = { ...current, [moduleId]: complete };
+    try { window.localStorage.setItem(moduleCompletionStorageKey, JSON.stringify(next)); } catch { /* Keep completion usable for this session. */ }
+    return next;
+  });
   const decimal = (value: number, places = 1) => Number.isFinite(value) ? value.toFixed(places) : "—";
   const proposal = project.designCalculator?.proposedAsBuiltDraft;
   const acceptedComponents = (proposal?.nodes ?? []).filter((node) => node.reviewed);
   const acceptedConnections = (proposal?.connections ?? []).filter((connection) => connection.configured);
   const design = project.designCalculator ?? {};
   const acceptedPvNodes = acceptedComponents.filter((node) => node.id === "solar" || node.id.startsWith("solar-pv-"));
-  const acceptedPanelCount = acceptedPvNodes.reduce((total, node) => total + (node.id.startsWith("solar-pv-") ? Number(design.panelsPerString ?? 0) : Number(design.panelCount ?? 0)), 0);
-  const acceptedPvStrings = acceptedPvNodes.length || (acceptedPanelCount ? 1 : 0);
+  const hasAsBuiltRecord = project.pvArrays.length > 0 || project.components.length > 0 || project.connections.length > 0;
+  const proposedPanelCount = acceptedPvNodes.reduce((total, node) => total + (node.id.startsWith("solar-pv-") ? Number(design.panelsPerString ?? 0) : Number(design.panelCount ?? 0)), 0);
+  const acceptedPanelCount = hasAsBuiltRecord
+    ? project.pvArrays.reduce((total, array) => total + Number(array.panelCount ?? 0), 0)
+    : proposedPanelCount;
+  const acceptedPvStrings = hasAsBuiltRecord
+    ? project.pvArrays.reduce((total, array) => total + Number(array.strings ?? 1), 0)
+    : acceptedPvNodes.length || (acceptedPanelCount ? 1 : 0);
   const panelsPerAcceptedRow = acceptedPvStrings ? Math.max(1, Math.ceil(acceptedPanelCount / acceptedPvStrings)) : 0;
   const panelWidthM = Number(design.panelWidthMm ?? 0) / 1000;
   const assumedRowLengthM = panelsPerAcceptedRow && panelWidthM ? panelsPerAcceptedRow * panelWidthM + Math.max(0, panelsPerAcceptedRow - 1) * .02 : 0;
@@ -1640,7 +1625,15 @@ function Build({ project }: { project: Project }) {
   const shoppingItems: ShoppingItem[] = [];
 
   if (acceptedPanelCount) {
-    shoppingItems.push({
+    if (hasAsBuiltRecord && project.pvArrays.length) {
+      for (const array of project.pvArrays) shoppingItems.push({
+        name: `${array.name} solar PV modules`,
+        specification: `${array.manufacturer ?? "Manufacturer not recorded"}${array.panelModel ? ` ${array.panelModel}` : ""}${array.panelWatts ? ` · ${array.panelWatts} W` : ""}${array.openCircuitVoltageV ? ` · Voc ${array.openCircuitVoltageV} V` : ""}`,
+        quantity: `${array.panelCount ?? 0} panels`,
+        regulated: false,
+        basis: `Current as-built record · ${array.strings ?? 1} string${(array.strings ?? 1) === 1 ? "" : "s"}`,
+      });
+    } else shoppingItems.push({
       name: "Solar PV module",
       specification: `${design.panelWatts ?? "Rating to confirm"} W${design.panelLengthMm && design.panelWidthMm ? ` · ${design.panelLengthMm} × ${design.panelWidthMm} mm` : ""}${design.panelWeightKg ? ` · ${design.panelWeightKg} kg` : ""}${design.panelVocV ? ` · Voc ${design.panelVocV} V` : ""}`,
       quantity: `${acceptedPanelCount} panels`,
@@ -1697,7 +1690,7 @@ function Build({ project }: { project: Project }) {
     { name: "PV DC labels and warning set", specification: "Complete durable identification set for array, isolators, routes and inverter", quantity: "1 set", regulated: true },
   );
 
-  for (const node of acceptedComponents) {
+  for (const node of hasAsBuiltRecord ? [] : acceptedComponents) {
     if (node.id === "solar" || node.id.startsWith("solar-pv-") || node.id.includes("solar-safety")) continue;
     if (node.id.includes("inverter")) shoppingItems.push({ name: node.label, specification: `${design.inverterKw ?? "Rating to confirm"} kW continuous · ${node.detail}`, quantity: "1", regulated: true });
     else if (node.id === "ac-safety") shoppingItems.push({ name: "AC circuit breaker / safety switch", specification: `${design.connectionType === "ac_three" ? 400 : 230} V AC · ${acProtection || "rating to confirm"} A · poles, curve, fault rating and RCD type to final design`, quantity: "1", regulated: true });
@@ -1705,6 +1698,103 @@ function Build({ project }: { project: Project }) {
     else if (node.id === "earth") shoppingItems.push({ name: "Earthing electrode and termination kit", specification: node.detail, quantity: "1 set", regulated: true });
     else shoppingItems.push({ name: node.label, specification: node.detail, quantity: "1", regulated: node.id.includes("switchboard") || node.id.includes("controller") || node.authorityCheck === true });
   }
+  if (hasAsBuiltRecord) for (const component of project.components) shoppingItems.push({
+    name: component.name,
+    specification: [component.manufacturer, component.model, component.location, component.notes].filter(Boolean).join(" · ") || "Specifications not recorded",
+    quantity: String(component.quantity || 1),
+    regulated: ["inverter", "charger", "generator", "protection", "isolator", "cable", "combiner"].includes(component.kind),
+    basis: "Current as-built equipment record",
+  });
+  type BuildModule = {
+    id: string;
+    title: string;
+    description: string;
+    guideGroups: readonly string[];
+    guideIds?: readonly string[];
+    evidence: (value: string) => boolean;
+    Icon: typeof Sun;
+  };
+  const acceptedDesignText = hasAsBuiltRecord
+    ? [
+        ...project.pvArrays.map((array) => `${array.name} solar pv panel array ${array.panelCount ?? ""} ${array.manufacturer ?? ""} ${array.panelModel ?? ""}`),
+        ...project.components.map((component) => `${component.kind} ${component.name} ${component.manufacturer ?? ""} ${component.model ?? ""} ${component.location ?? ""}`),
+        ...project.connections.map((connection) => `${connection.connectionType} ${connection.name} ${connection.sourceRef} ${connection.targetRef}`),
+      ].join(" ").toLowerCase()
+    : [...acceptedComponents.map((node) => `${node.id} ${node.label} ${node.detail}`), ...acceptedConnections.map((connection) => `${connection.kind} ${connection.label} ${connection.from} ${connection.to}`)].join(" ").toLowerCase();
+  const includesAny = (...terms: string[]) => terms.some((term) => acceptedDesignText.includes(term));
+  const panelModuleTitle = groundOnly
+    ? "Panels, ground mount and framing"
+    : hasGroundMount
+      ? "Panels and mounting systems"
+      : "Panels, roof mounting and framing";
+  const moduleDefinitions: BuildModule[] = [
+    { id: "pv-array", title: panelModuleTitle, description: "Modules, structural supports, rails or frames, clamps and weatherproof mounting.", guideGroups: ["Roofing and roof structure", "Solar panels and module types", "Mounting systems and hardware"], evidence: (value) => /solar[- ]pv|panels?|mount|frame|rail|clamp|anchor/.test(value), Icon: Sun },
+    { id: "pv-dc", title: "PV strings, DC cable and isolation", description: "String wiring, connectors, conduit, labels, DC protection and isolators up to the inverter.", guideGroups: ["DC wiring and connections", "Protection and isolation"], guideIds: ["mc4"], evidence: (value) => /solar pv cable|mc4|pv dc|pv conduit|pv cable|pv string|isolator/.test(value), Icon: PlugZap },
+    { id: "battery", title: "Battery storage and battery DC", description: "Battery mounting, interconnection, protection, isolation and battery management equipment.", guideGroups: ["Batteries and charging"], evidence: (value) => /battery|bms/.test(value), Icon: BatteryCharging },
+    { id: "inverter", title: "Inverter and power conversion", description: "Mounting, clearances, equipment interfaces, settings and the planned conversion equipment.", guideGroups: ["Inverters and power conversion"], guideIds: ["inverter", "controller"], evidence: (value) => /inverter|controller|mppt|optimiser|microinverter/.test(value), Icon: Zap },
+    { id: "ac", title: "AC supply, switchboard and protection", description: "AC cabling, breakers, safety switches, distribution boards and the building connection.", guideGroups: ["AC wiring and connections", "Protection and isolation"], guideIds: ["switchboard"], evidence: (value) => /ac power|circuit breaker|safety switch|switchboard|power board|grid supply|building power/.test(value), Icon: Waypoints },
+    { id: "generator", title: "Generator and source changeover", description: "Generator location, inlet, transfer or changeover equipment, protection and source interlocking.", guideGroups: ["AC wiring and connections", "Protection and isolation"], guideIds: ["generator-integration"], evidence: (value) => /generator|genset/.test(value), Icon: Zap },
+    { id: "earthing", title: "Earthing and equipment bonding", description: "Protective earth conductors, array bonds, electrodes, compatible lugs and continuity checks.", guideGroups: ["Earthing and bonding"], evidence: (value) => /earth|\bbond\b|bonding|grounding|electrode/.test(value), Icon: Waypoints },
+  ];
+  const shoppingItemModuleId = (item: ShoppingItem) => {
+    const value = `${item.name} ${item.specification}`.toLowerCase();
+    if (/generator|genset/.test(value)) return "generator";
+    if (/battery|bms/.test(value)) return "battery";
+    if (/earth|\bbond\b|bonding|grounding|electrode/.test(value)) return "earthing";
+    if (/solar pv module|mount|frame|rail|clamp|anchor/.test(value)) return "pv-array";
+    if (/solar pv cable|mc4|pv dc|pv conduit|pv cable|isolator|warning/.test(value)) return "pv-dc";
+    if (/inverter|controller|mppt|optimiser|microinverter/.test(value)) return "inverter";
+    return "ac";
+  };
+  const buildModules = moduleDefinitions.filter((module) => {
+    if (module.id === "pv-array") return acceptedPanelCount > 0;
+    if (module.id === "pv-dc") return acceptedConnections.some((connection) => connection.kind === "solar-dc") || isolators.length > 0;
+    if (module.id === "battery") return includesAny("battery", "bms");
+    if (module.id === "inverter") return includesAny("inverter", "controller", "mppt", "optimiser", "microinverter");
+    if (module.id === "ac") return acceptedConnections.some((connection) => connection.kind === "ac") || includesAny("switchboard", "power board", "grid supply", "building power", "safety switch");
+    if (module.id === "generator") return includesAny("generator", "genset");
+    return acceptedConnections.some((connection) => connection.kind === "earth") || includesAny("earth", " bond", "bonding", "grounding", "electrode");
+  });
+  const buildModuleIds = buildModules.map((module) => module.id).join("|");
+  useEffect(() => {
+    const moduleIds = buildModuleIds ? buildModuleIds.split("|") : [];
+    const allComplete = moduleIds.length > 0 && moduleIds.every((moduleId) => completedModules[moduleId]);
+    try { window.localStorage.setItem(`pvintell:build-complete:${project.id}`, allComplete ? "true" : "false"); } catch { /* Completion remains usable on this page. */ }
+  }, [buildModuleIds, completedModules, project.id]);
+  const selectedBuildModule = buildModules.find((module) => module.id === selectedBuildModuleId);
+  const buildGuideIds = (module: BuildModule) => {
+    if (module.id === "pv-array") return new Set([
+      "panels",
+      "read-module-label",
+      "rails-splices-module-clamps",
+      ...(hasGroundMount ? ["mounting-ground"] : []),
+      ...(mountingLocations.includes("carport_pergola") ? ["carport-pergola-canopy"] : []),
+      ...(mountingLocations.some((location) => location === "fence" || location === "wall_facade") ? ["mounting-vertical"] : []),
+    ]);
+    if (module.id === "pv-dc") return new Set(["mc4", "connector-compatibility", "pv-cable-selection-sizing", "pv-cable-support-management", "dc-load-break-isolators", "conduit-containment-types", "cable-route-planning"]);
+    if (module.id === "battery") return new Set(["battery", "battery-cables-lugs", ...(includesAny("bms") ? ["battery-bms"] : []), ...(includesAny("battery cabinet", "battery rack", "battery enclosure") ? ["battery-enclosures-racks"] : [])]);
+    if (module.id === "inverter") return new Set(["inverter"]);
+    if (module.id === "ac") return new Set(["ac-output", "ac-breakers-isolators", "rcd-rcbo-selection", "cable-route-planning"]);
+    if (module.id === "generator") return new Set(["generator-integration"]);
+    return new Set(["earth-electrodes-bonding-difference", "install-earth-peg-ground-rod"]);
+  };
+  const guidesForModule = (module: BuildModule) => {
+    const allowedIds = buildGuideIds(module);
+    return allHowToGuides.filter((guide) => allowedIds.has(guide.id));
+  };
+  const authority = localHowToAuthority(location);
+  const selectedModuleGuides = selectedBuildModule ? guidesForModule(selectedBuildModule) : [];
+  const selectedModuleMaterials = selectedBuildModule ? shoppingItems.filter((item) => shoppingItemModuleId(item) === selectedBuildModule.id) : [];
+  const selectedModuleComponents = selectedBuildModule ? acceptedComponents.filter((node) => selectedBuildModule.evidence(`${node.id} ${node.label} ${node.detail}`.toLowerCase())) : [];
+  const selectedModuleConnections = selectedBuildModule ? acceptedConnections.filter((connection) => selectedBuildModule.evidence(`${connection.kind} ${connection.label} ${connection.from} ${connection.to}`.toLowerCase())) : [];
+  const moduleGuide = selectedBuildModule ? {
+    ...(selectedModuleGuides[0] ?? { group: "Build modules", image: "/schematic-components/ac-distribution-board.jpg", steps: [], source: "The accepted schematic, selected product manuals and local requirements." }),
+    id: `build-module-${selectedBuildModule.id}`,
+    title: selectedBuildModule.title,
+    summary: selectedBuildModule.description,
+    whatItIs: `This build module groups the accepted ${selectedBuildModule.title.toLowerCase()} equipment, materials and relevant installation guidance in one place.`,
+    whatItDoes: "It keeps guidance tied to a physical part of the accepted schematic instead of presenting a generic sequence of unrelated tasks.",
+  } satisfies NoviceHowToGuide : null;
   const itemKey = (item: ShoppingItem) => `${item.name}::${item.specification}::${item.quantity}`;
   const acquiredCount = shoppingItems.filter((item) => acquired[itemKey(item)]).length;
   const toggleAcquired = (item: ShoppingItem) => {
@@ -1774,7 +1864,7 @@ function Build({ project }: { project: Project }) {
   };
   const emailList = () => {
     const body = exportRows().map((item) => `${item.acquired === "Yes" ? "[x]" : "[ ]"} ${item.name} — ${item.quantity}\n${item.specification}${item.basis ? `\nBasis: ${item.basis}` : ""}`).join("\n\n");
-    window.location.href = `mailto:?subject=${encodeURIComponent(`${project.name} shopping list`)}&body=${encodeURIComponent(body)}`;
+    window.open(`mailto:?subject=${encodeURIComponent(`${project.name} shopping list`)}&body=${encodeURIComponent(body)}`, "_self");
   };
   const printList = () => {
     const cleanup = () => document.body.classList.remove("shopping-list-print");
@@ -1785,35 +1875,68 @@ function Build({ project }: { project: Project }) {
   };
   return (
     <div className="animate-rise space-y-6">
-      <Heading eyebrow="Build · simple guide" title="One job at a time" description="Use the How to menu for pictures and plain steps. Open the full build sheets only when you need the detailed record." />
-      <div className="card p-6">
-        <div className="flex justify-between text-xs">
-          <strong>Installation progress</strong>
-          <strong>
-            {done}/{project.installationSteps.length}
-          </strong>
-        </div>
-        <div className="mt-4 h-2 rounded-full bg-[#e4eaf0]">
-          <div
-            className="h-full rounded-full bg-brand"
-            style={{
-              width: `${(done / project.installationSteps.length) * 100}%`,
-            }}
-          />
-        </div>
-      </div>
-      <section id="build-shopping-list" className="card overflow-hidden">
+      <Heading
+        eyebrow={shoppingListOnly ? "Accepted design" : "Build It · installation modules"}
+        title={shoppingListOnly ? "Shopping List" : "Build the system by module"}
+        description={shoppingListOnly ? "Source the accepted equipment, supporting hardware and calculated cable lengths, then tick each item as you acquire it." : "Choose a physical section of the accepted design, then open only the equipment, materials and how-to guidance you need for that work."}
+      />
+      {isPoolSystem && !shoppingListOnly ? <aside className="flex gap-3 rounded-2xl border border-[#e6b84c] bg-[#fff7d6] p-4 text-[10px] leading-5 text-[#684d0d]"><AlertTriangle size={18} className="mt-0.5 shrink-0"/><div><strong className="block text-xs">Pool chemicals rapidly corrode electrical equipment</strong><p className="mt-1">Locate the inverter, switchgear, controllers, batteries and terminations in a dry, very well-ventilated equipment area, separated from chlorine, salt, acid and dosing-chemical storage or fumes. Do not treat a closed pool plant room as clean air. Keep chemical containers and dosing points away from electrical equipment, follow every product’s environmental and clearance limits, and let Wattson check the proposed location before mounting.</p></div></aside> : null}
+      {shoppingListOnly ? <section id="build-shopping-list" className="card overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-line bg-[#eef5fc] p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3"><Package size={18} className="mt-0.5 shrink-0 text-brand"/><div><div className="eyebrow">Accepted design shopping list</div><h2 className="mt-1 text-base font-extrabold">Everything required for this build</h2><p className="mt-1 max-w-2xl text-[10px] leading-4 text-muted">Accepted components expand into products, supporting hardware and calculated cable lengths.</p><p className="mt-1 text-[10px] font-bold text-brand">{acquiredCount}/{shoppingItems.length} acquired</p>{purchaseNotice ? <p className="mt-1 text-[10px] font-bold text-[#17603b]">✓ {purchaseNotice} <Link href={`${base}/financials`} className="underline">View Financials</Link></p> : null}</div></div>
           {shoppingItems.length ? <div className="shopping-list-actions flex flex-wrap gap-1.5"><button type="button" onClick={downloadCsv} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-brand px-3 text-[10px] font-bold text-white"><Download size={13}/>Download CSV</button><button type="button" onClick={printList} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-brand bg-white px-3 text-[10px] font-bold text-brand"><Printer size={13}/>Print / PDF</button><button type="button" onClick={emailList} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-brand bg-white px-3 text-[10px] font-bold text-brand"><Mail size={13}/>Email list</button></div> : null}
         </div>
         {shoppingItems.length ? <div className="p-3 sm:p-4"><div className="overflow-hidden rounded-xl border border-line"><div className="hidden grid-cols-[2rem_minmax(9rem,1fr)_minmax(14rem,1.8fr)_6rem_8rem] gap-2 bg-[#edf5fc] px-3 py-2 text-[8px] font-extrabold uppercase tracking-[.08em] text-muted sm:grid"><span>Got</span><span>Item</span><span>Specification</span><span>Quantity</span><span>Requirement</span></div>{shoppingItems.map((item, index) => { const checked = acquired[itemKey(item)] ?? false; return <article key={`${item.name}-${index}`} className={`grid grid-cols-[1.75rem_minmax(0,1fr)_auto] gap-x-2 gap-y-1 border-t border-line px-3 py-2.5 first:border-t-0 sm:grid-cols-[2rem_minmax(9rem,1fr)_minmax(14rem,1.8fr)_6rem_8rem] sm:items-start ${item.regulated ? "bg-[#fff9df]" : "bg-white"} ${checked ? "opacity-60" : ""}`}><label className="row-span-2 flex min-h-6 cursor-pointer items-start pt-0.5 sm:row-span-1" title={`Mark ${item.name} as acquired`}><input type="checkbox" checked={checked} onChange={() => toggleAcquired(item)} className="size-4 accent-[#238653]"/><span className="sr-only">{item.name} acquired</span></label><strong className={`min-w-0 text-[10px] leading-4 ${checked ? "line-through" : ""}`}>{item.name}</strong><strong className="text-right text-[10px] leading-4 text-brand sm:text-left">{item.quantity}</strong><div className="col-span-2 col-start-2 min-w-0 sm:col-span-1 sm:col-start-3 sm:row-start-1"><p className="text-[9px] font-semibold leading-4 text-ink">{item.specification}</p>{item.basis ? <p className="text-[8px] leading-3 text-muted">{item.basis}</p> : null}</div><span className="col-span-2 col-start-2 sm:col-span-1 sm:col-start-5 sm:row-start-1">{item.regulated ? <span className="inline-flex items-center gap-1 rounded-full bg-[#fff0bd] px-2 py-1 text-[7px] font-extrabold uppercase tracking-[.04em] text-[#765918]"><AlertTriangle size={9}/>Certification check</span> : <span className="inline-flex rounded-full bg-[#e8f5ed] px-2 py-1 text-[7px] font-extrabold uppercase tracking-[.04em] text-[#17603b]">General material</span>}</span></article>; })}</div></div> : <p className="p-5 text-xs text-muted">Accept component specifications on the proposed schematic to build this list.</p>}
         <div className="border-t border-[#efd98e] bg-[#fff9e3] px-4 py-2 text-[9px] leading-4 text-[#765918]">“Certification check” means a registered electrical worker must confirm the product, installation, testing, certification and any required inspection before energisation.</div>
-      </section>
-      {nextStep && <section className="card border-[#8eb5d8] p-6"><div className="eyebrow">Your next job</div><div className="mt-3 flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><h2 className="text-xl font-extrabold">{buildStepTitle(nextStep.title)}</h2><p className="mt-2 max-w-2xl text-xs leading-5 text-muted">{buildStepDescription(nextStep.title, nextStep.description)}</p></div><Link href={`${base}/build/${nextStep.id}`} className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-brand px-5 text-xs font-bold text-white">Open this job →</Link></div></section>}
-      <section className="card overflow-hidden"><div className="grid gap-5 p-5 lg:grid-cols-[260px_1fr]"><div className="relative h-52 overflow-hidden rounded-2xl bg-[#f2f5f8]"><Image src={manual.image} alt="" fill sizes="260px" className="object-contain"/></div><div><div className="eyebrow">How to · visual manual</div><h2 className="mt-2 text-xl font-extrabold">{manual.title}</h2><p className="mt-2 text-xs leading-5 text-muted">{manual.summary}</p><ol className="mt-4 grid gap-2 sm:grid-cols-2">{manual.steps.map((step, index) => <li key={step} className="flex gap-3 rounded-xl bg-[#f4f7fa] p-3 text-[11px] leading-5"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-[10px] font-bold text-white">{index + 1}</span>{step}</li>)}</ol><div className="mt-4 rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[10px] leading-4 text-[#765918]">This guide helps you recognise the job; it does not replace the exact product manual or required electrical testing. {manual.sourceUrl ? <a href={manual.sourceUrl} target="_blank" rel="noreferrer" className="ml-1 font-bold underline">Source: {manual.source}</a> : <span className="ml-1 font-bold">{manual.source}</span>}</div></div></div></section>
-      <details className="card overflow-hidden"><summary className="cursor-pointer list-none p-5"><div className="flex items-center justify-between"><div><div className="eyebrow">Detailed records</div><h2 className="mt-2 text-base font-extrabold">All build sheets</h2><p className="mt-1 text-xs text-muted">Open these when you need detailed checks, equipment records and completion tracking.</p></div><span className="rounded-xl border border-line px-3 py-2 text-xs font-bold text-brand">Show all</span></div></summary><div className="grid gap-3 border-t border-line bg-[#f7fafc] p-5 lg:grid-cols-2">{project.installationSteps.map((s, i) => <Link key={s.id} href={`${base}/build/${s.id}`} className="card flex gap-4 p-4"><span className={`grid size-8 shrink-0 place-items-center rounded-full border ${s.complete ? "bg-brand text-white" : "bg-white"}`}>{s.complete ? <Check size={15}/> : i + 1}</span><div><h3 className="text-xs font-bold">{buildStepTitle(s.title)}</h3><p className="mt-1 text-[10px] leading-4 text-muted">{buildStepDescription(s.title, s.description)}</p></div><ChevronRight className="ml-auto shrink-0 text-brand" size={15}/></Link>)}</div></details>
-      <Safety />
+      </section> : null}
+      {!shoppingListOnly && !selectedBuildModule ? <section>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div><div className="eyebrow">Modules in this accepted design</div><h2 className="mt-2 text-lg font-extrabold">Choose the part of the system you are installing</h2><p className="mt-1 max-w-3xl text-xs leading-5 text-muted">Each module combines its accepted equipment, shopping-list materials and relevant visual guidance. There is no forced task order.</p></div>
+          <Link href={`${base}?view=shopping-list`} className="inline-flex h-10 items-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand"><ShoppingCart size={15}/>Open shopping list</Link>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {buildModules.map((module) => {
+            const materialCount = shoppingItems.filter((item) => shoppingItemModuleId(item) === module.id).length;
+            const guideCount = guidesForModule(module).length;
+            const completed = completedModules[module.id] ?? false;
+            return <article key={module.id} className={`card group flex min-h-44 flex-col p-5 transition hover:-translate-y-0.5 hover:shadow-md ${completed ? "border-[#72b98b] bg-[#f1faf4]" : "hover:border-brand"}`}>
+              <button type="button" onClick={() => setSelectedBuildModuleId(module.id)} className="flex flex-1 flex-col text-left">
+              <span className="grid size-11 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><module.Icon size={21}/></span>
+              <h3 className="mt-4 text-base font-extrabold">{module.title}</h3>
+              <p className="mt-2 flex-1 text-[11px] leading-5 text-muted">{module.description}</p>
+              <span className="mt-4 flex w-full items-center justify-between border-t border-line pt-3 text-[10px] font-bold text-brand"><span>{materialCount} materials · {guideCount} how-to subjects</span><ChevronRight size={15}/></span>
+              </button>
+              <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line pt-3 text-[10px] font-extrabold text-[#17603b]"><input type="checkbox" checked={completed} onChange={(event) => setModuleCompleted(module.id, event.target.checked)} className="size-4 accent-[#238653]"/>Completed</label>
+            </article>;
+          })}
+        </div>
+        {!buildModules.length ? <div className="card mt-4 p-6 text-xs leading-5 text-muted">Accept the component specifications and configure the schematic connections before opening the installation modules.</div> : null}
+      </section> : null}
+      {!shoppingListOnly && selectedBuildModule ? <section className="space-y-4">
+        <button type="button" onClick={() => setSelectedBuildModuleId("")} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[11px] font-bold text-brand"><ArrowLeft size={14}/>All build modules</button>
+        <div className="card overflow-hidden">
+          <div className="flex flex-col gap-4 border-b border-line bg-[#eef5fc] p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-xl bg-white text-brand"><selectedBuildModule.Icon size={21}/></span><div><div className="eyebrow">Installation module</div><h2 className="mt-1 text-xl font-extrabold">{selectedBuildModule.title}</h2><p className="mt-1 max-w-2xl text-xs leading-5 text-muted">{selectedBuildModule.description}</p></div></div>
+            {moduleGuide ? <button type="button" onClick={() => setModuleChatGuide(moduleGuide)} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white"><Bot size={16}/>Ask Wattson about this module</button> : null}
+          </div>
+          {selectedBuildModule.id === "earthing" ? <div className="border-b border-line bg-[#f1faf4] p-5">
+            <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><div className="eyebrow text-[#17603b]">This system’s supplied earthing plan</div><h3 className="mt-2 text-sm font-extrabold">Follow the green routes on the accepted schematic</h3><p className="mt-1 max-w-3xl text-[10px] leading-5 text-muted">The routes below define what is bonded and where it returns. They do not, by themselves, decide whether this Site should reuse a compliant existing electrode or install a new one. That choice depends on the existing supply earthing, electrode condition and test results, soil, equipment instructions and local rules. Do not install a new or independent panel earth by assumption.</p></div><div className="flex shrink-0 flex-col gap-2"><Link href={`${base}/design/schematic`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#72b98b] bg-white px-4 text-[10px] font-bold text-[#17603b]"><Waypoints size={14}/>Open the earthing schematic</Link>{moduleGuide ? <button type="button" onClick={() => setModuleChatGuide(moduleGuide)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#238653] px-4 text-[10px] font-bold text-white"><Bot size={14}/>Ask Wattson: existing or new peg?</button> : null}</div></div>
+            <div className="mt-4 rounded-xl border border-[#e6cc74] bg-[#fff9df] p-3 text-[10px] leading-5 text-[#624b14]"><strong>Decision required before installation:</strong> record either “use existing Site electrode” with its inspection/test evidence, or “install new electrode” with its specified location and connection. Ask Wattson to work through the Site details when that decision is not already explicit.</div>
+            <div className="mt-4 grid gap-2 md:grid-cols-2">{acceptedConnections.filter((connection) => connection.kind === "earth").map((connection, index) => <div key={`${connection.from}-${connection.to}-${index}`} className="rounded-xl border border-[#9bd2ad] bg-white p-3"><strong className="block text-[11px]">{connection.label}</strong><p className="mt-1 text-[9px] leading-4 text-muted">{connection.from} → {connection.to}{connection.cableSizeMm2 ? ` · ${connection.cableSizeMm2} mm² earth conductor` : ""}{connection.lengthM ? ` · ${connection.lengthM} m route` : ""}</p></div>)}</div>
+            {!acceptedConnections.some((connection) => connection.kind === "earth") ? <div className="mt-4 rounded-xl border border-[#e2a49a] bg-[#fff0ed] p-3 text-[10px] font-bold text-[#9b4033]">No accepted earth route is recorded. Return to the schematic and add the complete earthing and bonding route before installation.</div> : null}
+          </div> : null}
+          <div className="grid gap-4 p-5 lg:grid-cols-2">
+            <div><div className="eyebrow">Accepted equipment and connections</div><div className="mt-3 space-y-2">{[...selectedModuleComponents.map((node) => ({ key: `node-${node.id}`, name: node.label, detail: node.detail })), ...selectedModuleConnections.map((connection, index) => ({ key: `connection-${index}`, name: connection.label, detail: [connection.cableSizeMm2 ? `${connection.cableSizeMm2} mm² cable` : "Cable specification accepted", connection.lengthM ? `${connection.lengthM} m route` : ""].filter(Boolean).join(" · ") }))].map((item) => <div key={item.key} className="rounded-xl border border-line bg-[#f7fafc] p-3"><strong className="text-[11px]">{item.name}</strong><p className="mt-1 text-[9px] leading-4 text-muted">{item.detail}</p></div>)}</div></div>
+            <div><div className="eyebrow">Materials in the shopping list</div><div className="mt-3 space-y-2">{selectedModuleMaterials.map((item, index) => <div key={`${item.name}-${index}`} className="flex items-start justify-between gap-3 rounded-xl border border-line bg-[#f7fafc] p-3"><div><strong className="text-[11px]">{item.name}</strong><p className="mt-1 text-[9px] leading-4 text-muted">{item.specification}</p></div><span className="shrink-0 text-[10px] font-extrabold text-brand">{item.quantity}</span></div>)}</div></div>
+          </div>
+        </div>
+        <div>
+          <div className="eyebrow">How-to subjects for this module</div><h2 className="mt-2 text-lg font-extrabold">Open only the guidance you need</h2><p className="mt-1 text-xs text-muted">Subjects stay minimised until you choose one.</p>
+          <div className="mt-4 space-y-2">{selectedModuleGuides.map((guide) => <details key={guide.id} className="card overflow-hidden"><summary className="flex cursor-pointer list-none items-center gap-3 p-4"><span className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-[#f4f7fa]"><Image src={guide.image} alt="" fill sizes="48px" className="object-contain p-1"/></span><span className="min-w-0 flex-1"><strong className="block text-xs">{guide.title}</strong><span className="mt-1 block text-[10px] leading-4 text-muted">{guide.summary}</span></span><ChevronDown size={16} className="shrink-0 text-brand"/></summary><div className="space-y-4 border-t border-line bg-[#f7fafc] p-4"><HowToTypes guide={guide}/><div className="grid gap-3 md:grid-cols-2"><HowToList title="What you may need" items={guide.buy}/><HowToList title="Tools" items={guide.tools}/></div><HowToList title="Before you start" items={guide.before}/><div><h3 className="text-[11px] font-extrabold">Installation guidance</h3><ol className="mt-3 space-y-2">{guide.steps.map((step, index) => <li key={step} className="flex gap-3 rounded-xl bg-white p-3 text-[10px] leading-5"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-brand text-[9px] font-bold text-white">{index + 1}</span>{step}</li>)}</ol></div><HowToList title="Checks" items={guide.checks}/><button type="button" onClick={() => setModuleChatGuide(guide)} className="inline-flex h-10 items-center gap-2 rounded-xl border border-brand bg-white px-4 text-[11px] font-bold text-brand"><Bot size={14}/>Ask Wattson about this subject</button></div></details>)}</div>
+        </div>
+        <div className="flex gap-3 rounded-xl border border-[#e6cc74] bg-[#fff9df] p-4 text-[10px] leading-5 text-[#624b14]"><AlertTriangle size={17} className="mt-0.5 shrink-0"/><p><strong>{authority.label}:</strong> {authority.note} <a href={authority.url} target="_blank" rel="noreferrer" className="font-bold underline">Open authority guidance</a></p></div>
+      </section> : null}
+      {moduleChatGuide ? <GuideWattsonChat guide={moduleChatGuide} onAsk={onAskGuide} onClose={() => setModuleChatGuide(null)}/> : null}
       {purchaseItem ? createPortal(
         <div className="fixed inset-0 z-[100] grid place-items-center bg-[#17324d]/55 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !purchaseSaving) setPurchaseItem(null); }}>
           <section role="dialog" aria-modal="true" aria-labelledby="purchase-dialog-title" className="w-full max-w-md overflow-hidden rounded-2xl border border-[#a8c9b4] bg-white shadow-[0_24px_70px_rgba(9,35,58,.35)]">
@@ -1848,56 +1971,66 @@ function Commission({
 }) {
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState("");
-  const buildComplete = project.installationSteps.length > 0 && project.installationSteps.every((step) => step.complete);
-  const checksPass = project.commissioning.length > 0 && project.commissioning.every((record) => record.result === "pass");
+  const [completedModules, setCompletedModules] = useState<Record<string, boolean>>({});
+  type HandoverRecord = { observations: string; readings: string; documents: string; issues: string; complete: boolean };
+  const handoverStorageKey = `pvintell:handover-modules:${project.id}`;
+  const emptyHandoverRecord: HandoverRecord = { observations: "", readings: "", documents: "", issues: "", complete: false };
+  const [handoverRecords, setHandoverRecords] = useState<Record<string, HandoverRecord>>({});
+  const [selectedHandoverId, setSelectedHandoverId] = useState("");
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        setCompletedModules(JSON.parse(window.localStorage.getItem(`pvintell:build-modules:${project.id}`) ?? "{}") as Record<string, boolean>);
+        setHandoverRecords(JSON.parse(window.localStorage.getItem(handoverStorageKey) ?? "{}") as Record<string, HandoverRecord>);
+      }
+      catch { setCompletedModules({}); }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [handoverStorageKey, project.id]);
+  const completedModuleLabels: Record<string, string> = { "pv-array": "Panels and mounting", "pv-dc": "PV strings, DC cable and isolation", battery: "Battery storage and battery DC", inverter: "Inverter and power conversion", ac: "AC supply, switchboard and protection", generator: "Generator and source changeover", earthing: "Earthing and equipment bonding" };
+  const handoverModules = Object.entries(completedModules).filter(([, complete]) => complete).map(([id]) => ({ id, title: completedModuleLabels[id] ?? id }));
+  const buildComplete = handoverModules.length > 0;
+  const handoverComplete = handoverModules.length > 0 && handoverModules.every((module) => handoverRecords[module.id]?.complete);
   const installed = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
+  const selectedHandover = handoverModules.find((module) => module.id === selectedHandoverId) ?? handoverModules[0];
+  const selectedRecord = selectedHandover ? handoverRecords[selectedHandover.id] ?? emptyHandoverRecord : emptyHandoverRecord;
+  function updateHandover(moduleId: string, patch: Partial<HandoverRecord>) {
+    setHandoverRecords((current) => {
+      const next = { ...current, [moduleId]: { ...(current[moduleId] ?? emptyHandoverRecord), ...patch } };
+      try { window.localStorage.setItem(handoverStorageKey, JSON.stringify(next)); } catch { /* Keep the record usable in this session. */ }
+      return next;
+    });
+  }
   async function finish() {
     setCompleting(true);
     setError("");
     try { await complete(); }
-    catch (problem) { setError(problem instanceof Error ? problem.message : "Could not complete commissioning."); }
+    catch (problem) { setError(problem instanceof Error ? problem.message : "Could not finish startup and handover."); }
     finally { setCompleting(false); }
   }
   return (
     <div className="animate-rise space-y-6">
       <Heading
-        eyebrow="Commissioning"
-        title="Verify before you energise"
-        description="Measurements become a permanent baseline for this system."
+        eyebrow="Startup & handover"
+        title="Record startup and handover"
+        description="Keep initial readings, settings, supplied documents and observed behaviour as a baseline for future support."
       />
-      <Safety />
+      <div role="alert" className="flex gap-3 rounded-2xl border-2 border-[#d94a3a] bg-[#fff0ed] p-5 text-[#8f2f24] shadow-sm"><AlertTriangle size={22} className="mt-0.5 shrink-0"/><div><strong className="block text-sm">This is not an inspection or certification service</strong><p className="mt-2 text-[11px] font-semibold leading-5">PVIntell is a DIY planning, startup and record-keeping tool. Completing this page does not certify, approve or grant permission to energise the system. You are responsible for checking the requirements that apply at this Site and arranging any local-authority, electrical, network or independent inspection or certification if it is required—or if you decide you want it.</p></div></div>
+      <section className="card overflow-hidden"><div className="border-b border-line bg-[#eef5fc] p-5"><div className="eyebrow">From Build It</div><h2 className="mt-2 text-base font-extrabold">Completed modules ready for startup records</h2><p className="mt-1 text-[10px] leading-5 text-muted">A module appears here only after you mark it Completed in Build It. That means the physical section is ready to record—not inspected or approved.</p></div>{handoverModules.length ? <div className="grid gap-3 p-4 md:grid-cols-2">{handoverModules.map((module) => <article key={module.id} className="rounded-xl border border-[#72b98b] bg-[#f1faf4] p-4"><div className="flex items-center gap-2 text-[#17603b]"><Check size={15}/><strong className="text-xs">{module.title}</strong></div><p className="mt-2 text-[10px] leading-4 text-muted">Ready to record first-start behaviour, relevant settings, readings, photos, supplied documents and anything needing attention.</p></article>)}</div> : <p className="p-5 text-xs text-muted">No Build It modules have been marked completed yet.</p>}</section>
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="card overflow-hidden">
-          {project.commissioning.map((r) => (
-            <div
-              key={r.id}
-              className="flex items-center gap-4 border-b border-line px-6 py-4"
-            >
-              <span className="grid size-8 place-items-center rounded-full bg-[#e7f0fb] text-brand">
-                <Check size={15} />
-              </span>
-              <div className="flex-1">
-                <div className="text-xs font-bold">{r.label}</div>
-                <div className="text-[10px] text-muted">
-                  Expected: {r.expected}
-                </div>
-              </div>
-              <strong className="text-xs">{r.value}</strong>
-            </div>
-          ))}
-        </div>
+        <section className="card overflow-hidden"><header className="border-b border-line p-5"><div className="eyebrow">Handover records</div><h2 className="mt-2 text-base font-extrabold">Record what happened at first startup</h2><p className="mt-1 text-[10px] leading-5 text-muted">Choose a completed module and keep useful facts, supplied paperwork and anything still needing attention. This is a record—not a pass/fail inspection.</p></header>{handoverModules.length ? <div className="grid min-h-[420px] md:grid-cols-[230px_minmax(0,1fr)]"><div className="border-b border-line p-3 md:border-b-0 md:border-r">{handoverModules.map((module) => { const done = handoverRecords[module.id]?.complete; return <button type="button" key={module.id} onClick={() => setSelectedHandoverId(module.id)} className={`mb-2 flex w-full items-center gap-2 rounded-xl border p-3 text-left text-[10px] font-bold ${selectedHandover?.id === module.id ? "border-brand bg-[#eef5fc]" : done ? "border-[#8fc8a2] bg-[#f1faf4] text-[#17603b]" : "border-line bg-white"}`}><span className={`grid size-6 shrink-0 place-items-center rounded-full ${done ? "bg-[#dff3e8]" : "bg-[#eaf2fb]"}`}>{done ? <Check size={13}/> : <ClipboardCheck size={13}/>}</span>{module.title}</button>; })}</div>{selectedHandover ? <div className="p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="eyebrow">Module record</div><h3 className="mt-2 text-base font-extrabold">{selectedHandover.title}</h3></div><label className="flex cursor-pointer items-center gap-2 rounded-xl border border-[#8fc8a2] bg-[#f1faf4] px-3 py-2 text-[10px] font-bold text-[#17603b]"><input type="checkbox" checked={selectedRecord.complete} onChange={(event) => updateHandover(selectedHandover.id, { complete: event.target.checked })} className="size-4 accent-[#238653]"/>Record finished</label></div><div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="text-[10px] font-bold text-muted">Startup observations<textarea className="field min-h-28 resize-y" value={selectedRecord.observations} onChange={(event) => updateHandover(selectedHandover.id, { observations: event.target.value })} placeholder="What started, what happened and what was observed…"/></label><label className="text-[10px] font-bold text-muted">Settings and readings<textarea className="field min-h-28 resize-y" value={selectedRecord.readings} onChange={(event) => updateHandover(selectedHandover.id, { readings: event.target.value })} placeholder="Values with units, settings and where they came from…"/></label><label className="text-[10px] font-bold text-muted">Documents and photo references<textarea className="field min-h-28 resize-y" value={selectedRecord.documents} onChange={(event) => updateHandover(selectedHandover.id, { documents: event.target.value })} placeholder="Manuals, serials, receipts, certificates supplied by others, photo names…"/></label><label className="text-[10px] font-bold text-muted">Open issues or follow-up<textarea className="field min-h-28 resize-y" value={selectedRecord.issues} onChange={(event) => updateHandover(selectedHandover.id, { issues: event.target.value })} placeholder="Anything unresolved, unusual or deliberately left off…"/></label></div><p className="mt-3 text-[9px] leading-4 text-muted">Changes save automatically in this browser. Uncheck “Record finished” whenever this section needs updating.</p></div> : null}</div> : <p className="p-6 text-xs text-muted">Finish at least one Build It module before creating its startup record.</p>}</section>
         <div className="card p-5">
           <div className="eyebrow">Lifecycle</div>
-          <h3 className="mt-2 text-base font-extrabold">{installed ? "Commissioned system" : "Ready to become an installed system?"}</h3>
-          <div className="mt-4 space-y-2 text-xs"><div className="flex items-center justify-between gap-3"><span>Build sheets complete</span><strong>{buildComplete ? "Yes" : "Not yet"}</strong></div><div className="flex items-center justify-between gap-3"><span>Commissioning checks pass</span><strong>{checksPass ? "Yes" : "Not yet"}</strong></div></div>
-          <p className="mt-4 text-[11px] leading-5 text-muted">Commissioning moves this system beside the other installed systems. Discovery, proposed design, build and commissioning records remain available as project history.</p>
+          <h3 className="mt-2 text-base font-extrabold">{installed ? "Installed system record" : "Ready to finish handover?"}</h3>
+          <div className="mt-4 space-y-2 text-xs"><div className="flex items-center justify-between gap-3"><span>Build modules supplied</span><strong>{buildComplete ? "Yes" : "Not yet"}</strong></div><div className="flex items-center justify-between gap-3"><span>Handover records finished</span><strong>{handoverComplete ? "Yes" : "Not yet"}</strong></div></div>
+          <p className="mt-4 text-[11px] leading-5 text-muted">Finishing handover changes the project to an installed system record. It records your workflow only; it does not certify the installation or authorise energisation.</p>
           {error ? <p className="mt-3 rounded-lg bg-[#fff0eb] p-3 text-[11px] text-[#913e31]">{error}</p> : null}
           <button
             onClick={() => void finish()}
-            disabled={installed || !buildComplete || !checksPass || completing}
+            disabled={installed || !buildComplete || !handoverComplete || completing}
             className="mt-4 w-full rounded-xl bg-brand py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
           >
-            {installed ? "System commissioned" : completing ? "Updating…" : "Mark system commissioned"}
+            {installed ? "Handover recorded" : completing ? "Updating…" : "Finish startup & handover"}
           </button>
         </div>
       </div>

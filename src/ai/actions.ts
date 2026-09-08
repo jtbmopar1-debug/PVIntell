@@ -198,6 +198,8 @@ const pvArrayActionSchema = z
     maximum_series_fuse_a: z.number().positive().optional(),
     panel_watts: z.number().positive().optional(),
     panel_count: z.number().int().positive().optional(),
+    strings: z.number().int().positive().optional(),
+    panels_per_string: z.number().int().positive().optional(),
     orientation_degrees: z.number().min(0).max(360).optional(),
     tilt_degrees: z.number().min(0).max(90).optional(),
     cable_size_mm2: z.number().positive().optional(),
@@ -609,6 +611,8 @@ export const wattsonActionTools = [
         maximum_series_fuse_a: { type: "number", exclusiveMinimum: 0 },
         panel_watts: { type: "number", exclusiveMinimum: 0 },
         panel_count: { type: "integer", minimum: 1 },
+        strings: { type: "integer", minimum: 1 },
+        panels_per_string: { type: "integer", minimum: 1 },
         orientation_degrees: { type: "number", minimum: 0, maximum: 360 },
         tilt_degrees: { type: "number", minimum: 0, maximum: 90 },
         cable_size_mm2: { type: "number", exclusiveMinimum: 0 },
@@ -1014,7 +1018,7 @@ export async function applyWattsonActions(
       if (input.operation === "update") {
         const current = await supabase
           .from("pv_arrays")
-          .select("id,name,specifications")
+          .select("id,name,specifications,strings,panels_per_string,panel_count")
           .eq("id", input.array_id!)
           .eq("project_id", projectId)
           .maybeSingle();
@@ -1046,6 +1050,8 @@ export async function applyWattsonActions(
           "maximum_series_fuse_a",
           "panel_watts",
           "panel_count",
+          "strings",
+          "panels_per_string",
           "orientation_degrees",
           "tilt_degrees",
           "cable_size_mm2",
@@ -1057,6 +1063,12 @@ export async function applyWattsonActions(
           "installation_notes",
         ] as const) {
           if (input[field] !== undefined) update[field] = input[field];
+        }
+        // A PV-array record represents one physical string by default. When its
+        // confirmed panel total changes, keep that string's series count in sync
+        // unless the user has recorded a different parallel arrangement.
+        if (input.panel_count !== undefined && input.panels_per_string === undefined && Number(input.strings ?? current.data.strings ?? 1) === 1) {
+          update.panels_per_string = input.panel_count;
         }
         const changed = await supabase
           .from("pv_arrays")
@@ -1096,6 +1108,8 @@ export async function applyWattsonActions(
           "maximum_series_fuse_a",
           "panel_watts",
           "panel_count",
+          "strings",
+          "panels_per_string",
           "orientation_degrees",
           "tilt_degrees",
           "cable_size_mm2",

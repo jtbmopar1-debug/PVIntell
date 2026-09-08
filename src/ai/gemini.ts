@@ -53,6 +53,68 @@ interface GeminiInteraction {
   error?: { message?: string };
 }
 
+function omitContextFields(value: object, fields: readonly string[]) {
+  const excluded = new Set(fields);
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !excluded.has(key)));
+}
+
+function compactProjectContext(project: Project) {
+  const design = project.designCalculator;
+  const draft = design?.proposedAsBuiltDraft;
+  const discovery = Object.fromEntries(Object.entries(project.designDiscovery ?? {}).map(([key, answer]) => [key, answer.value]));
+  return {
+    id: project.id,
+    siteId: project.siteId,
+    name: project.name,
+    description: project.description,
+    projectType: project.projectType,
+    phase: project.phase,
+    location: project.location,
+    goal: project.goal,
+    priorities: project.priorities,
+    systemVoltage: project.systemVoltage,
+    autonomyDays: project.autonomyDays,
+    peakSunHours: project.peakSunHours,
+    loads: project.loads.map((load) => omitContextFields(load, ["id"])),
+    assumptions: project.assumptions.map((assumption) => omitContextFields(assumption, ["id"])),
+    components: project.components.map((component) => omitContextFields(component, ["id", "photoUrl", "manualUrl"])),
+    connections: project.connections.map((connection) => omitContextFields(connection, ["id", "projectId"])),
+    designDiscovery: discovery,
+    designCalculator: design ? {
+      ...design,
+      proposedChecklist: undefined,
+      proposedAsBuiltDraft: draft ? {
+        architecture: draft.architecture,
+        flow: draft.flow,
+        nodes: draft.nodes?.map((node) => omitContextFields(node, ["image", "x", "y"])),
+        connections: draft.connections,
+        panelCount: draft.panelCount,
+        panelWatts: draft.panelWatts,
+        pvStrings: draft.pvStrings,
+        panelsPerString: draft.panelsPerString,
+        panelVmpV: draft.panelVmpV,
+        panelVocV: draft.panelVocV,
+        panelImpA: draft.panelImpA,
+        panelIscA: draft.panelIscA,
+        batteryVoltage: draft.batteryVoltage,
+        batteryAh: draft.batteryAh,
+        batteryQuantity: draft.batteryQuantity,
+        inverterKw: draft.inverterKw,
+      } : undefined,
+    } : undefined,
+    pvArrays: project.pvArrays.map((array) => omitContextFields(array, ["id", "labelPhotoPath"])),
+    installation: project.installationSteps.filter((step) => !step.complete).map((step) => omitContextFields(step, ["id"])),
+    commissioning: project.commissioning.slice(-20).map((measurement) => omitContextFields(measurement, ["id"])),
+  };
+}
+
+function compactConversation(messages: Array<{ role: string; content: string }>) {
+  return messages.slice(-6).map((item) => ({
+    role: item.role,
+    content: item.content.length > 2400 ? `${item.content.slice(0, 2400)}\n[older detail trimmed]` : item.content,
+  }));
+}
+
 const regulatoryPattern =
   /\b(regulations?|regulatory|electrical code|standards?|as\s*\/\s*nzs|permit|consent|inspection|certificate|compliance|legal requirement|grid connection|export limit|worksafe|ewrb|authority|licensed|earthing|grounding)\b/i;
 const currentInfoPattern =
@@ -149,6 +211,8 @@ export async function askGemini({
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
   const route = classifyWattsonRequest(message, project.location);
+  const compactProject = compactProjectContext(project);
+  const compactRecentConversation = compactConversation(recentConversation);
   const model = route.technical
     ? (process.env.GEMINI_TECHNICAL_MODEL ?? "gemini-3.7-flash")
     : (process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite");
@@ -174,11 +238,13 @@ Response style:
 - A missing record does not prove that equipment is absent. Phrase checks like: "I cannot see an AC shut-off recorded between the mains feed and Studio inverter. Is one installed?" Do not phrase them as findings or defects.
 - Treat the conversation as progressive system discovery. Use each confirmed answer to improve the structured PVIntell record instead of repeatedly asking for the same information.
 - Save each material, user-confirmed discovery answer with record_design_discovery so it survives future chats. This includes the user's goals, energy evidence, backup needs, heavy loads, property/building context, authority to make changes, solar-space evidence and known constraints. Do not save guesses or convert discovery notes into installed equipment.
-- Treat installed overview and schematic records as read-only context. Use them to teach, explain topology, diagnose and point out missing or conflicting records, but never add, edit or delete installed equipment, PV strings or connections through chat. Direct the user to the relevant record page when an as-built change is needed.
+- Treat installed overview and schematic records as read-only context unless the user explicitly confirms an exact correction. Use them to teach, explain topology, diagnose and point out missing or conflicting records. Never add or delete installed equipment, PV strings or connections through chat; direct the user to the relevant record page for those changes. A confirmed correction to an existing field may use its dedicated update action.
 - For any question about solar yield, output, orientation, azimuth, tilt, shading, expansion or optimisation, inspect the recorded installed PV arrays/strings before answering. Start with the user's actual array capacity, panel count, azimuth and tilt when those values exist, compare that geometry with the location-based ideal, and explain whether the practical opportunity concerns the existing array, a separately mounted new array, or both. Do not ask whether panels are installed, where they face, or how they are tilted when the record already answers it.
 - Assume owners of installed systems may want to improve yield without rebuilding everything. Offer practical improvement paths in order: verify measured performance and shading/soiling, optimise settings or controllable loads, consider seasonal adjustment only where the mounting system permits it, and then assess a separate expansion array at a complementary orientation. Never imply that a fixed installed roof array can simply be re-angled, and keep any new equipment clearly labelled as proposed.
 - After a user confirms that an unrecorded installed item exists, ask only for the next minimum detail needed to identify it, then direct them to the relevant overview record; do not present a long questionnaire in chat.
 - Chat history is not the system knowledge database. In the same turn that the user confirms a material fact needed for future operation, optimisation, maintenance or fault finding, save it with the appropriate structured action (especially record_system_knowledge in monitor/as-built mode) instead of relying on the conversation transcript as its only copy.
+- Treat a newly mentioned value that conflicts with an existing installed record as a proposed correction, not immediate permission to edit. State the current recorded value and proposed new value in plain language, then explicitly ask whether the user wants that exact record changed. Do not call a mutating action in that turn. Only after the user clearly confirms should you use the dedicated structured update action; update the real equipment, PV array, connection or system field rather than saving only a general knowledge note. An unmistakable direct command such as “change PV3 from 5 to 6 panels” is already confirmation and does not need a second confirmation question.
+- A request to change “all”, “both”, or a stated number of existing records is a bulk structured-record request. Inspect the exact matching records and emit one dedicated update action for every matching record ID. Never substitute record_system_knowledge for any requested equipment, PV-array, connection or system-record edit. If the source values to copy or the target records are ambiguous, do not claim completion: name the ambiguity and ask one focused question. Say “done” only when every requested record has a corresponding update action.
 - During discovery, each material answer advances the structured design brief, not the equipment list. Save the confirmed answer, then ask the next discovery question. Put later proposed sizing only in the Design Calculator; leave unknown values blank. Proposals are never installed facts.
 - After saving a design choice, never stop at a database-style confirmation such as "saved" or "updated". Say what was added to the working design, explicitly say it is proposed rather than purchased or installed, and then continue the design by asking the single next useful question.
 - Never describe a vague appliance list as standard, typical, manageable, small or sufficient for sizing. Appliance names without quantity, power, duration and simultaneous use are discovery notes only, not a load profile.
@@ -261,11 +327,11 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
       ? [
           {
             type: "text",
-            text: `Structured PVIntell context:\n${JSON.stringify({ project, questionnaireContext, recentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message and inspect the attached image:\n${message}`,
+            text: `Structured PVIntell context:\n${JSON.stringify({ project: compactProject, questionnaireContext, recentConversation: compactRecentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message and inspect the attached image:\n${message}`,
           },
           { type: "image", data: image.data, mime_type: image.mimeType },
         ]
-      : `Structured PVIntell context:\n${JSON.stringify({ project, questionnaireContext, recentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message:\n${message}`,
+      : `Structured PVIntell context:\n${JSON.stringify({ project: compactProject, questionnaireContext, recentConversation: compactRecentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message:\n${message}`,
     tools,
   };
   const response = await fetch(

@@ -41,6 +41,19 @@ function completedSystemIntent(message: string) {
   );
 }
 
+function structuredRecordChangeIntent(message: string) {
+  return /\b(?:update|change|correct|set|make|standardise|standardize|copy)\b/i.test(message) && /\b(?:record|equipment|component|batter(?:y|ies)|inverter|panel|pv\s*string|array|connection)\b/i.test(message);
+}
+
+function requestedBulkCount(message: string) {
+  const match = message.match(/\ball\s+(\d+)\b/i);
+  if (match) return Number(match[1]);
+  if (/\bboth\b/i.test(message)) return 2;
+  const words: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6 };
+  const word = message.match(/\ball\s+(two|three|four|five|six)\b/i)?.[1].toLowerCase();
+  return word ? words[word] : undefined;
+}
+
 export async function POST(request: Request) {
   let candidate: unknown;
   let imageFile: File | undefined;
@@ -351,6 +364,7 @@ export async function POST(request: Request) {
       const nextDiscovery = monitoringOnlySystem ? undefined : nextRequiredDiscoveryQuestion(systemSettings, result.actions);
       const blockedArchitecture = result.actions.some((action) => action.name === "record_design_preference") && nextDiscovery;
       const uncertainDiscovery = userExpressesUncertainty(parsed.data.message) && Boolean(currentDiscovery);
+      const recordChangeRequested = structuredRecordChangeIntent(parsed.data.message);
       const toolActions = await applyWattsonActions(
         supabase,
         parsed.data.projectId,
@@ -358,7 +372,8 @@ export async function POST(request: Request) {
           !(monitoringOnlySystem && ["record_design_discovery", "record_design_preference", "record_preliminary_design", "record_proposed_component"].includes(action.name))
           &&
           (action.name !== "record_design_preference" || !blockedArchitecture)
-          && (action.name !== "record_design_discovery" || !uncertainDiscovery),
+          && (action.name !== "record_design_discovery" || !uncertainDiscovery)
+          && !(recordChangeRequested && action.name === "record_system_knowledge")
         ),
       );
       appliedActions = [...appliedActions, ...toolActions];
@@ -390,6 +405,15 @@ export async function POST(request: Request) {
         message = message
           ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`
           : `Done — ${updateSummary}.`;
+      if (recordChangeRequested) {
+        const recordUpdates = appliedActions.filter((action) => ["component_updated", "pv_array_updated", "connection_updated", "settings_updated"].includes(action.type));
+        const requestedCount = requestedBulkCount(parsed.data.message);
+        if (!recordUpdates.length) {
+          message = "I haven’t changed those records. I could not map that request to the exact structured records and fields, so I need one clarification rather than pretending it was completed.";
+        } else if (requestedCount && recordUpdates.length < requestedCount) {
+          message = `I updated ${recordUpdates.length} of the ${requestedCount} requested records, so this is not complete yet. ${recordUpdates.map((action) => action.summary).join("; ")}.`;
+        }
+      }
       if (!message)
         message = result.actions.length
           ? "I couldn’t safely apply that change to a specific record. Tell me which item it belongs to."

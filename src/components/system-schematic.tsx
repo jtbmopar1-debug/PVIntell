@@ -10,10 +10,12 @@ import {
   Fuel,
   Home,
   MapPin,
+  Menu,
   Plus,
   PlugZap,
   Save,
   ShieldCheck,
+  Smartphone,
   Sun,
   Trash2,
   WandSparkles,
@@ -23,7 +25,7 @@ import {
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ComponentSpec,
   Project,
@@ -355,10 +357,15 @@ function ConnectionPath({
   );
 }
 
+function seriesPanelCount(array: PVArray) {
+  return (array.strings ?? 1) === 1 && array.panelCount ? array.panelCount : array.panelsPerString;
+}
+
 function pvArrangement(array: PVArray) {
-  if (array.strings && array.panelsPerString)
-    return `${array.strings} parallel string${array.strings === 1 ? "" : "s"} x ${array.panelsPerString} panels in series`;
-  if (array.panelsPerString) return `${array.panelsPerString} panels in series per string`;
+  const panelsInSeries = seriesPanelCount(array);
+  if (array.strings && panelsInSeries)
+    return `${array.strings} parallel string${array.strings === 1 ? "" : "s"} x ${panelsInSeries} panels in series`;
+  if (panelsInSeries) return `${panelsInSeries} panels in series per string`;
   if (array.strings) return `${array.strings} parallel string${array.strings === 1 ? "" : "s"}`;
   return "Series/parallel layout not confirmed";
 }
@@ -369,11 +376,12 @@ function pvConnectionLabel(array: PVArray) {
 }
 
 function pvDetails(array: PVArray): Array<[string, string]> {
-  const stringVmp = array.panelsPerString && array.maximumPowerVoltageV
-    ? array.panelsPerString * array.maximumPowerVoltageV
+  const panelsInSeries = seriesPanelCount(array);
+  const stringVmp = panelsInSeries && array.maximumPowerVoltageV
+    ? panelsInSeries * array.maximumPowerVoltageV
     : undefined;
-  const stringVoc = array.panelsPerString && array.openCircuitVoltageV
-    ? array.panelsPerString * array.openCircuitVoltageV
+  const stringVoc = panelsInSeries && array.openCircuitVoltageV
+    ? panelsInSeries * array.openCircuitVoltageV
     : undefined;
   const arrayImp = array.strings && array.maximumPowerCurrentA
     ? array.strings * array.maximumPowerCurrentA
@@ -446,6 +454,24 @@ export function SystemSchematic({
   const [layoutMessage, setLayoutMessage] = useState("");
   const [showConnectionLabels, setShowConnectionLabels] = useState(false);
   const [canvasZoom, setCanvasZoom] = useState(1);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const viewport = canvasViewportRef.current;
+    if (!viewport) return;
+    const fit = () => {
+      if (window.innerWidth < 768) setCanvasZoom(Math.max(.45, Math.min(1, viewport.clientWidth / 1100)));
+    };
+    const frame = window.requestAnimationFrame(fit);
+    const observer = new ResizeObserver(fit);
+    observer.observe(viewport);
+    window.addEventListener("orientationchange", fit);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("orientationchange", fit);
+    };
+  }, []);
   const [positionOverrides, setPositionOverrides] = useState<
     Record<string, { x: number; y: number }>
   >(() =>
@@ -1118,15 +1144,17 @@ export function SystemSchematic({
 
   return (
     <div className="min-h-screen bg-canvas">
-      <header className="sticky top-0 z-50 border-b border-line bg-[rgba(248,250,252,.98)]">
+      <header className="system-workspace-header sticky top-0 z-50 border-b border-line bg-white/98 shadow-sm">
         <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-3 px-4 md:px-6">
           <Link href="/dashboard" className="shrink-0"><BrandLogo /></Link>
           <Link href={`${base}?view=wattson`} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-2xl bg-brand px-4 text-[11px] font-extrabold text-white"><Zap size={18}/>Ask Wattson</Link>
-          <details className="relative shrink-0"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{site.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div>{sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{item.name}</Link>)}</div></details>
+          <details className="relative hidden shrink-0 md:block"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{site.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div>{sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{item.name}</Link>)}</div></details>
           <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><Link href={`/how-to?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link><Link href={`/settings?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>
+          <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="ml-auto grid size-9 shrink-0 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>{mobileMenuOpen ? <X size={17}/> : <Menu size={18}/>}</button>
         </div>
+        {mobileMenuOpen ? <nav className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-line bg-white p-3 md:hidden" aria-label="Mobile navigation"><div className="grid gap-1"><Link href={`/dashboard?site=${site.id}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${site.id}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link><Link href={`/how-to?site=${site.id}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">How to</Link><Link href={`/settings?site=${site.id}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link></div></nav> : null}
       </header>
-    <main className="px-5 py-7 md:px-10">
+    <main className="schematic-mobile-main px-5 py-7 md:px-10">
       <div className="mx-auto max-w-[1280px]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link href={`/systems?site=${project.siteId}`} className="inline-flex items-center gap-2 text-xs font-bold text-brand">
@@ -1209,7 +1237,7 @@ export function SystemSchematic({
             )}
           </div>
         </div>
-        <div className="my-7">
+        <div className="schematic-page-intro my-7">
           <div className="eyebrow">Live system map</div>
           <h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">
             {project.name} schematic
@@ -1237,7 +1265,8 @@ export function SystemSchematic({
             </div>
           </div>
           <div className="flex items-center justify-end gap-1 border-b border-line bg-white px-3 py-2"><span className="mr-1 text-[9px] font-bold text-muted">Zoom</span><button type="button" onClick={() => setCanvasZoom((value) => Math.max(.45, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line" aria-label="Zoom out">−</button><button type="button" onClick={() => setCanvasZoom(1)} className="h-8 min-w-12 rounded-lg border border-line px-2 text-[9px] font-bold" aria-label="Reset zoom">{Math.round(canvasZoom * 100)}%</button><button type="button" onClick={() => setCanvasZoom((value) => Math.min(1.4, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line" aria-label="Zoom in">+</button></div>
-          <div className="thin-scrollbar overflow-auto touch-pan-x bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
+          <div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the system map a clear postcard-sized canvas.</span></div></div>
+          <div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto touch-pan-x bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
             <svg
               viewBox={`0 0 1100 ${canvasHeight}`}
               style={{ width: 1100 * canvasZoom, height: canvasHeight * canvasZoom }}
