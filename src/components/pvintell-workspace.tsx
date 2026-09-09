@@ -1381,24 +1381,6 @@ function HowToList({ title, items }: { title: string; items?: readonly string[] 
   return <details className="rounded-xl border border-line bg-white p-3" open={title === "Before you start"}><summary className="cursor-pointer text-[11px] font-extrabold text-brand">{title}</summary><ul className="mt-3 space-y-2">{items.map((item) => <li key={item} className="flex gap-2 text-[10px] leading-4 text-muted"><Check size={13} className="mt-0.5 shrink-0 text-[#288253]"/>{item}</li>)}</ul></details>;
 }
 
-function SimpleMessage({ content }: { content: string }) {
-  function inline(text: string) {
-    return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) =>
-      part.startsWith("**") && part.endsWith("**")
-        ? <strong key={`${index}:${part}`}>{part.slice(2, -2)}</strong>
-        : <span key={`${index}:${part}`}>{part}</span>,
-    );
-  }
-  return <div className="space-y-2 whitespace-normal">{content.split(/\r?\n/).map((line, index) => {
-    const trimmed = line.trim();
-    if (!trimmed) return <div key={index} className="h-1"/>;
-    const bullet = trimmed.match(/^[-*]\s+(.*)$/);
-    return bullet
-      ? <div key={index} className="flex gap-2"><span aria-hidden="true">•</span><span>{inline(bullet[1])}</span></div>
-      : <p key={index}>{inline(trimmed)}</p>;
-  })}</div>;
-}
-
 function HowToTypes({ guide }: { guide: NoviceHowToGuide }) {
   return <>
     {guide.aliases?.length ? <p className="mt-3 text-[10px] text-muted"><strong>Also known as:</strong> {guide.aliases.join(" · ")}</p> : null}
@@ -1471,7 +1453,7 @@ function GuideWattsonChat({ guide, onAsk, onClose }: { guide: NoviceHowToGuide; 
           <button type="button" onClick={onClose} aria-label="Close guide chat" className="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-white text-muted"><X size={15}/></button>
         </header>
         <div ref={conversationRef} className="min-h-52 flex-1 space-y-3 overflow-y-auto p-4">
-          {lines.map((line) => <div key={line.id} className={`max-w-[92%] rounded-2xl px-4 py-3 text-[13px] leading-5 sm:max-w-[88%] sm:text-[11px] ${line.role === "user" ? "ml-auto bg-brand text-white" : "bg-[#eef3f8] text-[#20334a]"}`}><SimpleMessage content={line.content}/>{line.citations?.length ? <div className="mt-2 flex flex-wrap gap-2">{line.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold underline sm:text-[9px]">{citation.title}</a>)}</div> : null}</div>)}
+          {lines.map((line) => <div key={line.id} className={`max-w-[92%] rounded-2xl px-4 py-3 text-[13px] leading-5 sm:max-w-[88%] sm:text-[11px] ${line.role === "user" ? "ml-auto bg-brand text-white" : "bg-[#eef3f8] text-[#20334a]"}`}><FormattedChatMessage content={line.content}/>{line.citations?.length ? <div className="mt-2 flex flex-wrap gap-2">{line.citations.map((citation) => <a key={citation.url} href={citation.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold underline sm:text-[9px]">{citation.title}</a>)}</div> : null}</div>)}
           {sending ? <div className="inline-flex rounded-2xl bg-[#eef3f8] px-4 py-3 text-[10px] font-bold text-muted">Wattson is checking this guide…</div> : null}
         </div>
         <form onSubmit={submit} className="border-t border-line p-3"><div className="flex gap-2"><input autoFocus value={input} onChange={(event) => setInput(event.target.value)} placeholder={`Ask about ${guide.title.toLowerCase()}…`} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-[#f8fafc] px-4 text-xs outline-none focus:border-brand"/><button type="submit" disabled={!input.trim() || sending} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send question"><Send size={16}/></button></div></form>

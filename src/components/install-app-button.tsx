@@ -10,41 +10,40 @@ type InstallPromptEvent = Event & {
 
 export function InstallAppButton({ tone = "dark" }: { tone?: "dark" | "light" }) {
   const [promptEvent, setPromptEvent] = useState<InstallPromptEvent | null>(null);
-  const [isIos, setIsIos] = useState(false);
+  const [environment, setEnvironment] = useState<{ installed: boolean; ios: boolean } | null>(null);
   const [showIosHelp, setShowIosHelp] = useState(false);
-  const [isInstalled, setIsInstalled] = useState(true);
 
   useEffect(() => {
     const standalone = window.matchMedia("(display-mode: standalone)").matches
       || ("standalone" in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone));
-    setIsInstalled(standalone);
-    setIsIos(/iphone|ipad|ipod/i.test(navigator.userAgent));
+    const frame = window.requestAnimationFrame(() => setEnvironment({ installed: standalone, ios: /iphone|ipad|ipod/i.test(navigator.userAgent) }));
 
     const handlePrompt = (event: Event) => {
       event.preventDefault();
       setPromptEvent(event as InstallPromptEvent);
     };
     const handleInstalled = () => {
-      setIsInstalled(true);
+      setEnvironment((current) => ({ installed: true, ios: current?.ios ?? false }));
       setPromptEvent(null);
     };
 
     window.addEventListener("beforeinstallprompt", handlePrompt);
     window.addEventListener("appinstalled", handleInstalled);
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("beforeinstallprompt", handlePrompt);
       window.removeEventListener("appinstalled", handleInstalled);
     };
   }, []);
 
-  if (isInstalled || (!promptEvent && !isIos)) return null;
+  const isIos = environment?.ios ?? false;
+  if (!environment || environment.installed) return null;
 
   const install = async () => {
-    if (isIos) {
+    if (isIos || !promptEvent) {
       setShowIosHelp((shown) => !shown);
       return;
     }
-    if (!promptEvent) return;
     await promptEvent.prompt();
     const choice = await promptEvent.userChoice;
     if (choice.outcome === "accepted") setPromptEvent(null);
@@ -56,7 +55,7 @@ export function InstallAppButton({ tone = "dark" }: { tone?: "dark" | "light" })
         <Download size={17}/>
         Install PVIntell
       </button>
-      {showIosHelp ? <div className={`mt-2 rounded-xl border px-4 py-3 text-xs leading-5 sm:absolute sm:left-0 sm:w-64 ${tone === "light" ? "border-line bg-white text-muted shadow-lg" : "border-white/15 bg-[#10243a] text-white/80"}`}><Share className="mr-1 inline text-[#69b9f2]" size={15}/> Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</div> : null}
+      {showIosHelp ? <div className={`mt-2 rounded-xl border px-4 py-3 text-xs leading-5 sm:absolute sm:left-0 sm:z-20 sm:w-72 ${tone === "light" ? "border-line bg-white text-muted shadow-lg" : "border-white/15 bg-[#10243a] text-white/80"}`}><Share className="mr-1 inline text-[#69b9f2]" size={15}/> {isIos ? <>Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.</> : <>Open your browser menu and choose <strong>Install app</strong> or <strong>Add to Home screen</strong>. If that option is missing, refresh this page and try again.</>}</div> : null}
     </div>
   );
 }

@@ -25,7 +25,11 @@ export function SystemMonitor({ project, site }: { project: Project; site: Site 
       .finally(() => setBusy(false));
     return () => { void request; };
   }, [project.id, site.id]);
-  useEffect(() => { if (localForThisSystem && localMonitoring.lastSavedAt) void refresh(); }, [localForThisSystem, localMonitoring.lastSavedAt, refresh]);
+  useEffect(() => {
+    if (!localForThisSystem || !localMonitoring.lastSavedAt) return;
+    const frame = window.requestAnimationFrame(() => void refresh());
+    return () => window.cancelAnimationFrame(frame);
+  }, [localForThisSystem, localMonitoring.lastSavedAt, refresh]);
   const latest = localForThisSystem && localMonitoring.lastReading ? localMonitoring.lastReading : data?.latest; const state = localConnected ? "current" : data ? monitoringViewState(data) : "empty";
   const battery = latest && [latest.batteryPowerW, latest.batteryVoltageV, latest.batteryCurrentA, latest.batterySocPercent].some((item) => item != null);
   async function connectDess(event: React.FormEvent<HTMLFormElement>) {

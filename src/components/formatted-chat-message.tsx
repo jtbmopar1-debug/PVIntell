@@ -8,6 +8,7 @@ export function FormattedChatMessage({ content }: { content: string }) {
   return <div className="space-y-2 whitespace-normal">{content.split(/\r?\n/).map((line, index) => {
     const trimmed = line.trim();
     if (!trimmed) return <div key={index} className="h-1"/>;
+    if (trimmed.startsWith("Discovery topic:")) return <div key={index} className="border-b border-line pb-2 text-[10px] font-extrabold uppercase tracking-[.12em] text-brand">{inline(trimmed.slice("Discovery topic:".length).trim())}</div>;
     const heading = trimmed.match(/^#{1,6}\s*(.*)$/);
     if (heading) return <p key={index} className="pt-1 font-extrabold text-ink">{inline(heading[1])}</p>;
     const bullet = trimmed.match(/^[-*]\s+(.*)$/);

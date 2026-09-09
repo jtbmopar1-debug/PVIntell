@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BrandLogo } from "@/components/brand-logo";
+import { FormattedChatMessage } from "@/components/formatted-chat-message";
 import { LocalDevFooter } from "@/components/localdev-footer";
 import { WattsonHeaderAction } from "@/components/wattson-header-action";
 import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
@@ -310,7 +311,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             {messages.length ? messages.map((message) => (
               <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[92%] rounded-2xl px-3.5 py-3 text-[13px] leading-5 sm:max-w-[88%] sm:px-4 sm:text-xs ${message.role === "user" ? "bg-brand text-white" : "wattson-assistant-message bg-[#edf2f7] text-ink"}`}>
-                  <SimpleMessage content={friendlyMonitoringReferences(message.content, systems)} />
+                  <FormattedChatMessage content={friendlyMonitoringReferences(message.content, systems)} />
                   {message.actionUrl ? <Link href={message.actionUrl} className="mt-3 flex items-center gap-2 font-bold text-brand">{message.actionLabel ?? "Open"}<ArrowRight size={13} /></Link> : null}
                 </div>
               </div>
@@ -349,25 +350,6 @@ function friendlyMonitoringReferences(content: string, systems: SystemSummary[])
     const system = systems.find((item) => item.id.toLowerCase() === id.toLowerCase());
     return system ? `(${system.name} live monitoring)` : "(PVIntell live monitoring)";
   });
-}
-
-function SimpleMessage({ content }: { content: string }) {
-  function inline(text: string) {
-    return text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part, index) =>
-      part.startsWith("**") && part.endsWith("**")
-        ? <strong key={`${index}:${part}`}>{part.slice(2, -2)}</strong>
-        : <span key={`${index}:${part}`}>{part}</span>,
-    );
-  }
-  const lines = content.split(/\r?\n/);
-  return <div className="space-y-2 whitespace-normal">{lines.map((line, index) => {
-    const trimmed = line.trim();
-    if (!trimmed) return <div key={index} className="h-1" />;
-    const bullet = trimmed.match(/^[-*]\s+(.*)$/);
-    return bullet
-      ? <div key={index} className="flex gap-2"><span aria-hidden="true">•</span><span>{inline(bullet[1])}</span></div>
-      : <p key={index}>{inline(trimmed)}</p>;
-  })}</div>;
 }
 
 function WeatherPill({ icon: Icon, label }: { icon: typeof Sun; label: string }) {
