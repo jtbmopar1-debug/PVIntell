@@ -38,7 +38,7 @@ function hasPoolEquipmentToRate(answers: DiscoveryAnswers) {
 }
 
 function hasHouseholdMotorLoads(answers: DiscoveryAnswers) {
-  return answerValues(answers.everyday_needs).some((value) => ["water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "compressor"].includes(value));
+  return answerValues(answers.heavy_loads).some((value) => value !== "none");
 }
 
 function isPoolOnly(answers: DiscoveryAnswers) {
@@ -51,8 +51,12 @@ function requestsOutagePlanning(answers: DiscoveryAnswers) {
   return outcomes.some((value) => value !== "cost");
 }
 
+function replacesGrid(answers: DiscoveryAnswers) {
+  return answers.utility_relationship === "off_grid" || answers.target_grid_role === "replace_grid";
+}
+
 function hasGarageArea(answers: DiscoveryAnswers) {
-  return ["attached_unconditioned", "attached_conditioned", "attached_intermittent", "detached_conditioned"].includes(String(answers.garage_conditioning));
+  return ["attached_conditioned", "attached_intermittent", "detached_conditioned"].includes(String(answers.garage_conditioning));
 }
 
 function hasEvUse(answers: DiscoveryAnswers) {
@@ -69,11 +73,16 @@ function hasLargeLoadCandidates(answers: DiscoveryAnswers) {
   const selected = [answers.everyday_needs, answers.cooking_energy, answers.water_heating_energy, answers.space_heating_energy, answers.pool_equipment, answers.pool_heating_method, answers.future_changes]
     .flatMap(answerValues);
   return selected.some((value) => [
-    "water_pump", "tools", "compressor", "fridge_freezer", "cooling", "ev",
+    "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "tools", "compressor", "fridge_freezer", "chest_freezer", "cooling", "ev",
     "electric_oven", "electric_cooktop", "induction", "air_fryer", "microwave",
     "electric_resistive", "instant_electric", "heat_pump", "resistive", "pool_heat_pump", "resistive_electric", "spa_inline_heater",
     "filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature",
   ].includes(value)) || answerValues(answers.building_type).some((value) => ["shed_workshop", "farm_building"].includes(value));
+}
+
+function needsStandaloneHighPowerSupply(answers: DiscoveryAnswers) {
+  return replacesGrid(answers)
+    || (answers.utility_relationship === "grid_connected" && Boolean(answers.backup_preference) && answers.backup_preference !== "none");
 }
 
 function hasGeneratorRequirement(answers: DiscoveryAnswers) {
@@ -86,7 +95,7 @@ function hasBatteryBus(answers: DiscoveryAnswers) {
 
 function shouldIncludeBattery(answers: DiscoveryAnswers) {
   const panelLocations = answerValues(answers.panel_location);
-  return answers.utility_relationship === "off_grid" || answers.battery_requirement === "include" || panelLocations.includes("none") || (answers.backup_preference !== undefined && answers.backup_preference !== "none");
+  return replacesGrid(answers) || answers.battery_requirement === "include" || panelLocations.includes("none") || (answers.backup_preference !== undefined && answers.backup_preference !== "none");
 }
 
 function needsModuleElectronicsCompatibility(answers: DiscoveryAnswers) {
@@ -108,16 +117,26 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
   },
   {
     id: "utility_relationship", stage: "discovery", title: "Does this property already receive electricity from the public power network?",
-    noviceHelp: "This tells us whether solar will work alongside an existing electricity connection or must supply the property by itself.",
+    noviceHelp: "This records what is physically present today. The next question separately decides whether the finished system will use, reserve or replace that supply.",
     type: "choice", options: [
       { value: "grid_connected", label: "Yes, it already has electricity", description: "Solar will work alongside the existing public supply." },
       { value: "off_grid", label: "No public electricity supply", description: "Solar, batteries or a generator must provide the power." },
     ],
   },
   {
+    id: "target_grid_role", stage: "discovery", title: "What role should the public grid have in the finished system?",
+    noviceHelp: "A property can have grid power today while the new system is designed to replace it. This choice controls the proposed power flow, battery reserve and whether grid equipment appears in the schematic.",
+    technicalHelp: "Distinguish existing Site infrastructure from the proposed operating topology. Grid replacement is a standalone solar-battery supply with generator support only when explicitly selected; it must not be modelled as grid-parallel operation.",
+    type: "choice", options: [
+      { value: "normal_supply", label: "Work alongside the grid", description: "Keep the public supply as a normal source while solar and storage reduce imported energy." },
+      { value: "emergency_fallback", label: "Grid for emergency fallback only", description: "Normally run from solar and batteries, but retain a deliberately controlled grid recovery path." },
+      { value: "replace_grid", label: "Replace the grid", description: "Design a standalone solar-battery supply; use a generator, if selected, when solar and battery reserve are insufficient." },
+    ], showWhen: (answers) => answers.utility_relationship === "grid_connected",
+  },
+  {
     id: "ac_phase_arrangement", stage: "discovery", title: "What AC phase arrangement is available or required?",
-    noviceHelp: "This is separate from battery voltage. Check the meter, switchboard, existing inverter or supply documents. If it is unclear, Ask Wattson will help identify the evidence needed before you continue.",
-    technicalHelp: "Record the Site supply or required inverter-output topology. Confirm conductor arrangement, phase-to-neutral and phase-to-phase voltage later from suitable evidence.",
+    noviceHelp: "Most houses use single-phase power, commonly about 230 V in New Zealand and many countries or 110–120 V in some overseas systems. Check the meter, supply paperwork, main-switch label or existing inverter. Do not decide from the number of switch toggles—older single-phase boards may have linked multi-pole switches.",
+    technicalHelp: "Record the Site supply or required inverter-output topology from reliable evidence. Never infer phase count from breaker or switch-toggle count. Confirm conductor arrangement, phase-to-neutral and phase-to-phase voltage later where appropriate.",
     type: "choice", options: [
       { value: "single_phase", label: "Single-phase", description: "One AC phase supplies the property or planned loads." },
       { value: "split_phase", label: "Split-phase", description: "Two opposing AC legs are available, commonly with both line-to-neutral and line-to-line loads." },
@@ -250,6 +269,12 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     showWhen: (answers) => answers.utility_relationship === "grid_connected" && !isPoolOnly(answers),
   },
   {
+    id: "off_grid_daily_energy_use", stage: "needs", title: "How much electricity will you use on an average day?",
+    noviceHelp: "Enter the daily kWh shown by your inverter, battery monitor or energy meter. For a new build, Ask Wattson can help estimate it from the appliances and how long they run.",
+    technicalHelp: "Enter representative daily energy in kWh/day. Wattson needs this before proposing an exact panel count or battery capacity.",
+    type: "number", unit: "kWh/day", showWhen: (answers) => answers.utility_relationship === "off_grid" && !isPoolOnly(answers),
+  },
+  {
     id: "served_floor_area", stage: "needs", title: "How much indoor floor area will this system serve?",
     noviceHelp: "Enter the approximate occupied or conditioned floor area that will use power. This helps estimate a new home or a property without reliable bills; actual measured electricity use remains stronger evidence when it is available.",
     technicalHelp: "Record the approximate served floor area, not the total land, garage or unconditioned outbuilding area. Floor area is contextual evidence and must not be used as a standalone load calculation.", type: "number", unit: "m²", showWhen: hasResidentialUse,
@@ -292,6 +317,41 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "wood_wetback", label: "Wood fire or wetback", description: "A fire contributes heat to the hot-water system." },
       { value: "none", label: "No hot water here", description: "This building does not need hot water included in its power plan." },
     ], showWhen: hasResidentialUse,
+  },
+  {
+    id: "solar_hot_water_arrangement", stage: "needs", title: "How is the solar hot-water system arranged?",
+    noviceHelp: "Solar hot water may use a circulation pump, or it may move water naturally by thermosiphon. It may share one boosted tank or preheat a separate indoor cylinder.",
+    technicalHelp: "Distinguish pumped and thermosiphon circulation, and a shared boosted store from a solar preheat store feeding a separate HWC. This controls pump demand and prevents storage/recovery energy being counted twice.",
+    type: "choice", options: [
+      { value: "pumped_shared_store", label: "Pumped system with one shared tank", description: "Collectors use a circulation pump and the same store has electric, gas or another backup heat source." },
+      { value: "pumped_preheat_separate_hwc", label: "Solar preheat tank plus separate HWC", description: "A pumped solar store preheats water before it enters a separate indoor cylinder." },
+      { value: "thermosiphon_shared_store", label: "Thermosiphon / roof tank", description: "Natural circulation is used, normally without a solar circulation pump." },
+      { value: "not_sure", label: "Not sure yet", description: "Keep the arrangement open for label, pipework or installer-document review." },
+    ], showWhen: (answers) => answerValues(answers.water_heating_energy).includes("solar_thermal"),
+  },
+  {
+    id: "solar_hot_water_storage_litres", stage: "needs", title: "How much water does the solar hot-water store hold?",
+    noviceHelp: "Enter the solar tank or roof-cylinder capacity from its label. This is kept separate from an indoor HWC so solar contribution and backup recovery are not mixed together.",
+    technicalHelp: "Record the solar-thermal store volume independently. If it is the one shared boosted tank, do not duplicate that volume as a separate indoor HWC.",
+    type: "number", unit: "L", showWhen: (answers) => answerValues(answers.water_heating_energy).includes("solar_thermal"),
+  },
+  {
+    id: "hot_water_storage_litres", stage: "needs", title: "What is the indoor HWC or separate storage volume?",
+    noviceHelp: "Enter the separate indoor cylinder, geyser or heat-pump-water-heater tank capacity. Do not repeat the solar tank volume when both heat sources share one physical store.",
+    technicalHelp: "Record this store separately from solar-thermal storage. Later calculations must use inlet and set temperatures, draw profile, standing loss and recovery input without double-counting a shared tank.",
+    type: "number", unit: "L", showWhen: (answers) => answerValues(answers.water_heating_energy).some((value) => ["electric_resistive", "heat_pump", "wood_wetback"].includes(value)) && !["pumped_shared_store", "thermosiphon_shared_store"].includes(String(answers.solar_hot_water_arrangement)),
+  },
+  {
+    id: "solar_hot_water_pump_watts", stage: "needs", title: "What power does the solar hot-water circulation pump use?",
+    noviceHelp: "Enter the electrical input in watts from the circulation-pump label. This is a small load, but it can run for many hours when solar heat is available.",
+    technicalHelp: "Record pump electrical input rather than hydraulic output. Include controller power separately later if it is material.",
+    type: "number", unit: "W", showWhen: (answers) => ["pumped_shared_store", "pumped_preheat_separate_hwc"].includes(String(answers.solar_hot_water_arrangement)),
+  },
+  {
+    id: "solar_hot_water_pump_hours_per_day", stage: "needs", title: "About how long does that circulation pump run on a useful solar day?",
+    noviceHelp: "Use monitoring or the controller history if available. A reasonable seasonal estimate can be refined later.",
+    technicalHelp: "Record representative daily runtime and retain seasonal variation; pump energy equals electrical input multiplied by operating hours.",
+    type: "number", unit: "h/day", showWhen: (answers) => ["pumped_shared_store", "pumped_preheat_separate_hwc"].includes(String(answers.solar_hot_water_arrangement)),
   },
   {
     id: "space_heating_energy", stage: "needs", title: "How is the home or building heated?",
@@ -350,7 +410,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     noviceHelp: "Choose every regular load. Ratings and hours of use can be added later; this gives Wattson a proper starting load list.", type: "multi_choice", options: [
       { value: "lighting", label: "Lighting", description: "Indoor, outdoor or security lights." },
       { value: "general_outlets", label: "General outlets and chargers", description: "Phones, small appliances and ordinary plug-in use." },
-      { value: "fridge_freezer", label: "Fridge or freezer", description: "Includes chest freezers and refrigeration." },
+      { value: "fridge_freezer", label: "Fridge or upright freezer", description: "A cycling refrigeration load with compressor startup demand." },
+      { value: "chest_freezer", label: "Chest freezer", description: "Record separately when it may start at the same time as the fridge or another compressor." },
       { value: "internet_computers", label: "Internet, computers or TV", description: "Routers, work devices and entertainment." },
       { value: "water_pump", label: "Water, bore or pressure pump", description: "Pumps often have a high starting surge." },
       { value: "septic_pump", label: "Sewage or septic pump", description: "Include any wastewater or effluent pumping." },
@@ -366,18 +427,12 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: (answers) => !isPoolOnly(answers),
   },
   {
-    id: "household_motor_ratings", stage: "needs", title: "What running power do the household pumps and motors use?",
-    noviceHelp: "Enter the normal running watts or kilowatts shown on each equipment label. Wattson estimates startup demand automatically for inverter planning; a manufacturer starting value can be added when available.",
-    technicalHelp: "Record quantity and continuous electrical input. Wattson applies an equipment-type planning multiplier for starting demand unless a manufacturer maximum/start value is supplied. Confirm motor-control method, VSD or soft-start behaviour before final inverter selection.",
-    type: "textarea", showWhen: hasHouseholdMotorLoads,
-  },
-  {
     id: "backup_preference", stage: "needs", title: "What should happen during a public power outage?",
     noviceHelp: "Backup requires batteries and suitable electrical separation. Supplying more of the home generally costs more.", type: "choice", options: [
       { value: "none", label: "No outage backup needed", description: "Solar is mainly for savings or daytime use." },
       { value: "essentials", label: "Keep essentials running", description: "For example refrigeration, lights, internet and a water pump." },
       { value: "most_home", label: "Run most of the home", description: "A larger backup system designed around major household loads." },
-    ], showWhen: (answers) => !isPoolOnly(answers) && answers.utility_relationship === "grid_connected" && requestsOutagePlanning(answers),
+    ], showWhen: (answers) => !isPoolOnly(answers) && answers.utility_relationship === "grid_connected" && answers.target_grid_role !== "replace_grid" && requestsOutagePlanning(answers),
   },
   {
     id: "battery_requirement", stage: "needs", title: "Should this system design include battery storage?",
@@ -386,7 +441,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     type: "choice", options: [
       { value: "include", label: "Include battery storage", description: "Design suitable storage for the recorded energy goals and operating limits." },
       { value: "none", label: "No battery storage", description: "Keep the proposed system battery-free." },
-    ], showWhen: (answers) => answers.utility_relationship === "grid_connected" && !isPoolOnly(answers) && !answerValues(answers.panel_location).includes("none") && (answers.backup_preference === "none" || !requestsOutagePlanning(answers)),
+    ], showWhen: (answers) => answers.utility_relationship === "grid_connected" && answers.target_grid_role !== "replace_grid" && !isPoolOnly(answers) && !answerValues(answers.panel_location).includes("none") && (answers.backup_preference === "none" || !requestsOutagePlanning(answers)),
   },
   {
     id: "outage_essential_loads", stage: "needs", title: "Which items must stay on in an outage?",
@@ -394,13 +449,13 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     showWhen: (answers) => answers.backup_preference === "essentials",
   },
   {
-    id: "backup_duration", stage: "needs", title: "How much stored-energy reserve do you want?",
-    noviceHelp: "A few hours covers short gaps; overnight needs more battery; one or more days needs substantially more storage. For an off-grid system, this is your reserve when the available energy sources cannot meet demand.", type: "choice", options: [
+    id: "backup_duration", stage: "needs", title: "How long should the system keep running without the grid?",
+    noviceHelp: "This is the outage target for the whole system. Solar, battery storage and any selected generator are assessed together; it is not automatically the amount of energy the battery must store.", type: "choice", options: [
       { value: "few_hours", label: "A few hours", description: "Short local outages." },
       { value: "overnight", label: "Overnight", description: "A longer outage through the night." },
       { value: "one_day", label: "About one day", description: "Essential use for roughly 24 hours." },
-      { value: "multiple_days", label: "Several days", description: "Greater resilience with considerably more storage." },
-    ], showWhen: (answers) => answers.utility_relationship === "off_grid" || (answers.backup_preference !== undefined && answers.backup_preference !== "none"),
+      { value: "multiple_days", label: "Several days", description: "Solar, storage and any selected generator must work together through the extended outage." },
+    ], showWhen: (answers) => replacesGrid(answers) || (answers.backup_preference !== undefined && answers.backup_preference !== "none"),
   },
   {
     id: "generator_requirement", stage: "needs", title: "Should this system design include generator supply?",
@@ -419,19 +474,37 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     type: "textarea", showWhen: hasGeneratorRequirement,
   },
   {
+    id: "generator_outage_role", stage: "needs", title: "What should the generator do when grid power is out?",
+    noviceHelp: "Choose every intended role. A generator may recharge the batteries, carry high-power loads such as a welder, supply the backed-up circuits, or do more than one of these through a compatible inverter/transfer arrangement.",
+    technicalHelp: "Define the intended source path before sizing: inverter/charger AC input, transferred generator bus, dedicated heavy-load circuit or combined operation. Confirm transfer interlocking, neutral/earth arrangement, generator waveform and frequency, charger demand, load steps and start controls.",
+    type: "multi_choice", options: [
+      { value: "battery_recharge", label: "Charge the batteries", description: "Use the generator to recharge the batteries during a long power cut." },
+      { value: "high_power_loads", label: "Run large appliances", description: "Power selected items such as a welder, compressor, pump or large heater." },
+      { value: "backup_circuits", label: "Keep essential circuits on", description: "Power the lights, fridge, internet and other circuits chosen for backup." },
+      { value: "automatic_low_reserve", label: "Start when batteries get low", description: "Start the generator automatically when the batteries reach the chosen level." },
+    ], showWhen: (answers) => ["include", "existing", "planned"].includes(String(answers.generator_requirement)),
+  },
+  {
     id: "heavy_loads", stage: "needs", title: "Which high-power loads could operate together?",
     noviceHelp: "Select the loads that could realistically be on at the same time. This helps Wattson plan inverter peak power and motor-starting surge; it does not calculate daily energy use.", type: "multi_choice", options: [
       { value: "water_pump", label: "Water or bore pump", description: "Includes pressure and irrigation pumps." },
       { value: "compressor", label: "Air compressor", description: "A motor load with a startup surge." },
       { value: "welder", label: "Welder", description: "A high-demand workshop load." },
       { value: "saw_tools", label: "Large saws or workshop tools", description: "Bench saws, planers, grinders and similar tools." },
-      { value: "refrigeration", label: "Large refrigeration", description: "Chest freezer, cool room or commercial fridge." },
+      { value: "refrigeration", label: "Refrigerator or upright freezer", description: "A household refrigeration compressor that may start automatically." },
+      { value: "chest_freezer", label: "Chest freezer", description: "A separate compressor load that can start while the refrigerator or other loads are running." },
       { value: "heat_pump", label: "Heat pump or air conditioning", description: "Heating/cooling compressor load." },
       { value: "electric_water", label: "Electric water heating", description: "Cylinder, instant heater or heat-pump water heater." },
       { value: "pool_heat_pump", label: "Pool or spa heat pump", description: "A seasonal compressor load that may run for many hours." },
       { value: "ev", label: "EV charging", description: "Vehicle charging currently used or being added as part of this system." },
       { value: "none", label: "None of these", description: "No known large or high-surge loads." },
-    ], showWhen: hasLargeLoadCandidates,
+    ], showWhen: (answers) => hasLargeLoadCandidates(answers) && needsStandaloneHighPowerSupply(answers),
+  },
+  {
+    id: "household_motor_ratings", stage: "needs", title: "What electrical input do the selected high-power loads use?",
+    noviceHelp: "This follows your high-power-load selection. Enter the normal electrical input shown on each selected equipment label. Wattson estimates startup demand for motor and compressor loads; use a manufacturer maximum value when available.",
+    technicalHelp: "Record quantity and continuous electrical input for every selected high-power load. Apply equipment-specific starting demand only to motor/compressor loads, and use the welder's rated input and duty-cycle evidence rather than treating its output rating as supply demand.",
+    type: "textarea", showWhen: hasHouseholdMotorLoads,
   },
   {
     id: "future_changes", stage: "design", title: "What might be added in the future?",
@@ -580,12 +653,18 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
         const options: NonNullable<DiscoveryQuestion["options"]> = [];
         const add = (value: string, label: string, description: string) => options.push({ value, label, description });
         if (everyday.has("water_pump") || future.has("water_pump")) add("water_pump", "Water or bore pump", "A pressure, bore or irrigation pump that may start automatically.");
+        if (everyday.has("septic_pump")) add("septic_pump", "Sewage or septic pump", "An automatic wastewater pump with a starting surge.");
+        if (everyday.has("septic_aerator")) add("septic_aerator", "Septic aerator or treatment blower", "A motor load that may run for long periods.");
+        if (everyday.has("sump_drainage_pump")) add("sump_drainage_pump", "Sump or drainage pump", "An automatic drainage pump that may start while other loads are running.");
         if (everyday.has("compressor") || buildings.has("shed_workshop") || buildings.has("farm_building") || future.has("workshop")) {
           add("compressor", "Air compressor", "A motor load with a startup surge.");
           add("welder", "Welder", "A high-demand workshop load.");
         }
         if (everyday.has("tools") || buildings.has("shed_workshop") || buildings.has("farm_building") || future.has("workshop")) add("saw_tools", "Large saws or workshop tools", "Bench saws, planers, grinders and similar tools.");
-        if (everyday.has("fridge_freezer")) add("refrigeration", "Refrigeration compressor", "A fridge or freezer may start while another appliance is running.");
+        if (everyday.has("fridge_freezer")) {
+          add("refrigeration", "Refrigerator or upright freezer", "A refrigeration compressor may start while another appliance is running.");
+          add("chest_freezer", "Chest freezer", "Select this separately if a chest freezer can start while the refrigerator or another load is running.");
+        } else if (everyday.has("chest_freezer")) add("chest_freezer", "Chest freezer", "A compressor load that may start automatically while another load is running.");
         if (spaceHeating.has("heat_pump") || everyday.has("cooling")) add("heat_pump", "Heat pump or air conditioning", "A heating or cooling compressor load.");
         if (["electric_resistive", "heat_pump", "instant_electric"].some((value) => waterHeating.has(value)) || future.has("electric_hot_water")) add("electric_water", "Electric water heating", "Cylinder, instant heater or heat-pump water heater.");
         if (["heat_pump", "resistive_electric", "spa_inline_heater"].some((value) => poolHeating.has(value)) || future.has("heated_pool")) add("pool_heat_pump", "Pool or spa electrical heating", "A pool heat pump, resistance heater or spa-bath inline heater.");
@@ -604,9 +683,9 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
       if (question.id === "backup_duration" && answers.utility_relationship === "grid_connected") {
         return {
           ...question,
-          title: "How long should battery backup last during an outage?",
-          noviceHelp: "This is backup for the period when the public supply is unavailable. A few hours covers short outages; overnight covers an extended evening and night; one or more days requires substantially more storage. No generator is assumed unless you have explicitly selected one elsewhere.",
-          technicalHelp: "Size outage autonomy from the confirmed backed-up loads, their credible overlap and the required reserve period. Do not introduce a generator or off-grid operating goal unless the user has explicitly recorded one.",
+          title: "How long should the system keep running without the grid?",
+          noviceHelp: "Choose the complete outage-survival target. Solar can recharge the battery during the outage, and a generator is counted only if you select one. Wattson must calculate the sources together rather than multiplying the whole bill by the number of days.",
+          technicalHelp: "Treat this as a system-autonomy target. Verify it with a time-series energy balance covering backed-up load energy, solar recovery, battery limits and any explicitly selected generator dispatch; do not equate outage days with battery-only days.",
         };
       }
       if (question.id === "pool_heating_method") {

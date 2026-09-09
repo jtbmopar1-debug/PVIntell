@@ -22,7 +22,7 @@ type GuidedDiscoveryDraft = {
   updatedAt?: string;
 };
 type Profile = { displayName: string; location: string; timezone: string; assessment: OnboardingAnswers & { guidedNewSystem?: GuidedDiscoveryDraft } };
-type DashboardProps = { profile: Profile; sites: Site[]; systems: SystemSummary[]; discoveryDrafts?: GuidedDiscoveryDraft[]; connectedSystemIds?: string[]; resumeHrefs?: Record<string, string>; solarBySite: Record<string, number>; solarArraysBySite?: Record<string, SolarArrayForecastInput[]>; initialMessages: ChatMessage[]; conversationId?: string; initialSiteId?: string; autoStartProposal?: boolean; email: string };
+type DashboardProps = { profile: Profile; sites: Site[]; systems: SystemSummary[]; discoveryDrafts?: GuidedDiscoveryDraft[]; connectedSystemIds?: string[]; resumeHrefs?: Record<string, string>; solarBySite: Record<string, number>; solarArraysBySite?: Record<string, SolarArrayForecastInput[]>; initialMessages: ChatMessage[]; conversationId?: string; initialSiteId?: string; autoStartProposal?: boolean; showWelcome?: boolean; email: string };
 
 function useCloseFloatingMenus() {
   useEffect(() => {
@@ -49,7 +49,7 @@ function useCloseFloatingMenus() {
   }, []);
 }
 
-export function Dashboard({ profile, sites, systems, discoveryDrafts = [], connectedSystemIds = [], resumeHrefs = {}, solarBySite, solarArraysBySite = {}, initialMessages, conversationId, initialSiteId, autoStartProposal = false, email }: DashboardProps) {
+export function Dashboard({ profile, sites, systems, discoveryDrafts = [], connectedSystemIds = [], resumeHrefs = {}, solarBySite, solarArraysBySite = {}, initialMessages, conversationId, initialSiteId, autoStartProposal = false, showWelcome = false, email }: DashboardProps) {
   useCloseFloatingMenus();
   const router = useRouter();
   const [siteId, setSiteId] = useState(initialSiteId && sites.some((site) => site.id === initialSiteId) ? initialSiteId : sites[0]?.id ?? "");
@@ -61,6 +61,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
   const [wattsonOpen, setWattsonOpen] = useState(autoStartProposal);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [choosingView, setChoosingView] = useState<string>();
+  const [welcomeOpen, setWelcomeOpen] = useState(showWelcome);
   const proposalStarted = useRef(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const selectedSite = sites.find((site) => site.id === siteId);
@@ -210,6 +211,11 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
     router.push(`/settings/connections${siteId ? `?site=${siteId}` : ""}`);
   }
 
+  function dismissWelcome() {
+    setWelcomeOpen(false);
+    router.replace(siteId ? `/dashboard?site=${siteId}` : "/dashboard", { scroll: false });
+  }
+
   const localDate = new Intl.DateTimeFormat("en-NZ", { weekday: "long", day: "numeric", month: "long", timeZone: weather.data?.site.timezone ?? forecastSite.timezone }).format(new Date());
 
   return (
@@ -299,6 +305,8 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
       </main>
       <LocalDevFooter />
 
+      {welcomeOpen ? <FirstRunWelcome name={profile.displayName} onClose={dismissWelcome}/> : null}
+
       {wattsonOpen ? (
         <section id="wattson" className="fixed inset-x-0 bottom-0 z-50 flex h-[calc(100dvh-4rem)] w-full flex-col overflow-hidden rounded-t-2xl border border-[#b9cad9] bg-white shadow-[0_18px_50px_rgba(9,37,61,.26)] sm:inset-x-auto sm:bottom-3 sm:right-3 sm:h-[min(520px,calc(100dvh-1.5rem))] sm:w-[min(380px,calc(100vw-1.5rem))] sm:rounded-2xl">
           <div className="wattson-panel-header flex items-center gap-2 border-b border-line bg-[linear-gradient(100deg,#eaf3fb,#fff6ce)] p-3 sm:gap-3 sm:p-4">
@@ -343,6 +351,10 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
 
 function Logo() {
   return <BrandLogo />;
+}
+
+function FirstRunWelcome({ name, onClose }: { name: string; onClose: () => void }) {
+  return <div className="fixed inset-0 z-[70] grid place-items-center bg-[#0b2740]/50 p-5 backdrop-blur-sm"><section role="dialog" aria-modal="true" aria-labelledby="first-run-welcome-title" className="card w-full max-w-lg overflow-hidden bg-white shadow-2xl"><div className="flex items-start justify-between bg-[linear-gradient(110deg,#eaf3fb,#fff6ce)] p-6"><div><div className="eyebrow">Your workspace is ready</div><h2 id="first-run-welcome-title" className="mt-3 font-display text-2xl font-extrabold">Welcome to PVIntell{name ? `, ${name}` : ""}</h2><p className="mt-2 text-sm leading-6 text-muted">Here’s the quick map. You can come back to the dashboard whenever you need your bearings.</p></div><button type="button" onClick={onClose} className="grid size-9 shrink-0 place-items-center rounded-xl border border-line bg-white text-muted" aria-label="Close welcome"><X size={17}/></button></div><div className="space-y-3 p-6"><div className="rounded-2xl border border-line p-4"><strong className="text-sm">1. Start with a system</strong><p className="mt-1 text-xs leading-5 text-muted">Tell PVIntell what exists and what you want to power. Your answers become a proposed design—not a purchase or installation record.</p></div><div className="rounded-2xl border border-line p-4"><strong className="text-sm">2. Find everything under Systems</strong><p className="mt-1 text-xs leading-5 text-muted">Discovery, the proposal, schematic, Build It sheets and the eventual as-built record stay together for each system.</p></div><div className="rounded-2xl border border-line p-4"><strong className="text-sm">3. Ask Wattson whenever you get stuck</strong><p className="mt-1 text-xs leading-5 text-muted">Use Ask Wattson from the header or inside a question. Wattson can explain the current item using the Site and system records already saved.</p></div></div><div className="grid gap-2 border-t border-line bg-[#f7fafc] p-5 sm:grid-cols-2"><button type="button" onClick={onClose} className="h-11 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Look around first</button><Link href="/discovery/new-system?new=1" className="grid h-11 place-items-center rounded-xl bg-brand px-4 text-xs font-bold text-white">Start my first system</Link></div></section></div>;
 }
 
 function friendlyMonitoringReferences(content: string, systems: SystemSummary[]) {

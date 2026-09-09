@@ -7,9 +7,19 @@ import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
+import { defaultProposalPanel } from "@/design/candidate-panel";
+import { deriveProposalSizing, normalizedDailyEnergy } from "@/design/proposal-sizing";
 import type { DesignCalculatorState, Project, Site } from "@/domain/models";
 
-const n = (value: unknown, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+const n = (value: unknown, fallback = 0) => {
+  const direct = Number(value);
+  if (Number.isFinite(direct)) return direct;
+  if (typeof value === "string") {
+    const parsed = Number(value.match(/-?\d+(?:\.\d+)?/)?.[0]);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+};
 const round = (value: number, places = 1) => Number.isFinite(value) ? value.toFixed(places) : "—";
 const projectIdFromHref = (href: string) => href.match(/\/systems\/([0-9a-f-]{36})/i)?.[1];
 const projectSiteIdFromHref = (href: string) => href.match(/\/sites\/([0-9a-f-]{36})/i)?.[1];
@@ -53,15 +63,27 @@ function systemScopeSummary(project: Project, design?: DesignCalculatorState) {
   const panelsPerString = n(config.panelsPerString);
   const arrayText = panelCount ? `${panelCount}${panelWatts ? ` × ${panelWatts} W` : ""} solar panels${pvStrings ? ` in ${pvStrings} string${pvStrings === 1 ? "" : "s"}${panelsPerString ? ` of ${panelsPerString} panels` : ""}` : ""}` : "the proposed solar array";
   const inverterText = n(config.inverterKw) ? `feeding a ${config.inverterKw} kW ${architecture}` : `feeding a ${architecture || "suitable inverter arrangement"} (continuous rating still to be confirmed)`;
-  const batteryText = proposalIncludesBattery(project) ? "Battery storage is included as a separate planning item." : "No battery storage is included in this proposal.";
-  const gridRelationship = String(value("utility_relationship")).toLowerCase().includes("off") ? "without a public grid supply" : "alongside the public grid";
+  const batteryText = proposalIncludesBattery(project)
+    ? config.batteryUsableKwh ? `${round(config.batteryUsableKwh, 1)} kWh of usable battery storage is proposed.` : "Battery storage is included as a separate planning item."
+    : "No battery storage is included in this proposal.";
+  const generator = discoveredGenerator(project);
+  const generatorRole = generator.outageRole ? ` Its recorded outage roles are ${generator.outageRole.split(",").map((item) => item.trim().replaceAll("_", " ")).join(", ")}.` : "";
+  const generatorText = generator.included
+    ? config.generatorContinuousKw ? ` A ${config.generatorContinuousKw} kW continuous generator target is included${config.generatorPurchaseStatus === "not_purchased" ? " for later purchase" : ""}.${generatorRole}` : ` Generator supply is included and still needs a confirmed size.${generatorRole}`
+    : "";
+  const targetGridRole = String(value("target_grid_role")).toLowerCase();
+  const gridRelationship = String(value("utility_relationship")).toLowerCase().includes("off") || targetGridRole === "replace_grid"
+    ? "as a standalone supply without the public grid in the operating power path"
+    : targetGridRole === "emergency_fallback"
+      ? "with the public grid retained only as a controlled emergency fallback"
+      : "alongside the public grid, which balances production and demand timing";
   if (poolSystem) {
     const loads = equipment.length ? `, including ${equipment.join(", ")}` : "";
     const heater = heaterOutput ? ` The design must support ${heaterOutput}${/kw/i.test(heaterOutput) ? "" : " kW thermal"} of pool-heating capacity.` : "";
-    return `Wattson has arranged ${arrayText} ${inverterText} ${gridRelationship} for the pool or spa${loads}. ${batteryText}${heater}`;
+    return `Wattson has arranged ${arrayText} ${inverterText} ${gridRelationship} for the pool or spa${loads}. ${batteryText}${generatorText}${heater}`;
   }
   const outcome = String(value("primary_outcome")).replaceAll("_", " ");
-  return `Wattson has arranged ${arrayText} ${inverterText} ${gridRelationship}${outcome ? ` to ${outcome}` : " from the confirmed Site, load and future-use requirements"}. ${batteryText}`;
+  return `Wattson has arranged ${arrayText} ${inverterText} ${gridRelationship}${outcome ? ` to ${outcome}` : " from the confirmed Site, load and future-use requirements"}. ${batteryText}${generatorText}`;
 }
 
 function proposalIncludesBattery(project: Project) {
@@ -72,30 +94,116 @@ function proposalIncludesBattery(project: Project) {
   return project.projectType === "off-grid" || Boolean(backup && backup !== "none" && backup !== "no outage backup");
 }
 
+type DiscoveredGenerator = {
+  included: boolean;
+  purchaseStatus?: "not_purchased" | "have_details";
+  generatorType?: string;
+  fuel?: string;
+  continuousKw?: number;
+  surgeKw?: number;
+  connectionMethod?: string;
+  outageRole?: string;
+};
+
+function discoveredGenerator(project: Project): DiscoveredGenerator {
+  const requirement = String(project.designDiscovery?.generator_requirement?.value ?? "").toLowerCase();
+  const included = /include|existing|planned/.test(requirement) && !/provision|none|exclude/.test(requirement);
+  const raw = project.designDiscovery?.generator_details?.value;
+  const outageRole = String(project.designDiscovery?.generator_outage_role?.value ?? "").replaceAll(",", ", ");
+  if (!included || typeof raw !== "string") return { included, outageRole };
+  try {
+    const details = JSON.parse(raw) as Record<string, unknown>;
+    const rating = Number(details.continuousRating);
+    const surge = Number(details.surgeRating);
+    const unitFactor = details.ratingUnit === "kVA" ? 0.8 : 1;
+    return {
+      included,
+      purchaseStatus: details.purchaseStatus === "not_purchased" ? "not_purchased" : "have_details",
+      generatorType: typeof details.generatorType === "string" ? details.generatorType : undefined,
+      fuel: typeof details.fuel === "string" ? details.fuel : undefined,
+      continuousKw: Number.isFinite(rating) && rating > 0 ? rating * unitFactor : undefined,
+      surgeKw: Number.isFinite(surge) && surge > 0 ? surge * unitFactor : undefined,
+      connectionMethod: typeof details.connectionMethod === "string" ? details.connectionMethod : undefined,
+      outageRole,
+    };
+  } catch { return { included, outageRole }; }
+}
+
+function discoveredDailyEnergyKwh(project: Project) {
+  return normalizedDailyEnergy(project.designDiscovery ?? {})?.dailyKwh;
+}
+
+function deterministicSizing(project: Project, panelWatts = defaultProposalPanel.watts) {
+  const savedPanel = project.designCalculator;
+  const usesDefaultPanel = !savedPanel?.panelWatts || savedPanel.panelModel === defaultProposalPanel.model;
+  return deriveProposalSizing({
+    mode: project.projectType,
+    peakSunHours: project.peakSunHours,
+    autonomyDays: project.autonomyDays,
+    discovery: project.designDiscovery ?? {},
+    representativePanelWatts: panelWatts,
+    representativePanelLengthMm: savedPanel?.panelLengthMm ?? (usesDefaultPanel ? defaultProposalPanel.lengthMm : undefined),
+    representativePanelWidthMm: savedPanel?.panelWidthMm ?? (usesDefaultPanel ? defaultProposalPanel.widthMm : undefined),
+    solarResource: project.solarResource,
+  });
+}
+
+function batterySizingBasis(project: Project) {
+  const sizing = deterministicSizing(project, n(project.designCalculator?.panelWatts, defaultProposalPanel.watts));
+  if (sizing.batteryUsableKwh && sizing.batterySizingBasis === "solar_assisted_typical_winter")
+    return `${round(sizing.batteryUsableKwh, 1)} kWh usable: the larger of assumed non-solar-window load (${round(sizing.assumedNonSolarLoadKwh ?? 0, 1)} kWh) and weakest-month PV shortfall (${round((sizing.dailyEnergyKwh ?? 0) - (sizing.weakestMonthPvKwh ?? 0), 1)} kWh)`;
+  if (sizing.batteryUsableKwh)
+    return `${round(sizing.dailyEnergyKwh ?? 0, 1)} kWh/day × ${sizing.batteryOnlyDays} battery-only day equivalent`;
+  return sizing.warnings.find((warning) => warning.startsWith("Battery size withheld"))
+    ?? "Usable storage requires recorded daily energy, scope and source timing";
+}
+
+function proposalBatterySizing(project: Project, savedUsableKwh?: number, trustSavedWithoutBasis = false) {
+  if (trustSavedWithoutBasis && savedUsableKwh) return { usableKwh: savedUsableKwh, acceptedSavedValue: true };
+  const calculatedUsableKwh = deterministicSizing(project, n(project.designCalculator?.panelWatts, defaultProposalPanel.watts)).batteryUsableKwh;
+  const matches = Boolean(savedUsableKwh && calculatedUsableKwh && Math.abs(savedUsableKwh - calculatedUsableKwh) <= .05);
+  return { usableKwh: calculatedUsableKwh, acceptedSavedValue: matches };
+}
+
+function suggestedPanelCount(project: Project, panelWatts: number) {
+  return deterministicSizing(project, panelWatts).panelCount;
+}
+
+function wattsonPanelSizingIsPlausible(project: Project, panelWatts: number, saved: DesignCalculatorState) {
+  if (saved.updatedBy !== "wattson") return true;
+  const expected = deterministicSizing(project, panelWatts);
+  if (!expected.panelCount || !expected.pvKw) return false;
+  const savedPvKw = n(saved.targetPvKw) || n(saved.panelCount) * panelWatts / 1000;
+  return saved.panelCount === expected.panelCount && Math.abs(savedPvKw - expected.pvKw) <= .01;
+}
+
 function suggestedInverterKw(project: Project) {
-  type Rating = { quantity?: number; runningKw?: number; startingKw?: number; simultaneous?: boolean };
-  const entries: Rating[] = [];
-  for (const key of ["pool_equipment_ratings", "household_motor_ratings"]) {
-    const raw = project.designDiscovery?.[key]?.value;
-    if (typeof raw !== "string") continue;
-    try { entries.push(...Object.values(JSON.parse(raw) as Record<string, Rating>)); } catch { /* Ignore older free-text answers. */ }
-  }
-  const heaterElectricalKw = n(project.designDiscovery?.pool_heater_electrical_kw?.value);
-  if (heaterElectricalKw) entries.push({ quantity: 1, runningKw: heaterElectricalKw, startingKw: heaterElectricalKw * 2.5, simultaneous: true });
-  const continuous = entries.reduce((sum, item) => sum + (item.simultaneous === false ? 0 : n(item.runningKw) * Math.max(0, n(item.quantity, 0))), 0);
-  const peak = entries.reduce((sum, item) => {
-    const quantity = Math.max(0, n(item.quantity, 0));
-    const running = n(item.runningKw) * quantity;
-    const starting = n(item.startingKw) * quantity;
-    return Math.max(sum, continuous + Math.max(0, starting - running));
-  }, continuous);
-  const loadBasedKw = peak ? peak * 1.25 : 0;
-  return loadBasedKw ? Math.ceil(loadBasedKw * 2) / 2 : undefined;
+  return deterministicSizing(project, n(project.designCalculator?.panelWatts, defaultProposalPanel.watts)).inverterKw;
+}
+
+function proposedInverterKw(project: Project, saved: DesignCalculatorState) {
+  const calculated = suggestedInverterKw(project);
+  if (!saved.inverterKw) return calculated;
+  if (saved.updatedBy !== "wattson") return saved.inverterKw;
+  return calculated;
+}
+
+function proposedGeneratorKw(generator: DiscoveredGenerator, inverterKw?: number) {
+  if (!generator.included) return undefined;
+  if (generator.continuousKw) return generator.continuousKw;
+  if (!inverterKw) return undefined;
+  return Math.max(1, Math.ceil(inverterKw * 0.85 * 2) / 2);
 }
 
 function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number], design: DesignCalculatorState) {
   if (node.id === "solar" || node.id.startsWith("solar-pv-")) return { ...node, detail: `${node.id.startsWith("solar-pv-") ? design.panelsPerString ?? "?" : design.panelCount ?? "?"} x ${design.panelWatts ?? "?"} W; ${node.id.startsWith("solar-pv-") ? "one independent PV string" : pvLayoutLabel(design)}` };
   if (node.id.includes("inverter") && design.inverterKw) return { ...node, detail: `${design.inverterKw} kW continuous rating proposed` };
+  if (node.id === "battery") {
+    const nominalKwh = n(design.batteryVoltage) * n(design.batteryAh) * n(design.batteryQuantity, 1) / 1000;
+    const usableKwh = nominalKwh * n(design.usableBatteryPercent, 80) / 100 || n(design.batteryUsableKwh);
+    return { ...node, detail: usableKwh ? `${round(usableKwh, 1)} kWh usable (${design.batteryAh ?? "?"} Ah at ${design.batteryVoltage ?? "?"} V)` : "Battery capacity still to be confirmed" };
+  }
+  if (node.id === "generator") return { ...node, detail: design.generatorContinuousKw ? `${design.generatorContinuousKw} kW continuous target${design.generatorPurchaseStatus === "not_purchased" ? "; generator not purchased yet" : ""}` : "Generator rating still to be confirmed" };
   return node;
 }
 
@@ -137,10 +245,12 @@ function componentSpecifications(node: ProposedNode, draft: ProposedDraft, desig
       { label: "Module rating", value: value(design.panelWatts, "W each") },
       { label: "Nameplate power", value: quantity && panelWatts ? `${round(quantity * panelWatts / 1000, 2)} kW` : "To be confirmed" },
       { label: "Module dimensions", value: design.panelLengthMm && design.panelWidthMm ? `${design.panelLengthMm} × ${design.panelWidthMm} mm each` : "To be confirmed" },
-      { label: "Module weight", value: panelWeight ? `${panelWeight} kg each${quantity ? ` · ${round(panelWeight * quantity, 1)} kg total` : ""}` : "To be confirmed" },
+      { label: "Module weight", value: panelWeight ? `${panelWeight} kg each${quantity ? ` · ${round(panelWeight * quantity, 1)} kg total` : ""}` : "To be confirmed", note: design.panelWeightBasis },
       { label: "Module Vmp / Voc", value: design.panelVmpV && design.panelVocV ? `${design.panelVmpV} / ${design.panelVocV} V` : "To be confirmed" },
       { label: "String Vmp / Voc", value: stringPanels && design.panelVmpV && design.panelVocV ? `${round(stringPanels * design.panelVmpV, 1)} / ${round(stringPanels * design.panelVocV, 1)} V` : "To be confirmed", note: "Nameplate values; final maximum voltage needs the cold-temperature correction." },
       { label: "Module Imp / Isc", value: design.panelImpA && design.panelIscA ? `${design.panelImpA} / ${design.panelIscA} A` : "To be confirmed" },
+      { label: "Maximum system voltage", value: value(design.panelMaximumSystemVoltageV, "V DC") },
+      { label: "Maximum series fuse", value: value(design.panelMaximumSeriesFuseA, "A") },
       { label: "Mounting location", value: mountingLocationText(design.mountingLocations) },
     ];
   }
@@ -165,6 +275,21 @@ function componentSpecifications(node: ProposedNode, draft: ProposedDraft, desig
     { label: "AC system", value: `${design.connectionType === "ac_three" ? 400 : 230} V AC` },
     { label: "PV inputs", value: design.pvStrings ? `${design.pvStrings} independent MPPT input${design.pvStrings === 1 ? "" : "s"} required` : "To be confirmed" },
     { label: "Connected AC circuit", value: ac?.protectionAmps ? `${ac.protectionAmps} A planning protection · ${value(ac.cableSizeMm2, "mm² cable")}` : "Complete the route configuration" },
+  ];
+
+  if (node.id === "generator") return [
+    { label: "Purchase status", value: design.generatorPurchaseStatus === "not_purchased" ? "Not purchased yet" : "Existing or selected generator" },
+    { label: "Continuous target", value: value(design.generatorContinuousKw, "kW") },
+    { label: "Surge target", value: value(design.generatorSurgeKw, "kW") },
+    { label: "Type", value: design.generatorType?.replaceAll("_", " ") ?? "Select a compatible generator" },
+    { label: "Fuel", value: design.generatorFuel?.replaceAll("_", " ") ?? "To be chosen" },
+    { label: "Connection", value: design.generatorConnectionMethod?.replaceAll("_", " ") ?? "Dedicated inlet/changeover or approved inverter input to be confirmed" },
+  ];
+
+  if (node.id === "generator-changeover") return [
+    { label: "Purpose", value: "Controlled generator connection and source isolation" },
+    { label: "Generator target", value: value(design.generatorContinuousKw, "kW continuous") },
+    { label: "Final checks", value: "Voltage, phase, neutral/earth arrangement, protection, inlet and transfer method" },
   ];
 
   if (node.id === "ac-safety") return [
@@ -231,7 +356,7 @@ function upgradePvStringIsolationDraft(draft: NonNullable<DesignCalculatorState[
     const id = `solar-safety-${index + 1}`;
     nodes.push({ id, label: `PV${index + 1} isolator`, detail: `DC isolator for PV${index + 1}; disconnects that string independently`, image: safety?.image ?? "/schematic-components/dc-disconnect-isolator.jpg", x: safety?.x ?? 250, y: (safety?.y ?? 30) + index * 125 });
     connections.push(
-      { from: "solar", to: id, label: `PV${index + 1} string`, kind: "solar-dc" },
+      { from: `solar-pv-${index + 1}`, to: id, label: `PV${index + 1} string`, kind: "solar-dc" },
       { from: id, to: outbound.to, label: `PV${index + 1} string to MPPT${index + 1}`, kind: "solar-dc" },
     );
   }
@@ -317,41 +442,87 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
   const commissioned = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
   const includeBattery = proposalIncludesBattery(project);
   const [design, setDesign] = useState<DesignCalculatorState>(() => {
-    const saved = project.designCalculator ?? {};
+    const stored = project.designCalculator ?? {};
+    const saved: DesignCalculatorState = stored.panelWatts ? stored : {
+      panelType: defaultProposalPanel.panelType,
+      panelManufacturer: defaultProposalPanel.manufacturer,
+      panelModel: defaultProposalPanel.model,
+      panelSupplier: defaultProposalPanel.supplier,
+      panelProductUrl: defaultProposalPanel.productUrl,
+      panelDatasheetUrl: defaultProposalPanel.datasheetUrl,
+      panelDatasheetVersion: defaultProposalPanel.datasheetVersion,
+      panelWatts: defaultProposalPanel.watts,
+      panelLengthMm: defaultProposalPanel.lengthMm,
+      panelWidthMm: defaultProposalPanel.widthMm,
+      panelThicknessMm: defaultProposalPanel.thicknessMm,
+      panelWeightKg: defaultProposalPanel.weightKg,
+      panelWeightBasis: defaultProposalPanel.weightBasis,
+      panelVmpV: defaultProposalPanel.vmpV,
+      panelVocV: defaultProposalPanel.vocV,
+      panelImpA: defaultProposalPanel.impA,
+      panelIscA: defaultProposalPanel.iscA,
+      panelMaximumSystemVoltageV: defaultProposalPanel.maximumSystemVoltageV,
+      panelMaximumSeriesFuseA: defaultProposalPanel.maximumSeriesFuseA,
+      panelVocTemperatureCoefficientPercentPerC: defaultProposalPanel.vocTemperatureCoefficientPercentPerC,
+      ...stored,
+    };
     const hasCoordinates = Number.isFinite(site.latitude);
-    const panelWatts = n(saved.panelWatts, 440);
-    const panelCount = Math.max(1, Math.round(n(saved.panelCount, 8)));
-    const useTypical440WModule = panelWatts >= 430 && panelWatts <= 450;
-    const discoveredDailyKwh = project.loads.reduce((total, load) => total + (load.watts * load.quantity * load.hoursPerDay) / 1000, 0);
-    const proposedBatteryUsableKwh = includeBattery ? n(saved.batteryUsableKwh, discoveredDailyKwh * Math.max(project.autonomyDays, .25)) : 0;
+    const panelWatts = n(saved.panelWatts, defaultProposalPanel.watts);
+    const rejectWattsonPanelSizing = !wattsonPanelSizingIsPlausible(project, panelWatts, saved);
+    const panelCount = !rejectWattsonPanelSizing && saved.panelCount ? Math.max(1, Math.round(saved.panelCount)) : suggestedPanelCount(project, panelWatts);
+    const wattsonSizedWithoutDailyEnergy = saved.updatedBy === "wattson" && !discoveredDailyEnergyKwh(project);
+    const batterySizing = includeBattery ? proposalBatterySizing(project, wattsonSizedWithoutDailyEnergy ? undefined : n(saved.batteryUsableKwh) || undefined, saved.updatedBy !== "wattson") : { usableKwh: undefined, acceptedSavedValue: false };
+    const proposedBatteryUsableKwh = batterySizing.usableKwh ?? 0;
     const batteryVoltage = includeBattery ? n(saved.batteryVoltage, 51.2) : 0;
     const usableBatteryPercent = n(saved.usableBatteryPercent, 80);
     const discoveredAc = discoveredAcSupply(project);
+    const generator = discoveredGenerator(project);
+    const inverterKw = wattsonSizedWithoutDailyEnergy ? suggestedInverterKw(project) : proposedInverterKw(project, saved);
+    const generatorContinuousKw = saved.generatorContinuousKw ?? proposedGeneratorKw(generator, inverterKw);
     return {
-      panelType: "bifacial", fitStatus: "unverified", peakSunHours: project.peakSunHours,
+      panelType: "not_selected", fitStatus: "unverified", peakSunHours: project.peakSunHours,
       systemEfficiencyPercent: 80,
       maxVoltageDropPercent: 2,
       ...saved,
       connectionType: discoveredAc.connectionType ?? saved.connectionType ?? "dc",
       connectionVoltage: saved.connectionVoltage ?? discoveredAc.voltage,
+      panelManufacturer: saved.panelManufacturer,
+      panelModel: saved.panelModel,
+      panelSupplier: saved.panelSupplier,
+      panelProductUrl: saved.panelProductUrl,
+      panelDatasheetUrl: saved.panelDatasheetUrl,
+      panelDatasheetVersion: saved.panelDatasheetVersion,
       panelWatts,
       panelCount,
+      targetPvKw: rejectWattsonPanelSizing ? undefined : saved.targetPvKw,
       mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project),
-      panelLengthMm: saved.panelLengthMm ?? (useTypical440WModule ? 1762 : undefined),
-      panelWidthMm: saved.panelWidthMm ?? (useTypical440WModule ? 1134 : undefined),
-      panelWeightKg: saved.panelWeightKg ?? (useTypical440WModule ? 22 : undefined),
-      pvStrings: saved.pvStrings ?? (panelCount >= 8 && panelCount % 2 === 0 ? 2 : 1),
-      panelsPerString: saved.panelsPerString ?? (panelCount >= 8 && panelCount % 2 === 0 ? panelCount / 2 : panelCount),
-      panelVmpV: saved.panelVmpV ?? (useTypical440WModule ? 33.2 : undefined),
-      panelVocV: saved.panelVocV ?? (useTypical440WModule ? 39.8 : undefined),
-      panelImpA: saved.panelImpA ?? (useTypical440WModule ? 13.25 : undefined),
-      panelIscA: saved.panelIscA ?? (useTypical440WModule ? 14.05 : undefined),
+      panelLengthMm: saved.panelLengthMm,
+      panelWidthMm: saved.panelWidthMm,
+      panelThicknessMm: saved.panelThicknessMm,
+      panelWeightKg: saved.panelWeightKg,
+      panelWeightBasis: saved.panelWeightBasis,
+      pvStrings: rejectWattsonPanelSizing ? undefined : saved.pvStrings,
+      panelsPerString: rejectWattsonPanelSizing ? undefined : saved.panelsPerString,
+      panelVmpV: saved.panelVmpV,
+      panelVocV: saved.panelVocV,
+      panelImpA: saved.panelImpA,
+      panelIscA: saved.panelIscA,
+      panelMaximumSystemVoltageV: saved.panelMaximumSystemVoltageV,
+      panelMaximumSeriesFuseA: saved.panelMaximumSeriesFuseA,
+      panelVocTemperatureCoefficientPercentPerC: saved.panelVocTemperatureCoefficientPercentPerC,
       batteryChemistry: includeBattery ? saved.batteryChemistry ?? "LiFePO₄ (planning assumption)" : undefined,
       batteryVoltage: batteryVoltage || undefined,
       batteryUsableKwh: proposedBatteryUsableKwh || undefined,
-      batteryAh: saved.batteryAh ?? (proposedBatteryUsableKwh ? Math.ceil((proposedBatteryUsableKwh * 1000) / Math.max(batteryVoltage * (usableBatteryPercent / 100), 1)) : undefined),
+      batteryAh: (batterySizing.acceptedSavedValue ? saved.batteryAh : undefined) ?? (proposedBatteryUsableKwh ? Math.ceil((proposedBatteryUsableKwh * 1000) / Math.max(batteryVoltage * (usableBatteryPercent / 100), 1)) : undefined),
       batteryQuantity: saved.batteryQuantity ?? 1,
-      inverterKw: saved.inverterKw ?? suggestedInverterKw(project),
+      inverterKw,
+      generatorIncluded: generator.included,
+      generatorPurchaseStatus: saved.generatorPurchaseStatus ?? generator.purchaseStatus,
+      generatorType: saved.generatorType ?? generator.generatorType,
+      generatorFuel: saved.generatorFuel ?? generator.fuel,
+      generatorContinuousKw,
+      generatorSurgeKw: saved.generatorSurgeKw ?? generator.surgeKw ?? (generatorContinuousKw ? Number((generatorContinuousKw * 1.25).toFixed(1)) : undefined),
+      generatorConnectionMethod: saved.generatorConnectionMethod ?? generator.connectionMethod,
       usableBatteryPercent,
       electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site),
       azimuthDegrees: saved.azimuthDegrees ?? (hasCoordinates ? (Number(site.latitude) < 0 ? 0 : 180) : undefined),
@@ -359,7 +530,37 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     };
   });
   const [status, setStatus] = useState("");
-  const set = <K extends keyof DesignCalculatorState>(key: K, value: DesignCalculatorState[K]) => setDesign((current) => ({ ...current, [key]: value }));
+  const set = <K extends keyof DesignCalculatorState>(key: K, value: DesignCalculatorState[K]) => setDesign((current) => {
+    const next = { ...current, [key]: value };
+    const changedSourcedModule = (key === "panelWatts" || key === "panelType")
+      && current.panelModel === defaultProposalPanel.model
+      && (next.panelWatts !== defaultProposalPanel.watts || next.panelType !== defaultProposalPanel.panelType);
+    if (!changedSourcedModule) return next;
+    return {
+      ...next,
+      panelManufacturer: undefined,
+      panelModel: undefined,
+      panelSupplier: undefined,
+      panelProductUrl: undefined,
+      panelDatasheetUrl: undefined,
+      panelDatasheetVersion: undefined,
+      panelLengthMm: undefined,
+      panelWidthMm: undefined,
+      panelThicknessMm: undefined,
+      panelWeightKg: undefined,
+      panelWeightBasis: undefined,
+      panelVmpV: undefined,
+      panelVocV: undefined,
+      panelImpA: undefined,
+      panelIscA: undefined,
+      panelMaximumSystemVoltageV: undefined,
+      panelMaximumSeriesFuseA: undefined,
+      panelVocTemperatureCoefficientPercentPerC: undefined,
+      pvStrings: undefined,
+      panelsPerString: undefined,
+      fitStatus: "unverified",
+    };
+  });
   const results = useMemo(() => {
     const pvKw = n(design.panelWatts) * n(design.panelCount) / 1000 || n(design.targetPvKw);
     const rawArea = n(design.panelLengthMm) * n(design.panelWidthMm) / 1_000_000 * n(design.panelCount);
@@ -384,12 +585,14 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     return { pvKw, rawArea, totalWeight, dailyKwh, orientationFactor, nominalBattery, usableBattery, dropVolts, dropPercent, minimumCable, planningBreaker: n(design.connectionCurrent) * 1.25, configuredPanels, stringVmp, stringVoc, arrayImp, arrayIsc };
   }, [design, project.peakSunHours, site.latitude]);
   const overviewDraft = useMemo(() => {
-    const draft = batteryAdjustedDraft(ensurePvArrayEarth(upgradePvStringIsolationDraft(ensureGridSupply(design.proposedAsBuiltDraft ?? createProposedAsBuiltDraft(design, project.projectType !== "off-grid"), project.projectType !== "off-grid"), design)), includeBattery);
+    const baseDraft = proposalDraftForCurrentDesign(design, project.projectType !== "off-grid");
+    const draft = batteryAdjustedDraft(ensurePvArrayEarth(upgradePvStringIsolationDraft(ensureGeneratorSupply(ensureGridSupply(baseDraft, project.projectType !== "off-grid"), design), design)), includeBattery);
     const connections = draft.connections?.map((connection) => preliminaryConnectionValues(connection, design));
     const calculatedDraft = { ...draft, connections };
     const routesReady = (connections ?? []).filter((connection) => !connection.authorityCheck).every((connection) => connection.configured === true);
     return { ...calculatedDraft, nodes: draft.nodes?.map((node) => componentPlanningDetail(node, calculatedDraft, design, routesReady)) };
   }, [design, includeBattery, project.projectType]);
+  const sizingEvidence = deterministicSizing(project, n(design.panelWatts, defaultProposalPanel.watts));
 
   async function save(nextDesign: DesignCalculatorState = design) {
     setStatus("Saving…");
@@ -417,6 +620,32 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     <details open className="card overflow-hidden">
       <summary className="cursor-pointer list-none p-5"><div className="flex items-center justify-between gap-4"><div><div className="eyebrow">Technical details</div><h2 className="mt-2 text-base font-extrabold">{commissioned ? "As-built system numbers" : "Advanced planning numbers"}</h2><p className="mt-1 text-xs leading-5 text-muted">{commissioned ? "These are the installed system values. Update them whenever an as-built component, setting or connection changes." : "These are estimated proposal figures, to be checked and corrected as the system is built or components are purchased."}</p></div><span className="shrink-0 rounded-xl border border-line bg-white px-3 py-2 text-xs font-bold text-brand">Show details</span></div></summary>
       <div className="space-y-6 border-t border-line bg-[#f7fafc] p-5">
+    {!commissioned && (
+      <section className="card overflow-hidden">
+        <div className="border-b border-line bg-[#f2fbf5] p-5">
+          <div className="eyebrow text-[#17603b]">Deterministic sizing evidence</div>
+          <h2 className="mt-2 text-base font-extrabold">Where the proposal numbers come from</h2>
+          <p className="mt-1 text-xs leading-5 text-muted">Wattson explains the design; PVIntell calculates these baseline values from the recorded discovery evidence.</p>
+        </div>
+        <div className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-4">
+          <Result label="Daily energy" value={sizingEvidence.dailyEnergyKwh ? `${round(sizingEvidence.dailyEnergyKwh, 1)} kWh/day` : "Not established"} detail={sizingEvidence.dailyEnergySource === "current_energy_use" ? "Converted once from recorded current consumption" : sizingEvidence.dailyEnergySource === "off_grid_daily_energy_use" ? "Recorded daily off-grid requirement" : "No usable energy record"}/>
+          <Result label="Solar resource" value={sizingEvidence.peakSunHours ? `${round(sizingEvidence.peakSunHours, 2)} h/day` : "Not established"} detail={sizingEvidence.weakestMonthPeakSunHours ? `${sizingEvidence.solarResourceBasis === "weakest_month" ? "Weakest month used" : "Annual average used"}; monthly range ${round(sizingEvidence.weakestMonthPeakSunHours, 2)}–${round(sizingEvidence.strongestMonthPeakSunHours ?? 0, 2)} h/day · ${sizingEvidence.solarResourceSource}` : `${round(sizingEvidence.systemEfficiency * 100, 0)}% planning system efficiency`}/>
+          <Result label="Simultaneous load" value={sizingEvidence.simultaneousLoadKw ? `${round(sizingEvidence.simultaneousLoadKw, 1)} kW` : "Not established"} detail={sizingEvidence.startupPeakKw ? `${round(sizingEvidence.startupPeakKw, 1)} kW recorded startup envelope` : "Needed for standalone inverter sizing"}/>
+          <Result label="Battery basis" value={sizingEvidence.batterySizingBasis === "solar_assisted_typical_winter" ? "Solar-assisted typical winter" : sizingEvidence.batteryOnlyDays ? `${sizingEvidence.batteryOnlyDays} battery-only day equivalent` : "Not established"} detail={sizingEvidence.batterySizingBasis === "solar_assisted_typical_winter" ? `${round(sizingEvidence.assumedNonSolarLoadKwh ?? 0, 1)} kWh non-solar allowance; ${round(sizingEvidence.weakestMonthPvKwh ?? 0, 1)} kWh planned winter-day PV` : "Solar and generator energy are not counted twice"}/>
+          <Result label="Recorded-area capacity" value={sizingEvidence.planningPanelCapacity !== undefined ? `${sizingEvidence.planningPanelCapacity} panels` : "Not calculated"} detail={sizingEvidence.energyTargetPanelCount ? `${sizingEvidence.energyTargetPanelCount}-panel annual-energy target before the area limit` : "Needs usable area rectangles and module dimensions"}/>
+        </div>
+        {sizingEvidence.assumptions.length > 0 && (
+          <ul className="border-t border-line bg-white px-8 py-4 text-[10px] leading-5 text-muted">
+            {sizingEvidence.assumptions.map((item) => <li key={item} className="list-disc">{item}</li>)}
+          </ul>
+        )}
+        {sizingEvidence.warnings.length > 0 && (
+          <ul className="border-t border-[#f0d57c] bg-[#fff8d8] px-8 py-4 text-[10px] leading-5 text-[#6f5200]">
+            {sizingEvidence.warnings.map((item) => <li key={item} className="list-disc">{item}</li>)}
+          </ul>
+        )}
+      </section>
+    )}
     {(design.startingStage || design.expansionPath || design.nextValidation) && <section className="card p-5"><div className="eyebrow">Wattson’s staged plan</div><div className="mt-4 grid gap-4 md:grid-cols-3"><div><strong className="text-sm">Start useful</strong><p className="mt-1 text-xs leading-5 text-muted">{design.startingStage || "Not proposed yet"}</p></div><div><strong className="text-sm">Expand cleanly</strong><p className="mt-1 text-xs leading-5 text-muted">{design.expansionPath || "Not proposed yet"}</p></div><div><strong className="text-sm">Validate next</strong><p className="mt-1 text-xs leading-5 text-muted">{design.nextValidation || "Not proposed yet"}</p></div></div></section>}
 
     <section className="card overflow-hidden">
@@ -447,9 +676,11 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
 
     <section className="card overflow-hidden"><div className="flex items-center gap-3 border-b border-line bg-[#fff8d8] p-5"><Sun className="text-[#d99b00]" size={20}/><div><h2 className="font-extrabold">Solar array and physical fit</h2><p className="text-[10px] text-muted">Azimuth defaults to equator-facing and tilt defaults to the Site latitude for both roof and ground proposals. Replace them with the actual mounting angles when known.</p></div></div><div className="grid gap-6 p-5 xl:grid-cols-[1.4fr_.8fr]"><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><label className="space-y-1.5 text-xs font-bold"><span>Panel type</span><select value={design.panelType} onChange={(e) => set("panelType", e.target.value as DesignCalculatorState["panelType"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="bifacial">Bifacial</option><option value="monofacial">Monofacial</option><option value="other">Other</option><option value="not_selected">Not selected</option></select></label><NumberField label="Panel rating" value={design.panelWatts} unit="W" onChange={(v) => set("panelWatts", v)}/><NumberField label="Panel count" value={design.panelCount} onChange={(v) => set("panelCount", Math.round(v))}/><NumberField label="Panel length" value={design.panelLengthMm} unit="mm" onChange={(v) => set("panelLengthMm", v)}/><NumberField label="Panel width" value={design.panelWidthMm} unit="mm" onChange={(v) => set("panelWidthMm", v)}/><NumberField label="Panel weight" value={design.panelWeightKg} unit="kg" onChange={(v) => set("panelWeightKg", v)}/><NumberField label="Azimuth (location default)" value={design.azimuthDegrees} unit="°" max={360} onChange={(v) => set("azimuthDegrees", v)}/><NumberField label="Tilt (latitude default)" value={design.tiltDegrees} unit="°" max={90} onChange={(v) => set("tiltDegrees", v)}/><NumberField label="Peak sun hours" value={design.peakSunHours} unit="h/day" max={24} onChange={(v) => set("peakSunHours", v)}/><NumberField label="Planning efficiency" value={design.systemEfficiencyPercent} unit="%" max={100} onChange={(v) => set("systemEfficiencyPercent", v)}/><label className="space-y-1.5 text-xs font-bold sm:col-span-2"><span>Physical fit status</span><select value={design.fitStatus} onChange={(e) => set("fitStatus", e.target.value as DesignCalculatorState["fitStatus"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="unverified">Not checked yet</option><option value="verified">Verified against usable area</option><option value="does_not_fit">Does not fit</option></select></label></div><div className="grid grid-cols-2 gap-3"><Result label="PV rating" value={`${round(results.pvKw, 2)} kW`} detail="Panel nameplate total"/><Result label="Module area" value={`${round(results.rawArea, 1)} m²`} detail="Panels only; add mounting gaps and required clearances"/><Result label="Panel weight" value={`${round(results.totalWeight, 0)} kg`} detail="Modules only; structure and mounting still require assessment"/><Result label="Planning output" value={`${round(results.dailyKwh, 1)} kWh/day`} detail={`Illustrative yield using ${round(results.orientationFactor * 100, 0)}% orientation factor; not a production guarantee`}/></div></div>{design.panelType === "bifacial" && <p className="border-t border-line bg-[#f5f8fb] px-5 py-3 text-[10px] leading-4 text-muted">Bifacial is evaluated by default, but rear-side gain is not counted here. It depends on clearance, spacing and the surface below the panel; a flush roof can provide little extra rear yield.</p>}</section>
 
+    {design.panelModel && <section className="card border-[#9bd2ad] bg-[#f7fcf8] p-5 text-xs leading-5"><div className="eyebrow text-[#17603b]">Sourced planning module</div><strong className="mt-2 block text-sm">{design.panelManufacturer} {design.panelModel}</strong><p className="mt-1 text-muted">Supplied by {design.panelSupplier}; electrical values use the named manufacturer datasheet revision.</p><div className="mt-2 flex flex-wrap gap-4 text-[10px] font-bold"><a href={design.panelProductUrl} target="_blank" rel="noreferrer" className="text-brand underline">Supplier listing</a><a href={design.panelDatasheetUrl} target="_blank" rel="noreferrer" className="text-brand underline">Manufacturer datasheet{design.panelDatasheetVersion ? ` (${design.panelDatasheetVersion})` : ""}</a></div></section>}
+
     <section className="card overflow-hidden"><div className="border-b border-line bg-[#eef5fc] p-5"><div className="eyebrow">PV string layout</div><h2 className="mt-2 text-base font-extrabold">Series and parallel layout for the schematic</h2><p className="mt-1 text-xs leading-5 text-muted">This is the simple picture-language version: panels in series make one string; strings in parallel feed the selected controller or inverter input.</p></div><div className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4"><NumberField label="Parallel strings" value={design.pvStrings} onChange={(v) => set("pvStrings", Math.round(v))}/><NumberField label="Panels per series string" value={design.panelsPerString} onChange={(v) => set("panelsPerString", Math.round(v))}/><NumberField label="Panel Vmp" value={design.panelVmpV} unit="V" onChange={(v) => set("panelVmpV", v)}/><NumberField label="Panel Voc" value={design.panelVocV} unit="V" onChange={(v) => set("panelVocV", v)}/><NumberField label="Panel Imp" value={design.panelImpA} unit="A" onChange={(v) => set("panelImpA", v)}/><NumberField label="Panel Isc" value={design.panelIscA} unit="A" onChange={(v) => set("panelIscA", v)}/><div className="rounded-xl border border-line bg-white p-3 text-[10px] leading-4 text-muted sm:col-span-2"><strong className="block text-[11px] text-ink">{pvLayoutLabel(design)}</strong>{pvLayoutCountMismatch(design) ? <span className="mt-1 block text-[#b9412b]">Panel count does not match strings x panels per string.</span> : <span className="mt-1 block">This label appears on the proposed schematic.</span>}</div></div><div className="grid gap-3 border-t border-line bg-[#f5f8fb] p-5 sm:grid-cols-2 lg:grid-cols-4"><Result label="Configured panels" value={results.configuredPanels ? `${round(results.configuredPanels, 0)}` : "Not set"} detail="Parallel strings x panels in series"/><Result label="String Vmp" value={results.stringVmp ? `${round(results.stringVmp, 1)} V` : "Not set"} detail="Panel Vmp x panels in series"/><Result label="String Voc" value={results.stringVoc ? `${round(results.stringVoc, 1)} V` : "Not set"} detail="Nameplate subtotal only; not cold corrected"/><Result label="Array current" value={results.arrayImp ? `${round(results.arrayImp, 1)} A` : "Not set"} detail="Panel Imp x parallel strings"/></div></section>
 
-    <div className="grid gap-6 xl:grid-cols-2"><section className="card overflow-hidden"><div className="flex items-center gap-3 border-b border-line p-5"><BatteryCharging className="text-brand" size={20}/><h2 className="font-extrabold">Inverter and battery</h2></div><div className="grid gap-4 p-5 sm:grid-cols-2"><label className="space-y-1.5 text-xs font-bold sm:col-span-2"><span>Equipment arrangement</span><select value={design.architecture ?? "not_decided"} onChange={(e) => set("architecture", e.target.value as DesignCalculatorState["architecture"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="not_decided">Not decided</option><option value="combined_hybrid_inverter">Combined hybrid inverter</option><option value="separate_solar_controller_and_inverter">Separate charge controller and inverter</option><option value="ac_coupled">AC-coupled</option></select></label><NumberField label="Inverter continuous rating" value={design.inverterKw} unit="kW" onChange={(v) => set("inverterKw", v)}/><label className="space-y-1.5 text-xs font-bold"><span>Battery chemistry</span><input value={design.batteryChemistry ?? ""} onChange={(e) => set("batteryChemistry", e.target.value)} placeholder="e.g. LiFePO₄" className="h-11 w-full rounded-xl border border-line bg-white px-3"/></label><NumberField label="Battery voltage" value={design.batteryVoltage} unit="V" onChange={(v) => set("batteryVoltage", v)}/><NumberField label="Capacity per battery" value={design.batteryAh} unit="Ah" onChange={(v) => set("batteryAh", v)}/><NumberField label="Number of batteries" value={design.batteryQuantity} onChange={(v) => set("batteryQuantity", Math.round(v))}/><NumberField label="Planning usable amount" value={design.usableBatteryPercent} unit="%" max={100} onChange={(v) => set("usableBatteryPercent", v)}/></div><div className="grid grid-cols-2 gap-3 border-t border-line bg-[#f5f8fb] p-5"><Result label="Nominal storage" value={`${round(results.nominalBattery, 1)} kWh`} detail="Voltage × amp-hours × quantity"/><Result label="Planning usable" value={`${round(results.usableBattery, 1)} kWh`} detail="Confirm the manufacturer’s allowed limits and BMS settings"/></div></section>
+    <div className="grid gap-6 xl:grid-cols-2"><section className="card overflow-hidden"><div className="flex items-center gap-3 border-b border-line p-5"><BatteryCharging className="text-brand" size={20}/><h2 className="font-extrabold">Inverter and battery</h2></div><div className="grid gap-4 p-5 sm:grid-cols-2"><label className="space-y-1.5 text-xs font-bold sm:col-span-2"><span>Equipment arrangement</span><select value={design.architecture ?? "not_decided"} onChange={(e) => set("architecture", e.target.value as DesignCalculatorState["architecture"])} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="not_decided">Not decided</option><option value="combined_hybrid_inverter">Combined hybrid inverter</option><option value="separate_solar_controller_and_inverter">Separate charge controller and inverter</option><option value="ac_coupled">AC-coupled</option></select></label><NumberField label="Inverter continuous rating" value={design.inverterKw} unit="kW" onChange={(v) => set("inverterKw", v)}/><label className="space-y-1.5 text-xs font-bold"><span>Battery chemistry</span><input value={design.batteryChemistry ?? ""} onChange={(e) => set("batteryChemistry", e.target.value)} placeholder="e.g. LiFePO₄" className="h-11 w-full rounded-xl border border-line bg-white px-3"/></label><NumberField label="Battery voltage" value={design.batteryVoltage} unit="V" onChange={(v) => set("batteryVoltage", v)}/><NumberField label="Capacity per battery" value={design.batteryAh} unit="Ah" onChange={(v) => set("batteryAh", v)}/><NumberField label="Number of batteries" value={design.batteryQuantity} onChange={(v) => set("batteryQuantity", Math.round(v))}/><NumberField label="Planning usable amount" value={design.usableBatteryPercent} unit="%" max={100} onChange={(v) => set("usableBatteryPercent", v)}/></div><div className="grid grid-cols-2 gap-3 border-t border-line bg-[#f5f8fb] p-5"><Result label="Nominal storage" value={`${round(results.nominalBattery, 1)} kWh`} detail="Voltage × amp-hours × quantity"/><Result label="Planning usable" value={`${round(results.usableBattery, 1)} kWh`} detail={batterySizingBasis(project)}/></div></section>
 
     </div>
 
@@ -496,11 +727,43 @@ export function ProposedBuildSchematic({ project, site }: { project: Project; si
   const router = useRouter();
   const includeBattery = proposalIncludesBattery(project);
   const [design, setDesign] = useState<DesignCalculatorState>(() => {
-    const saved = project.designCalculator ?? {};
-    const panelWatts = n(saved.panelWatts, 440);
-    const panelCount = Math.max(1, Math.round(n(saved.panelCount, 8)));
-    const typical = panelWatts >= 430 && panelWatts <= 450;
-    return { ...saved, panelWatts, panelCount, mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project), pvStrings: saved.pvStrings ?? (panelCount % 2 === 0 ? 2 : 1), panelsPerString: saved.panelsPerString ?? (panelCount % 2 === 0 ? panelCount / 2 : panelCount), panelVmpV: saved.panelVmpV ?? (typical ? 33.2 : undefined), panelVocV: saved.panelVocV ?? (typical ? 39.8 : undefined), panelImpA: saved.panelImpA ?? (typical ? 13.25 : undefined), panelIscA: saved.panelIscA ?? (typical ? 14.05 : undefined), inverterKw: saved.inverterKw ?? suggestedInverterKw(project), batteryVoltage: includeBattery ? saved.batteryVoltage ?? 51.2 : undefined, batteryUsableKwh: includeBattery ? saved.batteryUsableKwh : undefined, batteryAh: includeBattery ? saved.batteryAh : undefined, electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site) };
+    const stored = project.designCalculator ?? {};
+    const saved: DesignCalculatorState = stored.panelWatts ? stored : {
+      panelType: defaultProposalPanel.panelType,
+      panelManufacturer: defaultProposalPanel.manufacturer,
+      panelModel: defaultProposalPanel.model,
+      panelSupplier: defaultProposalPanel.supplier,
+      panelProductUrl: defaultProposalPanel.productUrl,
+      panelDatasheetUrl: defaultProposalPanel.datasheetUrl,
+      panelDatasheetVersion: defaultProposalPanel.datasheetVersion,
+      panelWatts: defaultProposalPanel.watts,
+      panelLengthMm: defaultProposalPanel.lengthMm,
+      panelWidthMm: defaultProposalPanel.widthMm,
+      panelThicknessMm: defaultProposalPanel.thicknessMm,
+      panelWeightKg: defaultProposalPanel.weightKg,
+      panelWeightBasis: defaultProposalPanel.weightBasis,
+      panelVmpV: defaultProposalPanel.vmpV,
+      panelVocV: defaultProposalPanel.vocV,
+      panelImpA: defaultProposalPanel.impA,
+      panelIscA: defaultProposalPanel.iscA,
+      panelMaximumSystemVoltageV: defaultProposalPanel.maximumSystemVoltageV,
+      panelMaximumSeriesFuseA: defaultProposalPanel.maximumSeriesFuseA,
+      panelVocTemperatureCoefficientPercentPerC: defaultProposalPanel.vocTemperatureCoefficientPercentPerC,
+      ...stored,
+    };
+    const panelWatts = n(saved.panelWatts, defaultProposalPanel.watts);
+    const rejectWattsonPanelSizing = !wattsonPanelSizingIsPlausible(project, panelWatts, saved);
+    const wattsonSizedWithoutDailyEnergy = saved.updatedBy === "wattson" && !discoveredDailyEnergyKwh(project);
+    const panelCount = !rejectWattsonPanelSizing && saved.panelCount ? Math.max(1, Math.round(saved.panelCount)) : suggestedPanelCount(project, panelWatts);
+    const inverterKw = wattsonSizedWithoutDailyEnergy ? suggestedInverterKw(project) : proposedInverterKw(project, saved);
+    const generator = discoveredGenerator(project);
+    const generatorContinuousKw = saved.generatorContinuousKw ?? proposedGeneratorKw(generator, inverterKw);
+    const batteryVoltage = includeBattery ? saved.batteryVoltage ?? 51.2 : undefined;
+    const usableBatteryPercent = includeBattery ? saved.usableBatteryPercent ?? 80 : undefined;
+    const batterySizing = includeBattery ? proposalBatterySizing(project, wattsonSizedWithoutDailyEnergy ? undefined : n(saved.batteryUsableKwh) || undefined, saved.updatedBy !== "wattson") : { usableKwh: undefined, acceptedSavedValue: false };
+    const batteryUsableKwh = includeBattery ? batterySizing.usableKwh : undefined;
+    const batteryAh = includeBattery ? (batterySizing.acceptedSavedValue ? saved.batteryAh : undefined) ?? (batteryUsableKwh ? Math.ceil((batteryUsableKwh * 1000) / Math.max(n(batteryVoltage) * (n(usableBatteryPercent, 80) / 100), 1)) : undefined) : undefined;
+    return { ...saved, panelWatts, panelCount, targetPvKw: rejectWattsonPanelSizing ? undefined : saved.targetPvKw, mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project), pvStrings: rejectWattsonPanelSizing ? undefined : saved.pvStrings, panelsPerString: rejectWattsonPanelSizing ? undefined : saved.panelsPerString, panelVmpV: saved.panelVmpV, panelVocV: saved.panelVocV, panelImpA: saved.panelImpA, panelIscA: saved.panelIscA, inverterKw, batteryVoltage, batteryUsableKwh, batteryAh, batteryQuantity: includeBattery ? saved.batteryQuantity ?? 1 : undefined, usableBatteryPercent, generatorIncluded: generator.included, generatorPurchaseStatus: saved.generatorPurchaseStatus ?? generator.purchaseStatus, generatorType: saved.generatorType ?? generator.generatorType, generatorFuel: saved.generatorFuel ?? generator.fuel, generatorContinuousKw, generatorSurgeKw: saved.generatorSurgeKw ?? generator.surgeKw ?? (generatorContinuousKw ? Number((generatorContinuousKw * 1.25).toFixed(1)) : undefined), generatorConnectionMethod: saved.generatorConnectionMethod ?? generator.connectionMethod, electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site) };
   });
   const [status, setStatus] = useState("");
   const base = `/sites/${project.siteId}/systems/${project.id}`;
@@ -552,7 +815,7 @@ export function ProposedBuildSchematic({ project, site }: { project: Project; si
 }
 
 function ProposedSchematic({ projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref }: { projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string }) {
-  const rawDraft = ensureGridSupply(design.proposedAsBuiltDraft ?? createProposedAsBuiltDraft(design, gridConnected), gridConnected);
+  const rawDraft = ensureGeneratorSupply(ensureGridSupply(proposalDraftForCurrentDesign(design, gridConnected), gridConnected), design);
   const upgradedDraft = upgradePvStringIsolationDraft(rawDraft, design);
   const earthedDraft = ensurePvArrayEarth(upgradedDraft);
   const sourceDraft = batteryAdjustedDraft(earthedDraft, includeBattery);
@@ -825,15 +1088,34 @@ function DraftProposedSchematicCanvas({ draft, design, systemName, onChange, onR
   </div>;
 }
 
+function proposalDraftForCurrentDesign(design: DesignCalculatorState, gridConnected: boolean): NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]> {
+  const draft = design.proposedAsBuiltDraft;
+  if (!draft) return createProposedAsBuiltDraft(design, gridConnected);
+  const nodes = draft.nodes ?? [];
+  const expectedStrings = Math.max(1, Math.round(n(design.pvStrings, 1)));
+  const actualStrings = nodes.filter((node) => node.id.startsWith("solar-pv-")).length || (nodes.some((node) => node.id === "solar") ? 1 : 0);
+  const structureChanged =
+    draft.architecture !== design.architecture
+    || n(draft.panelCount) !== n(design.panelCount)
+    || n(draft.panelWatts) !== n(design.panelWatts)
+    || n(draft.pvStrings, 1) !== expectedStrings
+    || n(draft.panelsPerString) !== n(design.panelsPerString)
+    || actualStrings !== expectedStrings
+    || nodes.some((node) => node.id === "generator") !== Boolean(design.generatorIncluded)
+    || nodes.some((node) => node.id === "grid-supply") !== gridConnected;
+  return structureChanged ? createProposedAsBuiltDraft(design, gridConnected) : draft;
+}
+
 function createProposedAsBuiltDraft(design: DesignCalculatorState, gridConnected = false): NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]> {
   type Draft = NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>;
-  const flow = design.architecture === "separate_solar_controller_and_inverter"
+  const baseFlow = design.architecture === "separate_solar_controller_and_inverter"
     ? ["Solar panels", "Solar charge controller", "Battery storage", "Inverter", "Your lights, outlets and tools"]
     : design.architecture === "combined_hybrid_inverter"
       ? ["Solar panels", "Hybrid inverter / charger", "Your lights, outlets and tools"]
       : design.architecture === "ac_coupled"
         ? ["Solar panels", "PV inverter", "AC connection", "Your lights, outlets and tools"]
         : ["Solar panels", "Inverter / charger to be selected", "Your lights, outlets and tools"];
+  const flow = design.generatorIncluded ? [...baseFlow.slice(0, -1), "Generator backup", baseFlow.at(-1) ?? "Your lights, outlets and tools"] : baseFlow;
   const pvLayout = pvLayoutLabel(design);
   const pvStringCount = Math.max(1, n(design.pvStrings, 1));
   const solarIsolationLabel = pvStringCount > 1 ? `PV isolation for ${pvStringCount} strings` : "Solar safety switch";
@@ -925,6 +1207,17 @@ function createProposedAsBuiltDraft(design: DesignCalculatorState, gridConnected
       { from: "grid-changeover", to: "switchboard", label: "Controlled grid feed", kind: "ac", authorityCheck: true },
     );
   }
+  if (design.generatorIncluded) {
+    const generatorTarget = design.architecture === "ac_coupled" ? "battery-inverter" : "inverter";
+    nodes.push(
+      { id: "generator", label: design.generatorPurchaseStatus === "not_purchased" ? "Generator to purchase" : "Generator supply", detail: design.generatorContinuousKw ? `${design.generatorContinuousKw} kW continuous target${design.generatorSurgeKw ? `; ${design.generatorSurgeKw} kW surge target` : ""}` : "Generator rating still to be confirmed", image: "/schematic-components/generator.jpg", x: 250, y: 445 },
+      { id: "generator-changeover", label: "Generator inlet and changeover", detail: "Prevents unsafe source interconnection and controls the generator supply path", image: "/schematic-components/automatic-transfer-switch-ats.jpg", x: 420, y: 445 },
+    );
+    connections.push(
+      { from: "generator", to: "generator-changeover", label: "Generator AC supply", kind: "ac" },
+      { from: "generator-changeover", to: generatorTarget, label: "Controlled generator input", kind: "ac" },
+    );
+  }
   return {
     createdAt: new Date().toISOString(),
     architecture: design.architecture,
@@ -943,6 +1236,29 @@ function createProposedAsBuiltDraft(design: DesignCalculatorState, gridConnected
     batteryAh: design.batteryAh,
     batteryQuantity: design.batteryQuantity,
     inverterKw: design.inverterKw,
+    generatorContinuousKw: design.generatorContinuousKw,
+    generatorSurgeKw: design.generatorSurgeKw,
+  };
+}
+
+function ensureGeneratorSupply(draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>, design: DesignCalculatorState) {
+  if (!design.generatorIncluded || draft.nodes?.some((node) => node.id === "generator")) return draft;
+  const generatorTarget = design.architecture === "ac_coupled" ? "battery-inverter" : "inverter";
+  return {
+    ...draft,
+    flow: draft.flow.includes("Generator backup") ? draft.flow : [...draft.flow.slice(0, -1), "Generator backup", draft.flow.at(-1) ?? "Your lights, outlets and tools"],
+    nodes: [
+      ...(draft.nodes ?? []),
+      { id: "generator", label: design.generatorPurchaseStatus === "not_purchased" ? "Generator to purchase" : "Generator supply", detail: design.generatorContinuousKw ? `${design.generatorContinuousKw} kW continuous target${design.generatorSurgeKw ? `; ${design.generatorSurgeKw} kW surge target` : ""}` : "Generator rating still to be confirmed", image: "/schematic-components/generator.jpg", x: 250, y: 445 },
+      { id: "generator-changeover", label: "Generator inlet and changeover", detail: "Prevents unsafe source interconnection and controls the generator supply path", image: "/schematic-components/automatic-transfer-switch-ats.jpg", x: 420, y: 445 },
+    ],
+    connections: [
+      ...(draft.connections ?? []),
+      { from: "generator", to: "generator-changeover", label: "Generator AC supply", kind: "ac" as const },
+      { from: "generator-changeover", to: generatorTarget, label: "Controlled generator input", kind: "ac" as const },
+    ],
+    generatorContinuousKw: design.generatorContinuousKw,
+    generatorSurgeKw: design.generatorSurgeKw,
   };
 }
 

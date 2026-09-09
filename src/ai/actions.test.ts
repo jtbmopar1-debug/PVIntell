@@ -1,0 +1,115 @@
+import { describe, expect, it } from "vitest";
+import { refreshProposalAfterSizingInput, validatePreliminarySizing } from "./actions";
+
+const settings = {
+  peakSunHours: 4.2,
+  designDiscovery: {
+    current_energy_use: { value: "900 kWh/month" },
+    backup_preference: { value: "most_home" },
+    backup_duration: { value: "multiple_days" },
+    generator_outage_role: { value: "battery_recharge, automatic_low_reserve" },
+    household_motor_ratings: { value: JSON.stringify({
+      heat_pump: { quantity: 2, runningKw: .8, simultaneous: true },
+      compressor: { quantity: 1, runningKw: 3, simultaneous: true },
+    }) },
+  },
+};
+
+const required = {
+  design_basis: "Recorded monthly energy, outage goal, loads and generator role.",
+  starting_stage: "Proposed hybrid system.",
+  expansion_path: "Retain a compatible expansion path.",
+  next_validation: "Validate against time-series production and demand.",
+  panel_type: "monofacial" as const,
+  fit_status: "unverified" as const,
+};
+
+describe("preliminary proposal sizing boundary", () => {
+  it("replaces AI candidates with sizing derived from 900 kWh/month", () => {
+    const result = validatePreliminarySizing({
+      ...required,
+      pv_kw: 8.8,
+      representative_panel_watts: 440,
+      panel_count: 20,
+      pv_strings: 2,
+      panels_per_string: 10,
+      inverter_kw: 10,
+      battery_usable_kwh: 18,
+    }, settings, "hybrid");
+
+    expect(result).toMatchObject({
+      pvKw: 9.24,
+      panelCount: 21,
+      pvStrings: undefined,
+      panelsPerString: undefined,
+      inverterKw: 8,
+      batteryUsableKwh: 17.8,
+    });
+    expect(result.sizing.dailyEnergyKwh).toBeCloseTo(900 / 30.4);
+    expect(result.withheld).toEqual(expect.arrayContaining([
+      "AI-provided PV size", "AI-provided panel count", "AI-provided inverter rating",
+      "AI-provided battery capacity", "PV string layout pending selected equipment limits",
+    ]));
+  });
+
+  it("replaces the observed 48-panel, 18.5 kW, 1,800 kWh over-computation", () => {
+    const result = validatePreliminarySizing({
+      ...required,
+      pv_kw: 21.12,
+      representative_panel_watts: 440,
+      panel_count: 48,
+      pv_strings: 4,
+      panels_per_string: 12,
+      inverter_kw: 18.5,
+      battery_usable_kwh: 1800,
+    }, settings, "hybrid");
+
+    expect(result).toMatchObject({ pvKw: 9.24, panelCount: 21, inverterKw: 8, batteryUsableKwh: 17.8 });
+    expect(result.withheld).toEqual(expect.arrayContaining([
+      "AI-provided PV size", "AI-provided panel count", "AI-provided inverter rating", "AI-provided battery capacity",
+    ]));
+  });
+
+  it("does not turn a multi-day outage into battery-only energy when no recharge model supports it", () => {
+    const withoutGeneratorCharging = {
+      ...settings,
+      designDiscovery: {
+        ...settings.designDiscovery,
+        generator_outage_role: { value: "high_power_loads" },
+      },
+    };
+    const result = validatePreliminarySizing({ ...required, battery_usable_kwh: 90 }, withoutGeneratorCharging, "hybrid");
+    expect(result.batteryUsableKwh).toBeUndefined();
+    expect(result.withheld).toContain("AI-provided battery capacity");
+  });
+
+  it("recalculates a Wattson proposal and clears its stale schematic after discovery changes", () => {
+    const changed = structuredClone(settings) as Record<string, unknown>;
+    changed.designCalculator = {
+      updatedBy: "wattson", panelWatts: 440, targetPvKw: 21.12, panelCount: 48,
+      inverterKw: 18.5, batteryUsableKwh: 1800, pvStrings: 4, panelsPerString: 12,
+      fitStatus: "verified", proposedChecklist: { solar: true }, proposedAsBuiltDraft: { flow: ["a", "b"] },
+    };
+
+    refreshProposalAfterSizingInput(changed, "hybrid");
+
+    expect(changed.designCalculator).toMatchObject({
+      updatedBy: "wattson", sizingMethod: "deterministic-v1", targetPvKw: 9.24,
+      panelCount: 21, inverterKw: 8, batteryUsableKwh: 17.8, fitStatus: "unverified",
+    });
+    expect(changed.designCalculator).not.toHaveProperty("pvStrings");
+    expect(changed.designCalculator).not.toHaveProperty("proposedAsBuiltDraft");
+    expect(changed.designCalculator).not.toHaveProperty("proposedChecklist");
+  });
+
+  it("flags a user-adjusted proposal after discovery changes without overwriting it", () => {
+    const changed = structuredClone(settings) as Record<string, unknown>;
+    changed.designCalculator = { updatedBy: "user", panelWatts: 440, panelCount: 16, batteryUsableKwh: 12, proposedAsBuiltDraft: { flow: ["a", "b"] } };
+
+    refreshProposalAfterSizingInput(changed, "hybrid");
+
+    expect(changed.designCalculator).toMatchObject({ updatedBy: "user", panelCount: 16, batteryUsableKwh: 12, sizingMethod: "user-adjusted" });
+    expect(changed.designCalculator).not.toHaveProperty("proposedAsBuiltDraft");
+    expect((changed.designCalculator as { sizingWarnings: string[] }).sizingWarnings[0]).toMatch(/Discovery changed/);
+  });
+});

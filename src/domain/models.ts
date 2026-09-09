@@ -159,6 +159,8 @@ export interface DesignCalculatorState {
     batteryAh?: number;
     batteryQuantity?: number;
     inverterKw?: number;
+    generatorContinuousKw?: number;
+    generatorSurgeKw?: number;
   };
   architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
   designBasis?: string;
@@ -166,12 +168,32 @@ export interface DesignCalculatorState {
   expansionPath?: string;
   nextValidation?: string;
   panelType?: "bifacial" | "monofacial" | "other" | "not_selected";
+  panelManufacturer?: string;
+  panelModel?: string;
+  panelSupplier?: string;
+  panelProductUrl?: string;
+  panelDatasheetUrl?: string;
+  panelDatasheetVersion?: string;
   /** User-confirmed candidate mounting locations carried through from discovery. */
   mountingLocations?: string[];
   panelWatts?: number;
   panelCount?: number;
+  energyTargetPvKw?: number;
+  energyTargetPanelCount?: number;
+  planningPanelCapacity?: number;
+  fitLimited?: boolean;
   pvStrings?: number;
   panelsPerString?: number;
+  stringDesign?: {
+    strings: number;
+    panelsPerString: number;
+    stringVmpV: number;
+    stringVocV: number;
+    coldStringVocV: number;
+    minimumMpptCurrentA: number;
+    minimumInputShortCircuitCurrentA: number;
+    planningMinimumTemperatureC: number;
+  };
   panelVmpV?: number;
   panelVocV?: number;
   panelImpA?: number;
@@ -179,7 +201,12 @@ export interface DesignCalculatorState {
   targetPvKw?: number;
   panelLengthMm?: number;
   panelWidthMm?: number;
+  panelThicknessMm?: number;
   panelWeightKg?: number;
+  panelWeightBasis?: string;
+  panelMaximumSystemVoltageV?: number;
+  panelMaximumSeriesFuseA?: number;
+  panelVocTemperatureCoefficientPercentPerC?: number;
   requiredPanelAreaM2?: number;
   fitStatus?: "verified" | "unverified" | "does_not_fit";
   azimuthDegrees?: number;
@@ -193,6 +220,28 @@ export interface DesignCalculatorState {
   batteryQuantity?: number;
   usableBatteryPercent?: number;
   batteryUsableKwh?: number;
+  sizingMethod?: "deterministic-v1" | "user-adjusted";
+  sizingInputs?: {
+    dailyEnergyKwh?: number;
+    dailyEnergySource?: "off_grid_daily_energy_use" | "current_energy_use";
+    peakSunHours?: number;
+    systemEfficiency?: number;
+    simultaneousLoadKw?: number;
+    startupPeakKw?: number;
+    batteryOnlyDays?: number;
+    batterySizingBasis?: "no_sun_autonomy" | "solar_assisted_typical_winter" | "daily_energy_fraction";
+    weakestMonthPvKwh?: number;
+    assumedNonSolarLoadKwh?: number;
+  };
+  sizingAssumptions?: string[];
+  sizingWarnings?: string[];
+  generatorIncluded?: boolean;
+  generatorPurchaseStatus?: "not_purchased" | "have_details";
+  generatorType?: string;
+  generatorFuel?: string;
+  generatorContinuousKw?: number;
+  generatorSurgeKw?: number;
+  generatorConnectionMethod?: string;
   /** Regional rules basis used for preliminary protective-earth calculations. */
   electricalStandard?: "as_nzs" | "nec" | "iec" | "local_review";
   connectionType?: "dc" | "ac_single" | "ac_three";
@@ -272,6 +321,16 @@ export interface Project {
   systemVoltage: number;
   autonomyDays: number;
   peakSunHours: number;
+  solarResource?: {
+    peakSunHours: number;
+    basis: "annual_weighted_average" | "weakest_month";
+    source: string;
+    period: string;
+    monthlyPeakSunHours: number[];
+    latitude?: number;
+    longitude?: number;
+    calculatedAt?: string;
+  };
   loads: Load[];
   assumptions: Assumption[];
   components: ComponentSpec[];

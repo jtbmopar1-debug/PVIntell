@@ -93,7 +93,7 @@ export default async function LoginPage({
               name="next"
               value={
                 notice.setup === "password"
-                  ? "/account?setup=password"
+                  ? "/account?setup=password#password"
                   : "/dashboard"
               }
             />

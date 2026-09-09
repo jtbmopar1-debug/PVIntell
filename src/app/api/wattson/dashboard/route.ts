@@ -481,6 +481,11 @@ export async function POST(request: Request) {
       message = result.actions.length
         ? "I couldn’t safely attach that change to a specific system. Tell me which system it belongs to."
         : "I didn’t produce a useful reply. Please send that once more.";
+    const answeredPlaceName = /what name.*(?:property|place)|name.*(?:home|farm|cabin)/i.test(lastAssistantMessage ?? "")
+      && /^\s*[\p{L}\p{N}][\p{L}\p{N}' -]{0,59}\s*$/u.test(parsed.data.message);
+    const startFirstSystem = !connectedSystems.length && (result.actions.length > 0 || answeredPlaceName || /\b(?:what should i do|where do i start|start|set up|setup|first system)\b/i.test(parsed.data.message));
+    if (startFirstSystem)
+      message = "Your first step is the guided system setup. It will create the Site and system record together, then lead you through what exists, what you need to power and where panels could go. Nothing will be treated as purchased or installed until you confirm it.";
     if (inventoryCapture?.saved)
       message = `${message}\n\nI added ${inventoryCapture.equipmentName ?? "this equipment"} to this Site’s inventory from the label photo. I saved only visible label details and marked its physical condition as needing testing; you can review or correct the inventory record at any time.`;
     const existingProposedDesign = Boolean(
@@ -497,7 +502,8 @@ export async function POST(request: Request) {
     const proposedDesignLink = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
       : undefined;
-    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, actionUrl: proposedDesignLink ?? monitorModeLink, actionLabel: proposedDesignLink ? "Open proposed design" : monitorModeLink ? "Open monitor" : undefined } });
+    const startSystemLink = startFirstSystem ? "/discovery/new-system" : undefined;
+    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, actionUrl: proposedDesignLink ?? monitorModeLink ?? startSystemLink, actionLabel: proposedDesignLink ? "Open proposed design" : monitorModeLink ? "Open monitor" : startSystemLink ? "Start guided setup" : undefined } });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
     const proposedDesignUrl = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
@@ -507,8 +513,8 @@ export async function POST(request: Request) {
       message,
       citations: result.citations,
       actions: appliedActions,
-      actionUrl: proposedDesignUrl ?? monitorModeLink,
-      actionLabel: proposedDesignUrl ? "Open proposed design" : monitorModeLink ? "Open monitor" : undefined,
+      actionUrl: proposedDesignUrl ?? monitorModeLink ?? startSystemLink,
+      actionLabel: proposedDesignUrl ? "Open proposed design" : monitorModeLink ? "Open monitor" : startSystemLink ? "Start guided setup" : undefined,
       inventoryEquipmentId: inventoryCapture?.equipmentId,
     });
   } catch (problem) {

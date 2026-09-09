@@ -198,7 +198,7 @@ export async function createSystem(
             : "off_grid",
       phase: "discover",
       system_voltage: systemVoltage ?? null,
-      settings: { autonomyDays: 2, peakSunHours: 4.2, priorities: [], startingGoal: startingGoal || null, goal: startingGoal || null },
+      settings: { autonomyDays: 2, priorities: [], startingGoal: startingGoal || null, goal: startingGoal || null },
     })
     .select("id")
     .single();
@@ -406,7 +406,10 @@ export async function loadWorkspace(
       : [],
     systemVoltage: row.system_voltage ?? 0,
     autonomyDays: Number(settings.autonomyDays ?? 2),
-    peakSunHours: Number(settings.peakSunHours ?? 4.2),
+    peakSunHours: Number(settings.peakSunHours ?? 0),
+    solarResource: settings.solarResource && typeof settings.solarResource === "object"
+      ? settings.solarResource as Project["solarResource"]
+      : undefined,
     designCalculator: settings.designCalculator && typeof settings.designCalculator === "object"
       ? settings.designCalculator as Project["designCalculator"]
       : undefined,

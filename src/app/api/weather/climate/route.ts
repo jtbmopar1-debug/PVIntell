@@ -7,7 +7,7 @@ const querySchema = z.object({
   longitude: z.coerce.number().min(-180).max(180),
 });
 const monthKeys = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"] as const;
-const cacheVersion = "nasa-power-climatology-v1";
+const cacheVersion = "nasa-power-climatology-v2";
 const cellCoordinate = (coordinate: number) => Number((Math.round(coordinate / 0.5) * 0.5).toFixed(1));
 
 type PowerResponse = { properties?: { parameter?: Record<string, Record<string, number | undefined> | undefined> } };
@@ -48,7 +48,7 @@ export async function GET(request: Request) {
 
   const endpoint = new URL("https://power.larc.nasa.gov/api/temporal/climatology/point");
   endpoint.search = new URLSearchParams({
-    parameters: "T2M,T2M_MIN,T2M_MAX,ALLSKY_SFC_SW_DWN", community: "SB",
+    parameters: "T2M,T2M_MIN,T2M_MAX,ALLSKY_SFC_SW_DWN", community: "RE",
     longitude: String(longitude), latitude: String(latitude), start: String(startYear), end: String(endYear), format: "JSON",
   }).toString();
 

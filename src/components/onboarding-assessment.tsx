@@ -53,6 +53,14 @@ export function OnboardingAssessment({ initialAnswers, editing = false }: { init
   const timezones = useMemo(() => worldwideTimezones(answers.timezone), [answers.timezone]);
 
   useEffect(() => {
+    if (editing) return;
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.colorScheme = "light";
+    window.localStorage.setItem("pvintell:theme:v1", "light");
+    void fetch("/api/account/theme", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ theme: "light" }) });
+  }, [editing]);
+
+  useEffect(() => {
     if (answers.timezone || timezoneLater) return;
     const detection = window.setTimeout(() => setAnswers((current) => ({
       ...current,
@@ -113,7 +121,7 @@ export function OnboardingAssessment({ initialAnswers, editing = false }: { init
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not save your assessment");
       if (completed) {
-        router.push(editing ? "/settings" : "/dashboard");
+        router.push(editing ? "/settings" : "/dashboard?welcome=1");
         router.refresh();
       }
       return true;
@@ -152,15 +160,15 @@ export function OnboardingAssessment({ initialAnswers, editing = false }: { init
     ]} />,
     <MultiChoices key="history" values={answers.history ?? []} choices={historyChoices} onToggle={(value) => toggle("history", value)} />,
     <MultiChoices key="situation" values={answers.currentSituation ?? []} choices={situationChoices} onToggle={(value) => toggle("currentSituation", value)} />,
-    <div key="goals" className="space-y-5"><MultiChoices values={answers.goals ?? []} choices={goalChoices} onToggle={(value) => toggle("goals", value)} /><label className="block text-xs font-bold">Anything Wattson should know now? <span className="font-normal text-muted">(optional)</span><textarea className="field min-h-24 py-3" value={answers.notes ?? ""} onChange={(event) => setAnswers({ ...answers, notes: event.target.value })} placeholder="Existing equipment, unusual power needs, current concerns, or what success looks like…" /></label></div>,
+    <div key="goals"><MultiChoices values={answers.goals ?? []} choices={goalChoices} onToggle={(value) => toggle("goals", value)} /></div>,
   ];
   const prompts = [
     ["First, where are we working?", "Location sets your timezone and helps Wattson use the correct regional context."],
     ["How familiar are you with solar power?", "There is no test here. I’ll adjust the language and depth to suit you."],
     ["What best matches your practical experience?", "Think about building, mounting, tools and electrical knowledge. This sets Wattson’s teaching level and the detail used in each guide."],
     ["What have you worked with before?", "Choose everything that applies. Experience can be practical, informal or professional."],
-    ["What do you have in front of you now?", "This decides whether we begin with design, inventory, an as-built record, an upgrade or diagnosis."],
-    ["What would you like PVIntell to help with?", "Choose as many as you need. Your dashboard and next steps will be shaped around these goals."],
+    ["Where are you starting from?", "Choose what already exists today. This tells PVIntell whether you are starting fresh, recording equipment, changing a system or investigating a problem."],
+    ["What should PVIntell help you do?", "Choose the outcomes you want. These can overlap with your starting point—for example, an existing system can be recorded, monitored or expanded."],
   ];
 
   return <main className="min-h-screen lg:grid lg:grid-cols-[300px_1fr]">

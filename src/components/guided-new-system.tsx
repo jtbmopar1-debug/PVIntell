@@ -28,7 +28,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const router = useRouter();
   const [answers, setAnswers] = useState<DiscoveryAnswers>(initialAnswers);
   const combinedInitialSetup = !stageFilter && !siteDiscoveryId;
-  const questionsFor = (values: DiscoveryAnswers) => visibleDiscoveryQuestions(values).filter((item) => (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"));
+  const questionsFor = (values: DiscoveryAnswers) => visibleDiscoveryQuestions(values).filter((item) => item.id !== "household_motor_ratings" && (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"));
   const initialQuestions = questionsFor(initialAnswers);
   const [index, setIndex] = useState(() => Math.max(0, initialQuestions.findIndex((question) => question.id === initialQuestionId)));
   const [saving, setSaving] = useState(false);
@@ -46,8 +46,11 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     return value !== undefined && value !== "" && (!Array.isArray(value) || value.length > 0);
   }).length;
   const newSiteLocationComplete = typeof answers.site_latitude === "number" && typeof answers.site_longitude === "number";
-  const currentAnswerComplete = question ? discoveryAnswerComplete(question.id, answers[question.id]) && !(question.id === "system_name" && combinedInitialSetup && (answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete) : true;
+  const selectedHighPowerLoads = Array.isArray(answers.heavy_loads) ? answers.heavy_loads.filter((item) => item !== "none") : [];
+  const highPowerRatingsComplete = highPowerLoadRatingsComplete(answers.household_motor_ratings, selectedHighPowerLoads);
+  const currentAnswerComplete = question ? discoveryAnswerComplete(question.id, answers[question.id]) && (question.id !== "heavy_loads" || highPowerRatingsComplete) && !(question.id === "system_name" && combinedInitialSetup && (answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete) : true;
   const incompleteQuestions = questions.filter((item) => !discoveryAnswerComplete(item.id, answers[item.id])
+    || (item.id === "heavy_loads" && !highPowerRatingsComplete)
     || (item.id === "site_name" && sites.length > 0 && !answers.site_id)
     || (item.id === "system_name" && combinedInitialSetup && (!answers.site_name || (sites.length > 0 && !answers.site_id) || ((answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete))));
 
@@ -89,6 +92,18 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
         delete next.dc_system_voltage;
         delete next.battery_chemistry;
         delete next.custom_battery_assessment;
+      }
+      if (question.id === "garage_conditioning" && ["none", "attached_unconditioned"].includes(String(value))) delete next.garage_floor_area;
+      if (question.id === "water_heating_energy" && (!Array.isArray(value) || !value.includes("solar_thermal"))) {
+        delete next.solar_hot_water_arrangement;
+        delete next.solar_hot_water_storage_litres;
+        delete next.solar_hot_water_pump_watts;
+        delete next.solar_hot_water_pump_hours_per_day;
+      }
+      if (question.id === "generator_requirement" && !["include", "existing", "planned"].includes(String(value))) delete next.generator_outage_role;
+      if (question.id === "solar_hot_water_arrangement" && !["pumped_shared_store", "pumped_preheat_separate_hwc"].includes(String(value))) {
+        delete next.solar_hot_water_pump_watts;
+        delete next.solar_hot_water_pump_hours_per_day;
       }
       return next;
     });
@@ -222,9 +237,12 @@ function QuestionCard({ question, value, profile, sites, selectedSiteId, siteNam
   if (question.id === "pool_equipment_ratings") {
     return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={Array.isArray(siteLocationAnswers.pool_equipment) ? siteLocationAnswers.pool_equipment : []} heating={Array.isArray(siteLocationAnswers.pool_heating_method) ? siteLocationAnswers.pool_heating_method.filter((item) => item !== "heat_pump") : []} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
+  if (question.id === "heavy_loads") {
+    return <HighPowerLoadsCard question={question} profile={profile} value={value} ratingsValue={siteLocationAnswers.household_motor_ratings} setAnswer={setAnswer} setRatings={(next) => setRelatedAnswer("household_motor_ratings", next)} onAskWattson={onAskWattson}/>;
+  }
   if (question.id === "household_motor_ratings") {
     const motorKeys = ["water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "compressor"];
-    const selectedMotors = Array.isArray(siteLocationAnswers.everyday_needs) ? siteLocationAnswers.everyday_needs.filter((item) => motorKeys.includes(item)) : [];
+    const selectedMotors = Array.isArray(siteLocationAnswers.heavy_loads) ? siteLocationAnswers.heavy_loads.filter((item) => motorKeys.includes(item)) : [];
     return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={selectedMotors} heating={[]} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   return <section className="card overflow-hidden bg-white">
@@ -232,6 +250,18 @@ function QuestionCard({ question, value, profile, sites, selectedSiteId, siteNam
     <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const nextValues=option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const captureExisting=option.value==="existing"&&["panel_construction_interest","architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition ${selected?"theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.id === "pool_heating_profile" && !unknown ? <PoolHeatingCalculator embedded locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} onSave={setAnswer}/>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
       {needsLocalAuthorityCheck && <p className="mt-4 rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[11px] leading-5 text-[#765918]">Ground, fence, wall and canopy arrays might be restricted or require planning, building or other consent. Check with the relevant local authority before purchasing equipment or starting work.</p>}
       <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help now, then return and answer this question.</span></div>
+    </div>
+  </section>;
+}
+
+function HighPowerLoadsCard({ question, profile, value, ratingsValue, setAnswer, setRatings, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; ratingsValue: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setRatings: (value: string | number | string[]) => void; onAskWattson: () => void }) {
+  const currentValues = Array.isArray(value) ? value : [];
+  const selectedLoads = currentValues.filter((item) => item !== "none");
+  return <section className="card overflow-hidden bg-white">
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
+    <div className="p-6 md:p-8"><div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option) => { const selected = currentValues.includes(option.value); const nextValues = option.value === "none" ? ["none"] : selected ? currentValues.filter((item) => item !== option.value) : [...currentValues.filter((item) => item !== "none"), option.value]; return <button key={option.value} type="button" onClick={() => setAnswer(nextValues)} className={`rounded-2xl border p-4 text-left transition ${selected ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>; })}</div>
+      {selectedLoads.length ? <div className="mt-7 border-t border-line pt-7"><div className="eyebrow">Selected load ratings</div><h2 className="mt-2 font-display text-xl font-extrabold">Add the rating for these loads</h2><p className="mt-1 text-xs leading-5 text-muted">Use electrical input for most loads. For a heat pump, enter only its advertised heating capacity.</p><div className="mt-4"><AutoSizedPoolEquipmentLoadsCard question={{ id: "household_motor_ratings", stage: "needs", title: "High-power load ratings", noviceHelp: "Use the rating shown on each equipment label. Heat pumps only need their advertised heating capacity.", type: "textarea" }} profile={profile} value={ratingsValue} equipment={selectedLoads} heating={[]} setAnswer={setRatings} onAskWattson={onAskWattson}/></div></div> : null}
+      {!selectedLoads.length ? <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help identifying which high-power loads can overlap.</span></div> : null}
     </div>
   </section>;
 }
@@ -250,8 +280,22 @@ function PoolHeaterCapacityCard({ question, profile, value, locationLabel, setAn
   </section>;
 }
 
-const poolLoadLabels: Record<string, string> = { filtration_pump: "Filtration or circulation pump", booster_cleaner_pump: "Booster or cleaner pump", sanitation: "Sanitation equipment", spa_jet_air_pump: "Spa jet or air pump", water_feature: "Water feature or auxiliary pump", controls: "Controls and automation", heat_pump: "Pool heat pump", resistive_electric: "Electric resistance heater", spa_inline_heater: "Built-in spa-bath heater", gas: "Gas heater controls and ignition", domestic_hot_water: "Domestic hot-water supply", water_pump: "Water, bore or pressure pump", septic_pump: "Sewage or septic pump", septic_aerator: "Septic aerator or treatment blower", sump_drainage_pump: "Sump or drainage pump", compressor: "Compressor or motor" };
-type PoolLoadEntry = { quantity?: number; runningKw?: number; startingKw?: number; simultaneous?: boolean; startingBasis?: "automatic" | "manufacturer" };
+const poolLoadLabels: Record<string, string> = { filtration_pump: "Filtration or circulation pump", booster_cleaner_pump: "Booster or cleaner pump", sanitation: "Sanitation equipment", spa_jet_air_pump: "Spa jet or air pump", water_feature: "Water feature or auxiliary pump", controls: "Controls and automation", heat_pump: "Heat pump or air conditioning", resistive_electric: "Electric resistance heater", spa_inline_heater: "Built-in spa-bath heater", gas: "Gas heater controls and ignition", domestic_hot_water: "Domestic hot-water supply", water_pump: "Water, bore or pressure pump", septic_pump: "Sewage or septic pump", septic_aerator: "Septic aerator or treatment blower", sump_drainage_pump: "Sump or drainage pump", compressor: "Air compressor", welder: "Welder", saw_tools: "Large saws or workshop tools", refrigeration: "Refrigerator or upright freezer", chest_freezer: "Chest freezer", electric_water: "Electric water heating", pool_heat_pump: "Pool or spa electrical heating", ev: "EV charging", electric_oven: "Electric oven", electric_cooktop: "Electric cooktop", induction: "Induction cooktop", air_fryer: "Air fryer", microwave: "Microwave" };
+type HeatPumpUnit = {
+  name?: string;
+  model?: string;
+  electricalInputKw?: number;
+  electricalInputEstimated?: boolean;
+  electricalInputPending?: boolean;
+  coolingCapacityKw?: number;
+  heatingCapacityKw?: number;
+  heatingCapacityUnit?: "kW" | "W";
+  averageInputWatts?: number;
+  averageInputEstimated?: boolean;
+  thermalCapacityKw?: number;
+  startingKw?: number;
+};
+type PoolLoadEntry = { quantity?: number; runningKw?: number; peakRunningKw?: number; startingKw?: number; simultaneous?: boolean; startingBasis?: "automatic" | "manufacturer"; inputAmps?: number; voltageV?: number; phase?: "single" | "three"; welderTechnology?: "inverter" | "transformer"; dutyCyclePercent?: number; inputKva?: number; units?: HeatPumpUnit[] };
 
 function PoolEquipmentLoadsCard({ question, profile, value, equipment, heating, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
   let saved: Record<string, PoolLoadEntry> = {};
@@ -273,8 +317,8 @@ function StructuredPoolEquipmentLoadsCard({ question, profile, value, equipment,
 }
 
 function poolStartingMultiplier(key: string) {
-  if (["filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature", "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "compressor"].includes(key)) return 3;
-  if (key === "heat_pump") return 2.5;
+  if (["filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature", "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "compressor", "saw_tools", "refrigeration", "chest_freezer"].includes(key)) return 3;
+  if (["heat_pump", "pool_heat_pump"].includes(key)) return 2.5;
   return 1;
 }
 
@@ -291,26 +335,69 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
     saveEntry(key, { runningKw, startingKw, startingBasis: "automatic", quantity });
   };
   return <section className="card overflow-hidden bg-white">
-    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><Bot size={17}/><p className="text-xs leading-5 text-muted">Enter the running electrical input shown on each label. Wattson estimates starting demand automatically from the equipment type and uses it for inverter planning.</p></div></div>
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><Bot size={17}/><p className="text-xs leading-5 text-muted">Use the rating shown on each label. For heat pumps, enter only the advertised heating capacity; PVIntell handles the planning conversion.</p></div></div>
     <div className="grid gap-4 p-6 md:grid-cols-2 md:p-8">
+      <div className="flex flex-wrap items-center gap-3 md:col-span-2"><button type="button" onClick={onAskWattson} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Photograph a label with Wattson</button><span className="text-[11px] text-muted">Wattson will read the model and the usable rating fields, and tell you if another label is needed.</span></div>
       {selected.length ? selected.map((key) => {
         const row = saved[key] ?? {};
         const multiplier = poolStartingMultiplier(key);
         const estimatedStart = row.startingKw ?? (row.runningKw ? Number((row.runningKw * multiplier).toFixed(2)) : undefined);
         return <article key={key} className="rounded-2xl border border-line bg-[#f8fbfe] p-4">
           <strong className="text-sm">{poolLoadLabels[key] ?? key.replaceAll("_", " ")}</strong>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">Running electrical input<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW</span></label></div>
-          <div className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">Wattson startup estimate</span><strong className="mt-1 block text-sm">{estimatedStart === undefined ? "Enter running kW" : `${estimatedStart} kW`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">Uses a {multiplier}× planning factor for this equipment type. A variable-speed drive or soft starter may reduce it.</span></div>
+          {key === "welder" ? <WelderRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : key === "heat_pump" ? <HeatPumpRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : <><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">{key === "pool_heat_pump" ? "Rated electrical input" : "Running electrical input"}<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW{key === "pool_heat_pump" ? " input — not heating output capacity" : ""}</span></label></div>
+          <div className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">{multiplier > 1 ? "Wattson startup estimate" : "Planning input"}</span><strong className="mt-1 block text-sm">{estimatedStart === undefined ? "Enter running kW" : `${estimatedStart} kW`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">{multiplier > 1 ? <>Uses a {multiplier}× planning factor for this motor or compressor load. A variable-speed drive or soft starter may reduce it.</> : "No generic motor-start multiplier is applied; confirm the manufacturer's maximum electrical input when available."}</span></div></>}
           <label className="mt-3 flex items-center gap-2 text-[11px] font-semibold"><input type="checkbox" checked={row.simultaneous ?? true} onChange={(event) => saveEntry(key, { simultaneous: event.target.checked })} className="size-4 accent-[#23679e]"/> May run with the other selected loads</label>
-          <details className="mt-3 rounded-xl border border-line bg-white p-3"><summary className="cursor-pointer text-[10px] font-bold text-brand">I have the manufacturer’s starting value</summary><label className="mt-3 block text-[10px] font-bold">Starting or maximum input (kW)<input type="number" min="0" step="0.01" value={row.startingBasis === "manufacturer" ? row.startingKw ?? "" : ""} onChange={(event) => saveEntry(key, { startingKw: numberValue(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} className="field mt-1.5"/></label></details>
+          {!["welder", "heat_pump"].includes(key) ? <details className="mt-3 rounded-xl border border-line bg-white p-3"><summary className="cursor-pointer text-[10px] font-bold text-brand">I have the manufacturer’s maximum or starting value</summary><label className="mt-3 block text-[10px] font-bold">Starting or maximum input (kW)<input type="number" min="0" step="0.01" value={row.startingBasis === "manufacturer" ? row.startingKw ?? "" : ""} onChange={(event) => saveEntry(key, { startingKw: numberValue(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} className="field mt-1.5"/></label></details> : null}
         </article>;
       }) : <p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-4 text-xs leading-5 text-[#765918] md:col-span-2">Select the pool equipment first. Wattson will then show one rating card for each selected item.</p>}
-      <div className="flex flex-wrap items-center gap-3 md:col-span-2"><button type="button" onClick={onAskWattson} className="rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white">Ask Wattson</button><span className="text-[11px] text-muted">A label photo can replace guesswork and refine Wattson’s startup estimate.</span></div>
     </div>
   </section>;
 }
 
+function WelderRatingFields({ row, save }: { row: PoolLoadEntry; save: (changes: Partial<PoolLoadEntry>) => void }) {
+  const calculate = (changes: Partial<PoolLoadEntry>) => {
+    const next = { ...row, ...changes };
+    const inputKva = next.inputAmps && next.voltageV ? Number((((next.phase === "three" ? Math.sqrt(3) : 1) * next.inputAmps * next.voltageV) / 1000).toFixed(2)) : undefined;
+    save({ ...changes, inputKva, quantity: next.quantity && next.quantity > 0 ? next.quantity : 1 });
+  };
+  return <div className="mt-4"><div className="grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="1" step="1" value={row.quantity ?? 1} onChange={(event) => save({ quantity: Number(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">Welder type<select value={row.welderTechnology ?? ""} onChange={(event) => calculate({ welderTechnology: event.target.value as PoolLoadEntry["welderTechnology"] })} className="field mt-1.5"><option value="">Choose type</option><option value="inverter">Inverter welder</option><option value="transformer">Conventional transformer welder</option></select></label><label className="text-[11px] font-bold">Rated supply input current<input type="number" min="0" step="0.1" value={row.inputAmps ?? ""} onChange={(event) => calculate({ inputAmps: event.target.value === "" ? undefined : Number(event.target.value) })} className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">A — use input current, not welding-output amps</span></label><label className="text-[11px] font-bold">Supply voltage<input type="number" min="0" step="1" value={row.voltageV ?? ""} onChange={(event) => calculate({ voltageV: event.target.value === "" ? undefined : Number(event.target.value) })} className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">V</span></label><label className="text-[11px] font-bold">Supply phase<select value={row.phase ?? "single"} onChange={(event) => calculate({ phase: event.target.value as PoolLoadEntry["phase"] })} className="field mt-1.5"><option value="single">Single-phase</option><option value="three">Three-phase</option></select></label><label className="text-[11px] font-bold">Duty cycle <span className="font-normal text-muted">(if known)</span><input type="number" min="0" max="100" step="1" value={row.dutyCyclePercent ?? ""} onChange={(event) => save({ dutyCyclePercent: event.target.value === "" ? undefined : Number(event.target.value) })} className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">%</span></label></div><div className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">Calculated apparent input</span><strong className="mt-1 block text-sm">{row.inputKva ? `${row.inputKva} kVA` : "Enter supply amps and voltage"}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">This is a supply-side planning value. Wattson must still account for welder type, power factor, maximum input and duty cycle before inverter selection.</span></div></div>;
+}
+
+function HeatPumpRatingFields({ row, save }: { row: PoolLoadEntry; save: (changes: Partial<PoolLoadEntry>) => void }) {
+  const units = row.units?.length ? row.units : [{ name: "Heat pump 1" }];
+  const saveUnits = (next: HeatPumpUnit[]) => {
+    const averageRunningKw = Number(next.reduce((sum, unit) => sum + (unit.averageInputWatts !== undefined ? unit.averageInputWatts / 1000 : unit.electricalInputKw ?? 0), 0).toFixed(2));
+    save({ units: next, quantity: 1, runningKw: averageRunningKw || undefined, peakRunningKw: undefined, startingKw: undefined, startingBasis: "automatic" });
+  };
+  const update = (index: number, changes: Partial<HeatPumpUnit>) => saveUnits(units.map((unit, position) => position === index ? { ...unit, ...changes } : unit));
+  const updateHeatingCapacity = (index: number, raw: string, unitName = units[index]?.heatingCapacityUnit ?? "kW") => {
+    const labelValue = raw === "" ? undefined : Number(raw);
+    const heatingCapacityKw = labelValue === undefined ? undefined : unitName === "W" ? labelValue / 1000 : labelValue;
+    const current = units[index];
+    const shouldEstimateAverage = !current?.averageInputWatts || current.averageInputEstimated === true;
+    update(index, {
+      heatingCapacityKw,
+      heatingCapacityUnit: unitName,
+      ...(shouldEstimateAverage ? {
+        averageInputWatts: heatingCapacityKw ? Math.round((heatingCapacityKw / 5) * 1000) : undefined,
+        averageInputEstimated: heatingCapacityKw !== undefined,
+        electricalInputKw: heatingCapacityKw ? Number((heatingCapacityKw / 5).toFixed(2)) : undefined,
+        electricalInputEstimated: heatingCapacityKw !== undefined,
+        electricalInputPending: heatingCapacityKw === undefined ? current?.electricalInputPending : false,
+      } : {}),
+    });
+  };
+  return <div className="mt-4 space-y-3">
+    {units.map((unit, index) => <div key={index} className="rounded-xl border border-line bg-white p-3">
+      <div className="flex items-center justify-between gap-3"><input value={unit.name ?? `Heat pump ${index + 1}`} onChange={(event) => update(index, { name: event.target.value })} aria-label={`Heat pump ${index + 1} name`} className="min-w-0 flex-1 bg-transparent text-[11px] font-bold outline-none"/>{units.length > 1 ? <button type="button" onClick={() => saveUnits(units.filter((_, position) => position !== index))} className="text-[10px] font-bold text-[#a7442d]">Remove</button> : null}</div>
+      <label className="mt-3 block text-[10px] font-bold">Heating capacity<div className="flex gap-2"><input type="number" min="0" step="0.1" value={unit.heatingCapacityKw === undefined ? "" : unit.heatingCapacityUnit === "W" ? unit.heatingCapacityKw * 1000 : unit.heatingCapacityKw} onChange={(event) => updateHeatingCapacity(index, event.target.value)} className="field mt-1.5"/><select value={unit.heatingCapacityUnit ?? "kW"} onChange={(event) => { const nextUnit = event.target.value as "kW" | "W"; const shownValue = unit.heatingCapacityKw === undefined ? "" : nextUnit === "W" ? String(unit.heatingCapacityKw * 1000) : String(unit.heatingCapacityKw); updateHeatingCapacity(index, shownValue, nextUnit); }} className="field mt-1.5 w-20"><option value="kW">kW</option><option value="W">W</option></select></div></label>
+    </div>)}
+    <button type="button" onClick={() => saveUnits([...units, { name: `Heat pump ${units.length + 1}` }])} className="inline-flex items-center gap-2 rounded-xl border border-brand bg-white px-3 py-2 text-[10px] font-bold text-brand"><Plus size={13}/>Add another heat pump</button>
+  </div>;
+}
+
 type GeneratorDetails = {
+  purchaseStatus: string;
   generatorType: string;
   fuel: string;
   continuousRating: string;
@@ -324,7 +411,7 @@ type GeneratorDetails = {
 };
 
 const emptyGeneratorDetails: GeneratorDetails = {
-  generatorType: "", fuel: "", continuousRating: "", surgeRating: "", ratingUnit: "kW",
+  purchaseStatus: "", generatorType: "", fuel: "", continuousRating: "", surgeRating: "", ratingUnit: "kW",
   inverterType: "", voltage: "", phase: "", startMethod: "", connectionMethod: "",
 };
 
@@ -346,8 +433,13 @@ function GeneratorDetailsCard({ question, profile, value, setAnswer, onAskWattso
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
     <div className="p-6 md:p-8">
+      <div className="mb-5 grid gap-3 sm:grid-cols-2">
+        <button type="button" onClick={() => update("purchaseStatus", "not_purchased")} className={`rounded-2xl border p-4 text-left ${details.purchaseStatus === "not_purchased" ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white"}`}><strong className="text-sm">Haven&apos;t purchased one yet</strong><p className="mt-2 text-[11px] leading-5 text-muted">Continue without make, model or ratings. Wattson will carry a generator size target into the proposal and schematic for later selection.</p></button>
+        <button type="button" onClick={() => update("purchaseStatus", "have_details")} className={`rounded-2xl border p-4 text-left ${details.purchaseStatus === "have_details" || (!details.purchaseStatus && details.generatorType) ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white"}`}><strong className="text-sm">I have or have chosen a generator</strong><p className="mt-2 text-[11px] leading-5 text-muted">Use its rating label to record the real generator and connection requirements.</p></button>
+      </div>
+      {details.purchaseStatus === "not_purchased" ? <div className="mb-5 rounded-xl border border-[#9bd2ad] bg-[#f2fbf5] p-4 text-[11px] leading-5 text-[#17603b]"><strong>Generator included as a proposed item.</strong> Its continuous and surge targets will be sized from the recorded high-power loads, inverter and battery-charging needs. The exact generator still needs compatibility and connection checks before purchase.</div> : null}
       <div className="mb-5 rounded-xl border border-[#9bd2ad] bg-[#f2fbf5] p-3 text-[11px] leading-5 text-[#17603b]"><strong>Quick tip:</strong> Take a clear photo of the generator rating label. Use the label—or share the photo with Wattson where photo upload is available—to fill these fields accurately.</div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className={`${details.purchaseStatus === "not_purchased" ? "hidden" : "grid"} gap-4 sm:grid-cols-2 lg:grid-cols-3`}>
         <GeneratorSelect label="Generator type" value={details.generatorType} onChange={(next) => update("generatorType", next)} options={[["portable", "Portable"], ["fixed_standby", "Fixed standby"], ["pto", "Tractor/PTO"], ["vehicle_mounted", "Vehicle-mounted"], ["other", "Other"]]}/>
         <GeneratorSelect label="Fuel" value={details.fuel} onChange={(next) => update("fuel", next)} options={[["petrol", "Petrol/gasoline"], ["diesel", "Diesel"], ["lpg", "LPG/propane"], ["natural_gas", "Natural gas"], ["dual_fuel", "Dual or multi-fuel"], ["other", "Other"]]}/>
         <GeneratorSelect label="Generator technology" value={details.inverterType} onChange={(next) => update("inverterType", next)} options={[["inverter", "Inverter generator"], ["conventional", "Conventional generator"]]}/>
@@ -386,6 +478,7 @@ function discoveryAnswerComplete(questionId: string, value: string | number | st
   if (questionId === "generator_details" && typeof value === "string") {
     try {
       const generator = JSON.parse(value) as GeneratorDetails;
+      if (generator.purchaseStatus === "not_purchased") return true;
       return Boolean(generator.generatorType && generator.fuel && Number(generator.continuousRating) > 0 && generator.ratingUnit && generator.inverterType && generator.voltage && generator.phase && generator.startMethod && generator.connectionMethod);
     } catch { return false; }
   }
@@ -408,6 +501,21 @@ function discoveryAnswerComplete(questionId: string, value: string | number | st
     } catch { return false; }
   }
   return true;
+}
+
+function highPowerLoadRatingsComplete(value: string | number | string[] | undefined, selectedLoads: string[]) {
+  if (!selectedLoads.length) return true;
+  if (typeof value !== "string") return false;
+  try {
+    const ratings = JSON.parse(value) as Record<string, PoolLoadEntry>;
+    return selectedLoads.every((key) => {
+      const row = ratings[key];
+      if (!row || Number(row.quantity) <= 0) return false;
+      if (key === "welder") return Number(row.inputAmps) > 0 && Number(row.voltageV) > 0 && Boolean(row.welderTechnology);
+      if (key === "heat_pump") return Boolean(row.units?.length) && row.units!.every((unit) => Number(unit.electricalInputKw) > 0 || (unit.electricalInputPending === true && Boolean(unit.model?.trim() || unit.coolingCapacityKw || unit.heatingCapacityKw || unit.thermalCapacityKw)));
+      return Number(row.runningKw) > 0;
+    });
+  } catch { return false; }
 }
 
 const panelLocationLabels: Record<string, string> = {
@@ -808,6 +916,26 @@ function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, set
 
 type DiscoveryHelpMessage = { role: "user" | "assistant"; content: string };
 
+async function prepareDiscoveryPhoto(file: File) {
+  const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+  if (!allowed.has(file.type)) throw new Error("Choose a JPEG, PNG or WebP photo.");
+  if (file.size <= 1_800_000) return file;
+  if (typeof createImageBitmap !== "function") throw new Error("This photo is too large for this browser to resize. Choose a smaller image or camera resolution.");
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) { bitmap.close(); throw new Error("This browser could not prepare the photo."); }
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.78));
+  if (!blob) throw new Error("This browser could not prepare the photo.");
+  if (blob.size > 3_500_000) throw new Error("The resized photo is still too large. Crop closer to the rating label and try again.");
+  return new File([blob], file.name.replace(/\.[^.]+$/, "") + "-label.jpg", { type: "image/jpeg", lastModified: Date.now() });
+}
+
 function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: existingConversationId, discoveryDraftId, onConversation, onSafetyDecision, siteId, projectId, onClose }: { question: DiscoveryQuestion; discoveryAnswers: DiscoveryAnswers; conversationId?: string; discoveryDraftId?: string; onConversation: (conversationId: string) => void; onSafetyDecision: (decision: string) => void; siteId?: string; projectId?: string; onClose: () => void }) {
   const selectedAnswer = discoveryAnswers[question.id];
   const existingEquipment = selectedAnswer === "existing" || (Array.isArray(selectedAnswer) && selectedAnswer.includes("existing"));
@@ -831,6 +959,7 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
   const [conversationId, setConversationId] = useState<string | undefined>(existingConversationId);
   const [input, setInput] = useState("");
   const [attachment, setAttachment] = useState<File>();
+  const [preparingAttachment, setPreparingAttachment] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -841,6 +970,14 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
     const frame = requestAnimationFrame(() => { messageList.scrollTop = messageList.scrollHeight; });
     return () => cancelAnimationFrame(frame);
   }, [messages, sending, error]);
+
+  async function chooseAttachment(file?: File) {
+    if (!file) return;
+    setPreparingAttachment(true); setError("");
+    try { setAttachment(await prepareDiscoveryPhoto(file)); }
+    catch (problem) { setAttachment(undefined); setError(problem instanceof Error ? problem.message : "Could not prepare that photo."); }
+    finally { setPreparingAttachment(false); }
+  }
 
   async function send() {
     const message = input.trim() || (attachment ? "Please read this equipment label and help me answer this question." : "");
@@ -854,8 +991,12 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
       formData.set("payload", JSON.stringify(payload));
       if (attachment) formData.set("file", attachment);
       const response = await fetch("/api/wattson/discovery-help", { method: "POST", body: formData });
-      const body = await response.json();
+      const responseText = await response.text();
+      let body: { error?: string; conversationId?: string; safetyDecision?: string; message?: string } = {};
+      try { body = responseText ? JSON.parse(responseText) as typeof body : {}; }
+      catch { body = { error: response.status === 413 ? "That photo was too large to upload. Crop closer to the rating label and try again." : `Wattson could not read the server response (${response.status}).` }; }
       if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable.");
+      if (!body.conversationId) throw new Error("Wattson returned an incomplete response. Please try the photo again.");
       setConversationId(body.conversationId);
       onConversation(body.conversationId);
       if (typeof body.safetyDecision === "string") onSafetyDecision(body.safetyDecision);
@@ -873,11 +1014,11 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
         <p className="mb-2 text-[11px] leading-4 text-muted">Show Wattson with a photo if you can. Photos can reveal useful evidence, but cannot prove structural or electrical safety.</p>
         {attachment ? <div className="mb-2 flex items-center gap-2 rounded-xl border border-line bg-[#edf6fd] px-3 py-2 text-xs"><ImagePlus size={15} className="shrink-0 text-brand"/><span className="min-w-0 flex-1 truncate">{attachment.name}</span><button type="button" onClick={() => setAttachment(undefined)} aria-label="Remove attached image"><X size={15}/></button></div> : null}
         <div className="flex items-end gap-2">
-          <label className="flex h-12 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-line bg-white px-3 text-xs font-bold text-brand" aria-label="Take a photo or choose one from the gallery"><ImagePlus size={18}/><span className="hidden sm:inline">Photo</span><input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => setAttachment(event.target.files?.[0])}/></label>
+          <label className={`flex h-12 shrink-0 items-center gap-2 rounded-xl border border-line bg-white px-3 text-xs font-bold text-brand ${preparingAttachment ? "cursor-wait opacity-50" : "cursor-pointer"}`} aria-label="Take a photo or choose one from the gallery">{preparingAttachment ? <LoaderCircle className="animate-spin" size={18}/> : <ImagePlus size={18}/>}<span className="hidden sm:inline">{preparingAttachment ? "Preparing" : "Photo"}</span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={preparingAttachment} className="hidden" onChange={(event) => void chooseAttachment(event.target.files?.[0])}/></label>
           <textarea value={input} onChange={(event) => setInput(event.target.value)} rows={2} placeholder="Ask about the photo or this question…" className="field mt-0 min-h-12 flex-1 resize-none py-3 text-[16px]"/>
-          <button disabled={(!input.trim() && !attachment) || sending} className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send"><Send size={18}/></button>
+          <button disabled={(!input.trim() && !attachment) || sending || preparingAttachment} className="grid size-12 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send"><Send size={18}/></button>
         </div>
-        <p className="mt-2 text-[10px] leading-4 text-muted">JPEG, PNG or WebP, up to 8 MB. On a phone, the photo chooser can offer the camera or gallery.</p>
+        <p className="mt-2 text-[10px] leading-4 text-muted">JPEG, PNG or WebP. Large phone photos are reduced automatically before upload.</p>
         <button type="button" onClick={onClose} className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-brand bg-white text-xs font-extrabold text-brand"><ArrowLeft size={15}/>Back to questions</button>
       </form>
     </section>
@@ -892,16 +1033,23 @@ function Review({ answers, questions, onSelectQuestion }: { answers: DiscoveryAn
 function answerLabel(question: DiscoveryQuestion, value: string | number | string[] | undefined) {
   if (value===unknownAnswer || value==="unknown" || value==="not_checked" || value==="not_decided" || value==="undecided" || value==="unknown_chemistry") return "Answer required";
   if (value===undefined || value==="") return "Not answered";
+  if (question.id === "generator_details" && typeof value === "string") {
+    try {
+      const generator = JSON.parse(value) as GeneratorDetails;
+      if (generator.purchaseStatus === "not_purchased") return "Not purchased yet — Wattson will specify the required size";
+      return `${generator.generatorType?.replaceAll("_", " ") || "Generator"}${generator.continuousRating ? ` · ${generator.continuousRating} ${generator.ratingUnit || "kW"} continuous` : ""}`;
+    } catch { return "Generator details need review"; }
+  }
   if (typeof value === "string" && ["pool_equipment_ratings", "household_motor_ratings"].includes(question.id)) {
     try {
-      const entries = Object.values(JSON.parse(value) as Record<string, PoolLoadEntry>).filter((entry) => (entry.quantity ?? 0) > 0 && (entry.runningKw ?? 0) > 0);
+      const entries = Object.values(JSON.parse(value) as Record<string, PoolLoadEntry>).filter((entry) => (entry.quantity ?? 0) > 0 && ((entry.peakRunningKw ?? entry.runningKw) ?? 0) > 0);
       if (!entries.length) return "No additional electrical load included";
-      const runningTotal = entries.reduce((sum, entry) => sum + (entry.runningKw ?? 0) * (entry.quantity ?? 0), 0);
-      const simultaneousRunning = entries.reduce((sum, entry) => sum + (entry.simultaneous === false ? 0 : (entry.runningKw ?? 0) * (entry.quantity ?? 0)), 0);
+      const runningTotal = entries.reduce((sum, entry) => sum + (entry.peakRunningKw ?? entry.runningKw ?? 0) * (entry.quantity ?? 0), 0);
+      const simultaneousRunning = entries.reduce((sum, entry) => sum + (entry.simultaneous === false ? 0 : (entry.peakRunningKw ?? entry.runningKw ?? 0) * (entry.quantity ?? 0)), 0);
       const startupPeak = entries.reduce((peak, entry) => {
         if (entry.simultaneous === false) return peak;
         const quantity = entry.quantity ?? 0;
-        const running = (entry.runningKw ?? 0) * quantity;
+        const running = (entry.peakRunningKw ?? entry.runningKw ?? 0) * quantity;
         const starting = (entry.startingKw ?? entry.runningKw ?? 0) * quantity;
         return Math.max(peak, simultaneousRunning + Math.max(0, starting - running));
       }, simultaneousRunning);

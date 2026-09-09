@@ -41,6 +41,7 @@ export async function loginWithGoogle(formData:FormData) {
   const requestedNext=formData.get("next");
   const next=typeof requestedNext==="string"&&requestedNext.startsWith("/")&&!requestedNext.startsWith("//")?requestedNext:"/dashboard";
   const callback=new URL("/auth/callback",requestOrigin);callback.searchParams.set("next",next);
+  if(next.startsWith("/account?setup=password"))callback.searchParams.set("flow","password_setup");
   const {data,error}=await supabase.auth.signInWithOAuth({provider:"google",options:{redirectTo:callback.toString()}});
   if(error)redirect(`/login?error=${encodeURIComponent(error.message)}`);
   if(data.url)redirect(data.url);

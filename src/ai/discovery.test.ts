@@ -150,4 +150,32 @@ describe("Wattson discovery interpretation", () => {
     expect(ids).toContain("space_heating_energy");
     expect(ids).toContain("pool_equipment");
   });
+
+  it("asks for stored hot-water volume when a tank affects the power plan", () => {
+    for (const source of ["electric_resistive", "heat_pump", "wood_wetback"]) {
+      const ids = visibleDiscoveryQuestions({ building_type: ["detached_house"], water_heating_energy: [source] })
+        .map((question) => question.id);
+      expect(ids).toContain("hot_water_storage_litres");
+    }
+
+    const solarIds = visibleDiscoveryQuestions({ building_type: ["detached_house"], water_heating_energy: ["solar_thermal"] })
+      .map((question) => question.id);
+    expect(solarIds).toContain("solar_hot_water_arrangement");
+    expect(solarIds).toContain("solar_hot_water_storage_litres");
+    expect(solarIds).not.toContain("hot_water_storage_litres");
+
+    const separateStores = visibleDiscoveryQuestions({ building_type: ["detached_house"], water_heating_energy: ["solar_thermal", "electric_resistive"], solar_hot_water_arrangement: "pumped_preheat_separate_hwc" })
+      .map((question) => question.id);
+    expect(separateStores).toContain("solar_hot_water_storage_litres");
+    expect(separateStores).toContain("hot_water_storage_litres");
+    expect(separateStores).toContain("solar_hot_water_pump_watts");
+
+    const sharedStore = visibleDiscoveryQuestions({ building_type: ["detached_house"], water_heating_energy: ["solar_thermal", "electric_resistive"], solar_hot_water_arrangement: "pumped_shared_store" })
+      .map((question) => question.id);
+    expect(sharedStore).not.toContain("hot_water_storage_litres");
+
+    const gasIds = visibleDiscoveryQuestions({ building_type: ["detached_house"], water_heating_energy: ["lpg_gas"] })
+      .map((question) => question.id);
+    expect(gasIds).not.toContain("hot_water_storage_litres");
+  });
 });

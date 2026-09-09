@@ -3,6 +3,9 @@ import tzLookup from "tz-lookup";
 import { applyWattsonActions, type WattsonActionRequest } from "@/ai/actions";
 import { createSystem } from "@/data/cloud-project";
 import { newSystemQuestions, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers } from "@/discovery/new-system";
+import { invalidateProposalAfterDiscovery } from "@/design/invalidate-proposal";
+import { deterministicProposalActions } from "@/design/proposal-action";
+import { refreshProjectSolarResource } from "@/design/refresh-solar-resource";
 import { createClient } from "@/lib/supabase/server";
 
 const answersSchema = z.record(z.string(), z.union([z.string().max(4000), z.number(), z.array(z.string().max(100)).min(1).max(20)]));
@@ -22,7 +25,7 @@ function outcomeText(value: unknown): string {
 }
 
 function projectType(answers: DiscoveryAnswers) {
-  if (answers.utility_relationship === "off_grid") return "off-grid" as const;
+  if (answers.utility_relationship === "off_grid" || answers.target_grid_role === "replace_grid") return "off-grid" as const;
   const outcomes = Array.isArray(answers.primary_outcome) ? answers.primary_outcome : [answers.primary_outcome];
   return outcomes.length === 1 && outcomes[0] === "cost" ? "grid-tied" as const : "hybrid" as const;
 }
@@ -49,18 +52,26 @@ function structuredPanelAnswer(value: string | number | string[] | undefined, ki
 function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
   const mapped: Array<[string, string | number | string[] | undefined]> = [
     ["utility_relationship", answers.utility_relationship === "off_grid" ? "No public electricity supply" : "Connected to public electricity"],
+    ["target_grid_role", answers.target_grid_role],
     ["ac_phase_arrangement", answers.ac_phase_arrangement],
     ["nominal_ac_voltage", answers.nominal_ac_voltage],
     ["primary_outcome", outcomeText(answers.primary_outcome)],
     ["current_energy_use", typeof answers.current_energy_use === "number" ? `${answers.current_energy_use} kWh/month` : answers.current_energy_use],
+    ["off_grid_daily_energy_use", typeof answers.off_grid_daily_energy_use === "number" ? `${answers.off_grid_daily_energy_use} kWh/day` : answers.off_grid_daily_energy_use],
     ["backup_preference", answers.backup_preference],
     ["battery_requirement", answers.battery_requirement],
     ["outage_essential_loads", answers.outage_essential_loads],
     ["backup_duration", answers.backup_duration],
     ["generator_requirement", answers.generator_requirement],
     ["generator_details", answers.generator_details],
+    ["generator_outage_role", answers.generator_outage_role],
     ["cooking_energy", answers.cooking_energy],
     ["water_heating_energy", answers.water_heating_energy],
+    ["hot_water_storage_litres", typeof answers.hot_water_storage_litres === "number" ? `${answers.hot_water_storage_litres} L` : answers.hot_water_storage_litres],
+    ["solar_hot_water_arrangement", answers.solar_hot_water_arrangement],
+    ["solar_hot_water_storage_litres", typeof answers.solar_hot_water_storage_litres === "number" ? `${answers.solar_hot_water_storage_litres} L` : answers.solar_hot_water_storage_litres],
+    ["solar_hot_water_pump_watts", typeof answers.solar_hot_water_pump_watts === "number" ? `${answers.solar_hot_water_pump_watts} W` : answers.solar_hot_water_pump_watts],
+    ["solar_hot_water_pump_hours_per_day", typeof answers.solar_hot_water_pump_hours_per_day === "number" ? `${answers.solar_hot_water_pump_hours_per_day} h/day` : answers.solar_hot_water_pump_hours_per_day],
     ["space_heating_energy", answers.space_heating_energy],
     ["pool_or_spa", answers.pool_or_spa],
     ["pool_heating_method", answers.pool_heating_method],
@@ -76,8 +87,8 @@ function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
     ["proposed_panel_location", answers.panel_location],
     ["storage_supply_source", answers.storage_supply_source_off_grid ?? answers.storage_supply_source_grid],
     ["panel_construction_interest", answers.panel_construction_interest],
-    ["panel_area_dimensions", structuredPanelAnswer(answers.panel_area_dimensions, "dimensions")],
-    ["panel_area_constraints", structuredPanelAnswer(answers.panel_area_constraints, "obstructions")],
+    ["panel_area_dimensions", answers.panel_area_dimensions],
+    ["panel_area_constraints", answers.panel_area_constraints],
     ["orientation_and_pitch", structuredPanelAnswer(answers.orientation_and_pitch, "orientation")],
     ["shading", answers.shading],
     ["structure_condition", structuredPanelAnswer(answers.structure_condition, "structure")],
@@ -174,7 +185,33 @@ export async function PATCH(request: Request) {
   const project = await context.supabase.from("projects").select("id,site_id").eq("id", parsed.data.projectId).eq("owner_id", context.userId).maybeSingle();
   if (project.error || !project.data) return Response.json({ error: "Power system not found." }, { status: 404 });
   const answers = parsed.data.answers as DiscoveryAnswers;
-  await applyWattsonActions(context.supabase, project.data.id, discoveryActions(answers));
+  try {
+    await refreshProjectSolarResource(context.supabase, context.userId, project.data.id, project.data.site_id, projectType(answers) === "off-grid");
+  } catch (problem) {
+    return Response.json({ error: problem instanceof Error ? problem.message : "Could not calculate the Site solar resource" }, { status: 503 });
+  }
+  const previous = await context.supabase.from("questionnaire_responses").select("answers").eq("project_id", project.data.id).eq("template_key", "guided_new_system").maybeSingle();
+  if (previous.error) return Response.json({ error: previous.error.message }, { status: 400 });
+  const changed = JSON.stringify(previous.data?.answers ?? {}) !== JSON.stringify(answers);
+  let affectedDesigns = 0;
+  if (changed) {
+    try {
+      affectedDesigns = await invalidateProposalAfterDiscovery(context.supabase, context.userId, [project.data.id]);
+    } catch (problem) {
+      return Response.json({ error: problem instanceof Error ? problem.message : "Could not rebuild the proposal" }, { status: 400 });
+    }
+  }
+  const systemUpdate = await context.supabase.from("projects").update({
+    name: String(answers.system_name || "Home solar"),
+    description: outcomeText(answers.primary_outcome),
+    mode: projectType(answers) === "grid-tied" ? "grid_tied" : projectType(answers) === "hybrid" ? "hybrid" : "off_grid",
+    system_voltage: proposedSystemVoltage(answers) ?? null,
+  }).eq("id", project.data.id).eq("owner_id", context.userId);
+  if (systemUpdate.error) return Response.json({ error: systemUpdate.error.message }, { status: 400 });
+  await applyWattsonActions(context.supabase, project.data.id, [
+    ...discoveryActions(answers),
+    ...deterministicProposalActions(answers),
+  ]);
   const questionnaire = await context.supabase.from("questionnaire_responses").upsert({
     project_id: project.data.id,
     template_key: "guided_new_system",
@@ -184,7 +221,7 @@ export async function PATCH(request: Request) {
     completed_at: new Date().toISOString(),
   }, { onConflict: "project_id,template_key" });
   if (questionnaire.error) return Response.json({ error: questionnaire.error.message }, { status: 400 });
-  return Response.json({ saved: true });
+  return Response.json({ saved: true, affectedDesigns, designUrl: `/sites/${project.data.site_id}/systems/${project.data.id}/design/schematic` });
 }
 
 export async function POST(request: Request) {
@@ -275,6 +312,7 @@ export async function POST(request: Request) {
     const systemName = String(answers.system_name || "Home solar");
     const systemId = await createSystem(context.supabase, context.userId, siteId, systemName, projectType(answers), outcomeText(answers.primary_outcome), proposedSystemVoltage(answers));
     createdSystemId = systemId;
+    await refreshProjectSolarResource(context.supabase, context.userId, systemId, siteId, projectType(answers) === "off-grid");
     const advanced = await context.supabase.from("projects").update({ phase: "design" }).eq("id", systemId).eq("owner_id", context.userId);
     if (advanced.error) throw advanced.error;
     if (parsed.data.draftId) {
@@ -285,7 +323,10 @@ export async function POST(request: Request) {
         if (linked.error) throw linked.error;
       }
     }
-    await applyWattsonActions(context.supabase, systemId, discoveryActions(answers));
+    await applyWattsonActions(context.supabase, systemId, [
+      ...discoveryActions(answers),
+      ...deterministicProposalActions(answers),
+    ]);
     const questionnaire = await context.supabase.from("questionnaire_responses").upsert({
       project_id: systemId,
       template_key: "guided_new_system",

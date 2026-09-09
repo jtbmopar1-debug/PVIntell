@@ -23,7 +23,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
-      <body className="min-h-full"><LocalMonitoringProvider>{children}</LocalMonitoringProvider><ServiceWorkerRegister /><Script id="pvintell-theme" strategy="beforeInteractive">{`(function(){try{var t=localStorage.getItem('pvintell:theme:v1')==='dark'?'dark':'light';document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t}catch(e){}})()`}</Script></body>
+      <body className="min-h-full"><LocalMonitoringProvider>{children}</LocalMonitoringProvider><ServiceWorkerRegister /><Script id="pvintell-theme" strategy="beforeInteractive">{`(function(){try{var firstOnboarding=location.pathname==='/onboarding'&&!new URLSearchParams(location.search).has('edit');var t=firstOnboarding?'light':localStorage.getItem('pvintell:theme:v1')==='dark'?'dark':'light';if(firstOnboarding)localStorage.setItem('pvintell:theme:v1','light');document.documentElement.dataset.theme=t;document.documentElement.style.colorScheme=t}catch(e){}})()`}</Script></body>
     </html>
   );
 }

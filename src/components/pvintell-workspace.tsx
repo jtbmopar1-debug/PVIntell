@@ -817,7 +817,7 @@ function GoogleWelcome() {
             Continue with Google
           </button>
           <Link
-            href="/account"
+            href="/account?setup=password#password"
             className="grid h-11 place-items-center rounded-xl bg-brand text-xs font-bold text-white"
           >
             Set a password
