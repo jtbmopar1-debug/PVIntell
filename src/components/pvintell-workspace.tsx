@@ -677,7 +677,7 @@ export function PVIntellWorkspace({
            </nav>}
             {menu ? <nav className="max-h-[calc(100dvh-4rem)] overflow-y-auto border-t border-line bg-white p-3 md:hidden" aria-label="Mobile navigation"><div className="grid gap-1">
               {cloud ? <><Link href={`/dashboard?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link></> : null}
-              {view !== "monitor" ? <><div className="my-1 border-t border-line" />
+              {view !== "monitor" ? <>
               <button type="button" onClick={() => { setView("site"); setMenu(false); }} className="mobile-nav-item">Site</button>
               {(!monitorOnly || hasProjectHistory) && <><Link href={`/sites/${initialSite.id}/discovery?system=${project.id}`} className="mobile-nav-item">{monitorOnly ? "Original discovery" : "Discovery"}</Link>
               <Link href={`/sites/${initialSite.id}/systems/${project.id}/design`} className="mobile-nav-item">{monitorOnly ? "Original proposed design" : "Proposed design"}</Link>
@@ -689,7 +689,6 @@ export function PVIntellWorkspace({
               <Link href={`/sites/${initialSite.id}/systems/${project.id}/schematic`} className="mobile-nav-item">As-built schematic</Link>
               <button type="button" onClick={() => { setView("equipment"); setMenu(false); }} className="mobile-nav-item">Site equipment</button>
               {monitorOnly ? <button type="button" onClick={() => { setView("monitor"); setMenu(false); }} className="mobile-nav-item">Monitor</button> : null}</> : null}
-              <div className="my-1 border-t border-line" />
               <Link href={`/how-to?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">How to</Link>
               <Link href={`/settings?site=${initialSite.id}`} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link>
             </div></nav> : null}

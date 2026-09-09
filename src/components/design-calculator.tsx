@@ -583,9 +583,8 @@ function ProposedSchematic({ projectName, gridConnected, includeBattery, design,
       <div>
         <div className="eyebrow">Proposed build schematic · easy guide</div>
         <h3 className="mt-2 text-lg font-extrabold">How your planned power system would work</h3>
-        <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">Follow the coloured cables between the pictures to see the whole planned system. Select any picture if you want Wattson to explain that part.</p>
+        <p className="mt-1 max-w-2xl text-xs leading-5 text-muted">Follow the coloured cables between the pictures to see the whole planned system. Select a picture to inspect that part.</p>
       </div>
-      <Link href={wattsonHref} className="shrink-0 text-xs font-bold text-brand">Ask Wattson to explain this picture →</Link>
     </div>
 
     <DraftProposedSchematicCanvas draft={draft} design={design} systemName={projectName} onChange={onDraftChange} onRedesign={onRedesign} wattsonHref={wattsonHref}/>

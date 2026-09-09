@@ -235,7 +235,11 @@ html[data-theme="dark"] .mobile-nav-item:hover{background:#22364b;color:var(--bl
   .proposed-schematic-shell>section>div:first-child{display:none}
   .proposed-schematic-canvas{margin-top:0!important;border-radius:9px!important}
   .schematic-canvas-toolbar{gap:5px!important;padding:5px 7px!important}
-  .schematic-canvas-toolbar button{height:28px!important;min-height:28px!important}
+  .schematic-canvas-toolbar{overflow:visible!important}
+  .schematic-canvas-toolbar button{width:30px!important;height:30px!important;min-width:30px!important;min-height:30px!important;padding:0!important;justify-content:center}
+  .schematic-canvas-toolbar .schematic-column-labels,.schematic-canvas-toolbar .schematic-tool-label,.schematic-canvas-toolbar .schematic-zoom-controls>span{display:none}
+  .schematic-canvas-toolbar .schematic-zoom-controls{margin-left:auto}
+  .schematic-canvas-toolbar .schematic-zoom-controls button:nth-of-type(2){width:48px!important}
 }
 /* System navigation now lives on the Systems hub rather than in a second header. */
 nav[aria-label="System navigation"] {
