@@ -1,4 +1,4 @@
-export const monitoringProviders = ["dess_monitor", "victron_vrm", "solarman", "junctek_local", "pvintell_gateway"] as const;
+export const monitoringProviders = ["dess_monitor", "victron_vrm", "solarman", "deye_cloud", "junctek_local", "pvintell_gateway"] as const;
 export type MonitoringProvider = (typeof monitoringProviders)[number];
 export type MonitoringConnectionStatus = "setup_required" | "connecting" | "connected" | "degraded" | "error" | "disabled";
 

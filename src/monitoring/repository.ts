@@ -16,7 +16,7 @@ export async function loadMonitoringSnapshot(db: SupabaseClient, ownerId: string
   const scope = await db.from("projects").select("id").eq("id", systemId).eq("site_id", siteId).eq("owner_id", ownerId).maybeSingle();
   if (scope.error) throw scope.error;
   if (!scope.data) throw new MonitoringScopeNotFoundError();
-  const found = await db.from("monitoring_connections").select("id,provider,display_name,status,status_message,capabilities,last_attempt_at,last_success_at,last_failure_at").eq("owner_id", ownerId).eq("site_id", siteId).eq("project_id", systemId).eq("is_active", true).eq("provider", "junctek_local").limit(1).maybeSingle();
+  const found = await db.from("monitoring_connections").select("id,provider,display_name,status,status_message,capabilities,last_attempt_at,last_success_at,last_failure_at").eq("owner_id", ownerId).eq("site_id", siteId).eq("project_id", systemId).eq("is_active", true).limit(1).maybeSingle();
   if (found.error) throw found.error;
   const base: MonitoringSnapshot = { siteId, systemId, devices: [], samples: [], alerts: [] };
   const c = found.data;

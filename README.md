@@ -105,10 +105,8 @@ npm run build
 
 The repository includes `vercel.json`, sets `www.pvintell.com` as the canonical host, and redirects the apex domain to it. Import the Git repository in Vercel or run `npx vercel`. Add Supabase/AI environment variables in Vercel Project Settings; use separate Supabase credentials for preview and production where possible.
 
-## Next monitoring integrations
+## Monitoring integrations
 
-1. Add a server-only Prisma repository and Supabase Auth/RLS policies.
-2. Implement one real driver behind a gateway/collector service.
-3. Stream normalized readings through a durable ingestion route.
-4. Add historical aggregation, alert delivery, and weather-adjusted generation forecasts.
-5. Replace the mock AI provider with a tool-using provider and evaluated safety policy.
+Monitoring records are provider-neutral and owner-scoped with Supabase RLS. DeyeCloud is connected server-side through its OpenAPI; the platform App ID and App Secret stay in server environment variables, while each user's resulting provider token is encrypted in Supabase Vault. Deye access is read-only: PVIntell uses station/device discovery and telemetry endpoints, never configuration or control endpoints. Junctek monitoring remains a separate local Web Bluetooth connection.
+
+Apply all Supabase migrations before enabling a new provider. DeyeCloud additionally requires `DEYECLOUD_APP_ID` and `DEYECLOUD_APP_SECRET` in local and Vercel server environments. A real DeyeCloud account with an assigned station is required for provider acceptance testing.

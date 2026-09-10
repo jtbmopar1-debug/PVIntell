@@ -32,7 +32,7 @@ const installedActions = [
   ["overview", "Overview", "System specifications at a glance.", LayoutDashboard],
   ["as-built", "System Overview", "Full specifications and as-built records.", Package],
   ["schematic", "Schematic", "Connections and system layout.", Network],
-  ["monitor", "Connect", "Connect a Junctek battery monitor.", Activity],
+  ["monitor", "Monitoring", "View DeyeCloud or Junctek provider readings.", Activity],
   ["financials", "Financials", "Costs, purchases, rebates and buy-back.", WalletCards],
 ] as const;
 

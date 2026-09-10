@@ -43,7 +43,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     { href: "/settings/preferences", title: "Preferences", detail: "Measurement units and display settings", icon: SlidersHorizontal },
     { href: `/settings/inventory${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Unused Inventory", detail: "Owned equipment that has not been assigned to a system", icon: PackageOpen },
     { href: `/monitor${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Monitor", detail: "Daily solar, forecasts, SOC, generator and grid log", icon: SlidersHorizontal },
-    { href: "/settings/connections", title: "Connect", detail: "Connect Junctek battery monitors to systems", icon: Link2 },
+    { href: "/settings/connections", title: "Connections", detail: "Connect DeyeCloud stations or Junctek battery monitors", icon: Link2 },
     { href: weatherHref, title: "Solar weather", detail: weatherSite ? `Forecast and production outlook · ${weatherSite.name}` : "Forecast and production outlook", icon: CloudSun },
     { href: "/glossary", title: "Glossary", detail: "Plain-language solar, battery and electrical terms", icon: BookOpen },
     { href: "/wattson-chats", title: "Wattson chats", detail: "Review, continue or delete saved conversations", icon: MessageSquareText },
