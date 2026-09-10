@@ -8,6 +8,7 @@ import { newSystemQuestions } from "@/discovery/new-system";
 import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
 import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
 import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
+import { dashboardMessageAllowsActions } from "@/ai/dashboard-intent";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -255,6 +256,11 @@ export async function POST(request: Request) {
   const history = (recent.data ?? []).reverse();
   const prior = history.at(-1)?.content === userContent ? history.slice(0, -1) : history;
   const dailyMonitorLog = await loadDailyLogContext(supabase, userId, { systemId: parsed.data.projectId, siteId: conversationSiteId ?? undefined });
+  const priorAssistantMessage = [...prior].reverse().find((item) => item.role === "assistant")?.content;
+  const allowDashboardActions = dashboardMessageAllowsActions(
+    parsed.data.message,
+    Boolean(discoveryKeyFromAssistantQuestion(priorAssistantMessage)),
+  );
   try {
     const result = await askGemini({
       message: parsed.data.message,
@@ -272,7 +278,7 @@ export async function POST(request: Request) {
         scope: "Dashboard Wattson is a general solar and electrical assistant with selected-Site awareness. Answer the user's actual question directly first, whether it is general, educational, comparative, diagnostic or specific to a recorded Site/system. selectedSiteWeather is the exact full five-day hourly forecast currently available to PVIntell, including timestamps, timezone, irradiance, cloud cover, precipitation, wind, temperature and UV. For weather, solar-yield, charge-timing or day-specific questions such as ‘on Wednesday’, filter those timestamped hours in the supplied site timezone and use them rather than inventing a general weather narrative. Mention when the forecast was fetched when freshness matters. Explicitly distinguish measured monitoring readings from forecast values. Use the selected Site and its complete installed component, PV-array/string, load, assumption and connection records whenever the question concerns that Site, performance or improvement; do not make the user remind you what is already mounted. connectedSiteSystems may include map_latitude, map_longitude, location_mode and map_location_updated_at. A static system position is installation context. A mobile system position is only the user's last saved guide position: state that limitation when location materially affects the answer and never imply that a boat, vehicle or movable system is permanently there. For azimuth, tilt, yield or expansion questions, explicitly compare the recorded existing arrays with the location-based ideal and distinguish improving the existing installation from proposing a separate new array. Do not force an unrelated Site context onto a genuinely general question. A hypothetical design question is not a request to create a system. Never start system discovery, create a workspace, or redirect to Start here from dashboard chat; the dedicated Start a new system flow owns that job. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update an existing system record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If a requested Site-specific action has an unclear target only after checking the records, ask one focused question instead of taking an action.",
       },
       image,
-      allowActions: true,
+      allowActions: allowDashboardActions,
     });
     const ownedSystemIds = new Set(systemIds);
     const appliedActions: AppliedWattsonAction[] = [];
@@ -322,7 +328,7 @@ export async function POST(request: Request) {
       }
     }
     const activeDiscovery = monitoringOnlyIntent || activeSystem?.phase === "monitor" || selectedSiteBrief ? undefined : guidedQuestion(guidedUnknownIds[0]) ?? nextRequiredDiscoveryQuestion(activeSystem?.settings);
-    const lastAssistantMessage = [...prior].reverse().find((item) => item.role === "assistant")?.content;
+    const lastAssistantMessage = priorAssistantMessage;
     const askedDiscoveryKey = discoveryKeyFromAssistantQuestion(lastAssistantMessage);
     const userUncertain = userExpressesUncertainty(parsed.data.message);
     const inferredNewBuilding = activeDiscovery?.[0] === "current_energy_use"

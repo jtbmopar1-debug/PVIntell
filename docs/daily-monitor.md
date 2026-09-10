@@ -23,3 +23,11 @@
 - History stays in a separate RLS-protected table. API writes verify ownership and detect stale-tab updates, and never rewrite proposal/discovery settings.
 
 Tests cover schema validation, missing versus zero readings, paired-date comparisons, forecast immutability, authentication/scope checks, stale writes, API save/reload and rendered read-only controls. Live browser automation was unavailable in this session; the user viewed the page and supplied UI feedback.
+
+## Navigation/performance audit
+
+- Added a root route loading boundary so dynamic pages provide immediate, interruptible feedback on slow mobile data, including Monitor and Systems routes that had no local loading file.
+- Monitor's systems, Sites and recorded arrays now load in one parallel server batch. Its arrays previously waited for the projects query and added a full database round trip before the page could render.
+- System/proposal workspace navigation also loads the Site, discovery status and system list in its first parallel batch, removing another sequential database round trip from those data-heavy routes.
+- The production build completes successfully. The system workspace still ships a roughly 694 kB uncompressed route chunk because its many views and guide data live in one client component. That is the primary remaining first-visit/mobile-data target: split the workspace into view-level dynamic chunks rather than altering data correctness or caching private records.
+- Direct deployed timing could not be measured from this restricted environment. Vercel function-region/Supabase-region distance and cold starts should be confirmed using Vercel Speed Insights or route logs against the actual production URL.

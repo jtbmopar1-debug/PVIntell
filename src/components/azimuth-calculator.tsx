@@ -2,10 +2,42 @@
 
 import { Compass, LocateFixed, MapPin, Ruler, Smartphone, Sun } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import compassLayout from "./compass-layout.json";
 
 type Location = { latitude: number; longitude: number; label: string };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const compassCenter = compassLayout.geometry.center;
+const compassPoint = (degree: number, radius: number) => {
+  const radians = (degree - 90) * Math.PI / 180;
+  return { x: compassCenter.x + radius * Math.cos(radians), y: compassCenter.y + radius * Math.sin(radians) };
+};
+const compassTicks = Array.from({ length: Math.floor(360 / compassLayout.ticks.minor.everyDegrees) }, (_, index) => index * compassLayout.ticks.minor.everyDegrees);
+const compassNumbers = Array.from({ length: Math.floor(360 / compassLayout.numbers.intervalDegrees) }, (_, index) => index * compassLayout.numbers.intervalDegrees).filter((degree) => compassLayout.numbers.showZero || degree !== 0);
+
+export function WeatherMeCompassDial({ heading }: { heading?: number }) {
+  const value = Number.isFinite(heading) ? heading! : 0;
+  const head = compassPoint(value, compassLayout.needle.length);
+  const tail = compassPoint((value + 180) % 360, Math.round(compassLayout.needle.length * .25));
+  return <div data-compass-layout="weatherme-v1" className="relative mx-auto aspect-square w-full max-w-[400px] rounded-full border border-[#9db9d2] bg-[#10243a] shadow-[0_0_0_1px_rgba(25,94,152,.18),0_0_30px_rgba(25,94,152,.18)]">
+    <svg viewBox={`0 0 ${compassLayout.geometry.size} ${compassLayout.geometry.size}`} role="img" aria-label="Compass dial" className="block size-full">
+      <circle cx={compassCenter.x} cy={compassCenter.y} r={compassLayout.rings.outerGlowRadius} fill="none" stroke="rgba(111,190,245,.32)" strokeWidth="1"/>
+      <g>{compassTicks.map((degree) => {
+        const cardinal = degree % compassLayout.ticks.cardinal.everyDegrees === 0;
+        const major = degree % compassLayout.ticks.major.everyDegrees === 0;
+        const endRadius = cardinal ? compassLayout.rings.tickEndRadiusCardinal : major ? compassLayout.rings.tickEndRadiusMajor : compassLayout.rings.tickEndRadiusMinor;
+        const width = cardinal ? compassLayout.ticks.cardinal.width : major ? compassLayout.ticks.major.width : compassLayout.ticks.minor.width;
+        const start = compassPoint(degree, compassLayout.rings.tickStartRadius); const end = compassPoint(degree, endRadius);
+        return <line key={degree} x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="rgba(111,190,245,.65)" strokeWidth={width} strokeLinecap="round" vectorEffect="non-scaling-stroke"/>;
+      })}</g>
+      <g>{compassNumbers.map((degree) => { const point = compassPoint(degree, compassLayout.rings.numberRadius); return <text key={degree} x={point.x} y={point.y} fontSize={compassLayout.numbers.fontSize} fontWeight={compassLayout.numbers.fontWeight} textAnchor="middle" dominantBaseline="middle" fill="rgba(180,222,252,.9)">{degree}</text>; })}</g>
+      <g>{compassLayout.cardinals.items.map((item) => { const point = compassPoint(item.degree, compassLayout.rings.letterRadius); return <text key={item.label} x={point.x} y={point.y} fontSize={compassLayout.cardinals.fontSize} fontWeight={compassLayout.cardinals.fontWeight} textAnchor="middle" dominantBaseline="middle" fill={item.label === "N" ? "#f06b5e" : "#f8fafc"}>{item.label}</text>; })}</g>
+      <line x1={compassCenter.x} y1={compassCenter.y} x2={tail.x} y2={tail.y} stroke="rgba(248,250,252,.7)" strokeWidth={Math.max(compassLayout.needle.width - 1, 1)} strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+      <line x1={compassCenter.x} y1={compassCenter.y} x2={head.x} y2={head.y} stroke="#f06b5e" strokeWidth={compassLayout.needle.width} strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+      <circle cx={compassCenter.x} cy={compassCenter.y} r={compassLayout.needle.pivotRadius} fill="#f8fafc"/>
+    </svg>
+  </div>;
+}
 
 export function AzimuthCalculator({ initialLocation }: { initialLocation: Location }) {
   const [location, setLocation] = useState(initialLocation);
@@ -26,10 +58,9 @@ export function AzimuthCalculator({ initialLocation }: { initialLocation: Locati
     if (!sensorActive) return;
     const handleOrientation = (rawEvent: DeviceOrientationEvent) => {
       const event = rawEvent as DeviceOrientationEvent & { webkitCompassHeading?: number };
-      const screenAngle = Number(window.screen.orientation?.angle ?? 0);
       const nextHeading = typeof event.webkitCompassHeading === "number"
         ? event.webkitCompassHeading
-        : typeof event.alpha === "number" ? (360 - event.alpha + screenAngle + 360) % 360 : undefined;
+        : typeof event.alpha === "number" ? (360 - event.alpha) % 360 : undefined;
       if (nextHeading !== undefined && Number.isFinite(nextHeading)) setHeading(nextHeading);
       if (typeof event.beta === "number" && typeof event.gamma === "number") {
         const beta = event.beta * Math.PI / 180;
@@ -48,7 +79,7 @@ export function AzimuthCalculator({ initialLocation }: { initialLocation: Locati
   }, [sensorActive]);
 
   async function enableOrientationTool() {
-    if (!("DeviceOrientationEvent" in window)) { setSensorError("This browser does not expose phone orientation sensors."); return; }
+    if (!("DeviceOrientationEvent" in window)) { setSensorError("Compass not supported on this device."); return; }
     if (!window.isSecureContext) { setSensorError("Phone sensors require PVIntell to be opened over HTTPS."); return; }
     try {
       const OrientationEvent = DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: () => Promise<"granted" | "denied"> };
@@ -103,11 +134,7 @@ export function AzimuthCalculator({ initialLocation }: { initialLocation: Locati
       <div className="flex items-start justify-between gap-3 border-b border-line bg-[#eef5fc] p-4"><div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand text-white"><Smartphone size={17}/></span><div><div className="eyebrow">Phone measurement</div><h2 className="mt-1 text-base font-extrabold">Live compass and surface tilt</h2><p className="mt-1 text-[10px] leading-4 text-muted">Use your phone to check which way a panel surface faces and its angle from level.</p></div></div>{sensorActive ? <button type="button" onClick={() => setSensorActive(false)} className="h-9 shrink-0 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Stop</button> : null}</div>
       <div className="grid gap-5 p-4 md:grid-cols-[220px_minmax(0,1fr)] md:items-center">
         <div className="mx-auto">
-          <div className="relative size-48 rounded-full border-[10px] border-[#dce8f3] bg-[radial-gradient(circle,#fff_48%,#eef5fc)] shadow-inner" role="img" aria-label={`Phone compass ${headingLabel}`}>
-            <span className="absolute left-1/2 top-2 -translate-x-1/2 text-xs font-black text-[#c14335]">N</span><span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-brand">E</span><span className="absolute bottom-2 left-1/2 -translate-x-1/2 text-xs font-black text-brand">S</span><span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-black text-brand">W</span>
-            <span className="absolute left-1/2 top-1/2 h-[68px] w-1 origin-bottom -translate-x-1/2 -translate-y-full rounded-full bg-[#d3483b] transition-transform duration-150" style={{ transform: `translate(-50%, -100%) rotate(${heading ?? 0}deg)` }}/>
-            <span className="absolute left-1/2 top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-brand shadow"/>
-          </div>
+          <WeatherMeCompassDial heading={heading}/>
           <div className="mt-3 text-center text-lg font-extrabold text-brand">{headingLabel}</div>
         </div>
         <div>

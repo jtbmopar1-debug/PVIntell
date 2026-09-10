@@ -4,6 +4,7 @@ import { invalidateProposalAfterDiscovery } from "@/design/invalidate-proposal";
 import { deterministicProposalActions } from "@/design/proposal-action";
 import { refreshProjectSolarResource } from "@/design/refresh-solar-resource";
 import { discoveryProjectType, type DiscoveryAnswers } from "@/discovery/new-system";
+import { reconcileDiscoveryDependencies } from "@/discovery/dependencies";
 import { siteDiscoveryActions } from "@/discovery/site-actions";
 import { createClient } from "@/lib/supabase/server";
 
@@ -30,12 +31,13 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   const { id } = await params;
   const context = await ownedSite(id);
   if ("error" in context) return context.error;
+  const answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers, context.discovery?.answers as DiscoveryAnswers | undefined);
   const saved = await context.supabase.from("site_discoveries").upsert({
     site_id: id,
     owner_id: context.userId,
     status: "draft",
     question_id: parsed.data.questionId ?? null,
-    answers: parsed.data.answers,
+    answers,
     baseline_answers: context.discovery?.baseline_answers ?? (context.discovery?.status === "completed" ? context.discovery.answers : null),
     impact_pending: context.discovery?.impact_pending ?? false,
   });
@@ -49,8 +51,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const { id } = await params;
   const context = await ownedSite(id);
   if ("error" in context) return context.error;
+  const answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers, context.discovery?.answers as DiscoveryAnswers | undefined);
   const baseline = context.discovery?.baseline_answers ?? (context.discovery?.status === "completed" ? context.discovery.answers : undefined);
-  const changed = Boolean(baseline) && JSON.stringify(baseline) !== JSON.stringify(parsed.data.answers);
+  const changed = Boolean(baseline) && JSON.stringify(baseline) !== JSON.stringify(answers);
   const systems = await context.supabase.from("projects").select("id,phase,mode,updated_at").eq("site_id", id).eq("owner_id", context.userId).order("updated_at", { ascending: false });
   if (systems.error) return Response.json({ error: systems.error.message }, { status: 400 });
   const saved = await context.supabase.from("site_discoveries").upsert({
@@ -58,8 +61,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     owner_id: context.userId,
     status: "completed",
     question_id: null,
-    answers: parsed.data.answers,
-    baseline_answers: parsed.data.answers,
+    answers,
+    baseline_answers: answers,
     impact_pending: changed && systems.data.length > 0,
     completed_at: new Date().toISOString(),
   });
@@ -75,15 +78,15 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const targets = requestedSystem ? [requestedSystem] : activeDesigns;
   try {
     if (changed) affectedDesigns = await invalidateProposalAfterDiscovery(context.supabase, context.userId, targets.map((system) => system.id));
-    const nextProjectType = discoveryProjectType(parsed.data.answers as DiscoveryAnswers);
+    const nextProjectType = discoveryProjectType(answers);
     const nextMode = nextProjectType === "grid-tied" ? "grid_tied" : nextProjectType === "hybrid" ? "hybrid" : "off_grid";
     for (const system of targets) {
       const updatedSystem = await context.supabase.from("projects").update({ mode: nextMode }).eq("id", system.id).eq("owner_id", context.userId);
       if (updatedSystem.error) throw updatedSystem.error;
       await refreshProjectSolarResource(context.supabase, context.userId, system.id, id, nextMode === "off_grid");
       await applyWattsonActions(context.supabase, system.id, [
-        ...siteDiscoveryActions(parsed.data.answers as DiscoveryAnswers),
-        ...deterministicProposalActions(parsed.data.answers as DiscoveryAnswers),
+        ...siteDiscoveryActions(answers),
+        ...deterministicProposalActions(answers),
       ]);
     }
   } catch (problem) {

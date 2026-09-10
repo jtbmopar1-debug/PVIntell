@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "version": 1,
+    "description": "Strict radial compass layout copied from WeatherMe"
+  },
+  "geometry": {
+    "size": 400,
+    "center": { "x": 200, "y": 200 },
+    "radius": 180
+  },
+  "angleSystem": {
+    "zeroAtTop": true,
+    "clockwise": true,
+    "svgOffsetDegrees": -90
+  },
+  "rings": {
+    "outerGlowRadius": 180,
+    "tickStartRadius": 162,
+    "tickEndRadiusMinor": 170,
+    "tickEndRadiusMajor": 176,
+    "tickEndRadiusCardinal": 180,
+    "numberRadius": 145,
+    "letterRadius": 120
+  },
+  "numbers": {
+    "enabled": true,
+    "intervalDegrees": 30,
+    "showZero": false,
+    "fontSize": 14,
+    "fontWeight": 400
+  },
+  "cardinals": {
+    "enabled": true,
+    "items": [
+      { "label": "N", "degree": 0 },
+      { "label": "E", "degree": 90 },
+      { "label": "S", "degree": 180 },
+      { "label": "W", "degree": 270 }
+    ],
+    "fontSize": 22,
+    "fontWeight": 700
+  },
+  "ticks": {
+    "minor": { "everyDegrees": 5, "width": 1 },
+    "major": { "everyDegrees": 30, "width": 2 },
+    "cardinal": { "everyDegrees": 90, "width": 3 }
+  },
+  "needle": {
+    "length": 120,
+    "width": 4,
+    "pivotRadius": 6
+  }
+}

@@ -50,6 +50,39 @@ describe("deterministic proposal sizing", () => {
     expect(deriveProposalSizing({ mode: "off-grid", discovery: { ...discovery, pool_heating_method: "none" } }).simultaneousLoadKw ?? 0).toBe(0);
   });
 
+  it("includes scheduled pool-equipment runtime in daily energy sizing", () => {
+    const result = deriveProposalSizing({ mode: "off-grid", discovery: {
+      pool_equipment: "filtration_pump",
+      pool_equipment_ratings: JSON.stringify({ filtration_pump: { quantity: 1, runningKw: 1.2, startingKw: 3.6, runtimeMinutesPerDay: 480, simultaneous: true } }),
+    } });
+    expect(result.scheduledLoadEnergyKwh).toBe(9.6);
+    expect(result.simultaneousLoadKw).toBe(1.2);
+    expect(result.startupPeakKw).toBeCloseTo(3.6);
+  });
+
+  it("sizes solar and inverter from the pool schedule when no daily total is recorded", () => {
+    const result = deriveProposalSizing({
+      mode: "off-grid",
+      peakSunHours: 4,
+      representativePanelWatts: 460,
+      discovery: {
+        pool_equipment: "filtration_pump",
+        pool_equipment_ratings: JSON.stringify({ filtration_pump: { quantity: 1, runningKw: 1.2, startingKw: 3.6, runtimeMinutesPerDay: 480, simultaneous: true } }),
+      },
+    });
+    expect(result).toMatchObject({ dailyEnergyKwh: 9.6, dailyEnergySource: "pool_equipment_schedule", panelCount: 8, pvKw: 3.68, inverterKw: 4 });
+  });
+
+  it("retains user-added pool equipment outside the original checklist", () => {
+    const result = deriveProposalSizing({ mode: "grid-tied", discovery: {
+      pool_equipment: "filtration_pump",
+      pool_equipment_ratings: JSON.stringify({ pool_equipment__1: { name: "UV unit", baseType: "custom_pool_equipment", customPoolEquipment: true, loadType: "non_motor", quantity: 1, runningKw: .2, runtimeMinutesPerDay: 600, simultaneous: true } }),
+    } });
+    expect(result.scheduledPoolEnergyKwh).toBe(2);
+    expect(result.simultaneousLoadKw).toBe(.2);
+    expect(result.startupPeakKw).toBe(.2);
+  });
+
   it("does not let an excluded generator's stale recharge role reduce storage", () => {
     const result = deriveProposalSizing({ mode: "hybrid", discovery: { ...wholeHomeDiscovery, generator_requirement: "none" } });
     expect(result.batteryUsableKwh).toBeUndefined();
@@ -182,7 +215,7 @@ describe("deterministic proposal sizing", () => {
     expect(result.simultaneousLoadKw).toBe(3.8);
     expect(result.startupPeakKw).toBe(7.8);
     expect(result.assumptions).toEqual(expect.arrayContaining([
-      expect.stringContaining("runtimes imply about 0.1 kWh per workday"),
+      expect.stringContaining("runtimes imply about 0.1 kWh per day"),
     ]));
   });
 

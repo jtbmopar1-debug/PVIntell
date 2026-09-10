@@ -240,7 +240,7 @@ export interface DesignCalculatorState {
   sizingMethod?: "deterministic-v1" | "user-adjusted";
   sizingInputs?: {
     dailyEnergyKwh?: number;
-    dailyEnergySource?: "off_grid_daily_energy_use" | "current_energy_use";
+    dailyEnergySource?: "off_grid_daily_energy_use" | "current_energy_use" | "pool_equipment_schedule";
     peakSunHours?: number;
     systemEfficiency?: number;
     simultaneousLoadKw?: number;

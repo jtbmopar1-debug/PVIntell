@@ -124,6 +124,38 @@ describe("discovery → stored proposal → calculator save", () => {
     expect((built.project.settings.designCalculator as { sizingInputs: unknown }).sizingInputs).toMatchObject({ scheduledLoadEnergyKwh: 1.8 });
   });
 
+  it("persists selected pool equipment and sizes a proposal from its timer schedule", async () => {
+    const answers: DiscoveryAnswers = {
+      utility_relationship: "grid_connected",
+      battery_requirement: "none",
+      panel_location: ["main_roof"],
+      panel_construction_interest: ["bifacial"],
+      pool_or_spa: ["pool"],
+      pool_heating_method: ["heat_pump"],
+      pool_equipment: ["sanitation", "filtration_pump"],
+      pool_equipment_ratings: JSON.stringify({
+        filtration_pump: { quantity: 1, runningKw: 2, startingKw: 6, runtimeMinutesPerDay: 240, simultaneous: true },
+        sanitation: { quantity: 1, runningKw: .3, startingKw: .3, runtimeMinutesPerDay: 240, simultaneous: true },
+      }),
+      architecture_preference: "string_inverter",
+    };
+    const built = await build(answers, projectStore("grid_tied"));
+    expect(built.project.settings.designDiscovery).toMatchObject({
+      pool_equipment: { value: "sanitation, filtration_pump" },
+      pool_equipment_ratings: { value: answers.pool_equipment_ratings },
+    });
+    expect(built.design).toMatchObject({
+      panelCount: 13,
+      inverterKw: 5,
+      sizingInputs: {
+        dailyEnergyKwh: 9.2,
+        dailyEnergySource: "pool_equipment_schedule",
+        simultaneousLoadKw: 2.3,
+        scheduledLoadEnergyKwh: 9.2,
+      },
+    });
+  });
+
   it("does not reuse an excluded generator's stale rating or connection", async () => {
     const store = projectStore();
     store.project.settings.designCalculator = { generatorContinuousKw: 20, generatorSurgeKw: 30, generatorConnectionMethod: "ats" };

@@ -3,6 +3,7 @@ import tzLookup from "tz-lookup";
 import { applyWattsonActions, type WattsonActionRequest } from "@/ai/actions";
 import { createSystem } from "@/data/cloud-project";
 import { discoveryProjectType, newSystemQuestions, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers } from "@/discovery/new-system";
+import { reconcileDiscoveryDependencies } from "@/discovery/dependencies";
 import { invalidateProposalAfterDiscovery } from "@/design/invalidate-proposal";
 import { deterministicProposalActions } from "@/design/proposal-action";
 import { refreshProjectSolarResource } from "@/design/refresh-solar-resource";
@@ -153,13 +154,14 @@ export async function PUT(request: Request) {
   if (!parsed.success) return Response.json({ error: "Invalid discovery draft" }, { status: 400 });
   const context = await accountContext();
   if ("error" in context) return context.error;
+  const answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers);
   if (parsed.data.draftId) {
     const saved = await context.supabase.from("discovery_drafts").upsert({
       id: parsed.data.draftId,
       owner_id: context.userId,
       status: "draft",
       question_id: parsed.data.questionId ?? null,
-      answers: parsed.data.answers,
+      answers,
     }, { onConflict: "id" });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
     return Response.json({ saved: true, draftId: parsed.data.draftId });
@@ -169,7 +171,7 @@ export async function PUT(request: Request) {
     version: 1,
     status: "draft",
     questionId: parsed.data.questionId ?? null,
-    answers: parsed.data.answers,
+    answers,
     updatedAt: new Date().toISOString(),
   };
   const saved = await context.supabase.from("profiles").update({ onboarding_assessment: assessment }).eq("id", context.userId);
@@ -184,7 +186,7 @@ export async function PATCH(request: Request) {
   if ("error" in context) return context.error;
   const project = await context.supabase.from("projects").select("id,site_id").eq("id", parsed.data.projectId).eq("owner_id", context.userId).maybeSingle();
   if (project.error || !project.data) return Response.json({ error: "Power system not found." }, { status: 404 });
-  const answers = parsed.data.answers as DiscoveryAnswers;
+  const answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers);
   try {
     await refreshProjectSolarResource(context.supabase, context.userId, project.data.id, project.data.site_id, discoveryProjectType(answers) === "off-grid");
   } catch (problem) {
@@ -227,7 +229,7 @@ export async function PATCH(request: Request) {
 export async function POST(request: Request) {
   const parsed = completeSchema.safeParse(await request.json());
   if (!parsed.success) return Response.json({ error: "Invalid discovery answers" }, { status: 400 });
-  const answers = parsed.data.answers as DiscoveryAnswers;
+  const answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers);
   const context = await accountContext();
   if ("error" in context) return context.error;
   const unresolvedValues = new Set([unknownAnswer, "unknown", "not_checked", "not_decided", "undecided", "unknown_chemistry"]);

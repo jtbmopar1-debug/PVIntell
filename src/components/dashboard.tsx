@@ -233,6 +233,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             <Link href={`/systems${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link>
             <Link href={`/how-to${siteId ? `?site=${siteId}` : ""}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link>
             <Link href={`/monitor${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Monitor</Link>
+            <Link href={`/tools${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Tools</Link>
             <Link href={`/settings${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link>
           </nav>
           <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="ml-auto grid size-9 shrink-0 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>
@@ -247,6 +248,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
               <Link href={`/systems${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link>
               <Link href={`/how-to${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">How to</Link>
               <Link href={`/monitor${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Monitor</Link>
+              <Link href={`/tools${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Tools</Link>
               <Link href={`/settings${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link>
             </div>
           </nav>

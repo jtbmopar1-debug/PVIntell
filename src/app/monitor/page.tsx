@@ -5,14 +5,15 @@ import { DailyMonitor, type MonitorSystem } from "@/components/daily-monitor";
 export default async function MonitorPage({ searchParams }: { searchParams: Promise<{ system?: string; site?: string }> }) {
   const db = await createClient(); const claims = await db.auth.getClaims(); const ownerId = claims.data?.claims?.sub;
   if (claims.error || typeof ownerId !== "string") redirect("/login");
-  const [projects, sites, params] = await Promise.all([
+  // RLS on pv_arrays already limits this unfiltered query to the signed-in user's projects.
+  // Fetch it with the page shell instead of waiting for project IDs and adding another network round trip.
+  const [projects, sites, arrays, params] = await Promise.all([
     db.from("projects").select("id,site_id,name,phase").eq("owner_id", ownerId).order("name"),
     db.from("sites").select("id,name,location,latitude,longitude,timezone").eq("owner_id", ownerId),
+    db.from("pv_arrays").select("project_id,panel_watts,panel_count,orientation_degrees,tilt_degrees"),
     searchParams,
   ]);
   if (projects.error || sites.error) throw new Error("Could not load your systems");
-  const ids = projects.data.map((project) => project.id);
-  const arrays = ids.length ? await db.from("pv_arrays").select("project_id,panel_watts,panel_count,orientation_degrees,tilt_degrees").in("project_id", ids) : { data: [], error: null };
   if (arrays.error) throw new Error("Could not load recorded arrays");
   const systems: MonitorSystem[] = projects.data.flatMap((project) => {
     const site = sites.data.find((item) => item.id === project.site_id);

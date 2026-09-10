@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen, Calculator, ChevronRight, CircleHelp, CloudSun, FileText, Link2, LockKeyhole, LogOut, MessageSquareText, PackageOpen, SlidersHorizontal, UserRound, Wrench } from "lucide-react";
+import { ArrowLeft, BookOpen, ChevronRight, CircleHelp, CloudSun, FileText, Link2, LockKeyhole, LogOut, MessageSquareText, PackageOpen, SlidersHorizontal, UserRound, Wrench } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -42,8 +42,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     { href: "/onboarding?edit=1", title: "Onboarding answers", detail: "Review how Wattson adapts to your experience, situation and goals", icon: CircleHelp },
     { href: "/settings/preferences", title: "Preferences", detail: "Measurement units and display settings", icon: SlidersHorizontal },
     { href: `/settings/inventory${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Unused Inventory", detail: "Owned equipment that has not been assigned to a system", icon: PackageOpen },
-    { href: `/settings/tools${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Tools", detail: "Solar finances, azimuth, panel tilt, cable sizing and voltage drop", icon: Calculator },
-    { href: `/monitor${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Monitor", detail: "Daily solar, forecast comparisons, SOC and generator log", icon: SlidersHorizontal },
+    { href: `/monitor${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Monitor", detail: "Daily solar, forecasts, SOC, generator and grid log", icon: SlidersHorizontal },
     { href: "/settings/connections", title: "Connect", detail: "Connect Junctek battery monitors to systems", icon: Link2 },
     { href: weatherHref, title: "Solar weather", detail: weatherSite ? `Forecast and production outlook · ${weatherSite.name}` : "Forecast and production outlook", icon: CloudSun },
     { href: "/glossary", title: "Glossary", detail: "Plain-language solar, battery and electrical terms", icon: BookOpen },

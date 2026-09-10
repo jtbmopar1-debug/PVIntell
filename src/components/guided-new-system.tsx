@@ -8,6 +8,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
 import { PoolHeatingCalculator } from "@/components/pool-heating-calculator";
 import { discoveryStages, helpForExperience, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers, type DiscoveryQuestion } from "@/discovery/new-system";
+import { reconcileDiscoveryDependencies } from "@/discovery/dependencies";
+import { timerRuntimeMinutes } from "@/discovery/load-schedule";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 
 const EditableSiteMap = dynamic(() => import("@/components/editable-site-map"), { ssr: false });
@@ -26,14 +28,15 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   stageFilter?: "site";
 }) {
   const router = useRouter();
-  const [answers, setAnswers] = useState<DiscoveryAnswers>(initialAnswers);
+  const normalizedInitialAnswers = reconcileDiscoveryDependencies(initialAnswers);
+  const [answers, setAnswers] = useState<DiscoveryAnswers>(normalizedInitialAnswers);
   const combinedInitialSetup = !stageFilter && !siteDiscoveryId;
   const questionsFor = (values: DiscoveryAnswers) => visibleDiscoveryQuestions(values).filter((item) => item.id !== "household_motor_ratings" && (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"));
-  const initialQuestions = questionsFor(initialAnswers);
+  const initialQuestions = questionsFor(normalizedInitialAnswers);
   const [index, setIndex] = useState(() => {
     const requestedIndex = initialQuestions.findIndex((question) => question.id === initialQuestionId);
     if (requestedIndex >= 0) return requestedIndex;
-    const firstIncompleteIndex = initialQuestions.findIndex((question) => !discoveryAnswerComplete(question.id, initialAnswers[question.id]));
+    const firstIncompleteIndex = initialQuestions.findIndex((question) => !discoveryAnswerComplete(question.id, normalizedInitialAnswers[question.id], normalizedInitialAnswers));
     return Math.max(0, firstIncompleteIndex);
   });
   const [saving, setSaving] = useState(false);
@@ -53,8 +56,8 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const newSiteLocationComplete = typeof answers.site_latitude === "number" && typeof answers.site_longitude === "number";
   const selectedHighPowerLoads = Array.isArray(answers.heavy_loads) ? answers.heavy_loads.filter((item) => item !== "none") : [];
   const highPowerRatingsComplete = highPowerLoadRatingsComplete(answers.household_motor_ratings, selectedHighPowerLoads);
-  const currentAnswerComplete = question ? discoveryAnswerComplete(question.id, answers[question.id]) && (question.id !== "heavy_loads" || highPowerRatingsComplete) && !(question.id === "system_name" && combinedInitialSetup && (answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete) : true;
-  const incompleteQuestions = questions.filter((item) => !discoveryAnswerComplete(item.id, answers[item.id])
+  const currentAnswerComplete = question ? discoveryAnswerComplete(question.id, answers[question.id], answers) && (question.id !== "heavy_loads" || highPowerRatingsComplete) && !(question.id === "system_name" && combinedInitialSetup && (answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete) : true;
+  const incompleteQuestions = questions.filter((item) => !discoveryAnswerComplete(item.id, answers[item.id], answers)
     || (item.id === "heavy_loads" && !highPowerRatingsComplete)
     || (item.id === "site_name" && sites.length > 0 && !answers.site_id)
     || (item.id === "system_name" && combinedInitialSetup && (!answers.site_name || (sites.length > 0 && !answers.site_id) || ((answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete))));
@@ -80,7 +83,8 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   function setAnswer(value: string | number | string[]) {
     setAnswers((current) => {
       if (!question) return current;
-      const next = { ...current, [question.id]: value };
+      let next = { ...current, [question.id]: value };
+      if (question.id === "panel_location") next = reconcileDiscoveryDependencies(next, current);
       if (question.id === "panel_location" && Array.isArray(value) && value.includes("none")) {
         delete next.panel_construction_interest;
         delete next.existing_panel_selection;
@@ -136,7 +140,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
         delete next.solar_hot_water_pump_watts;
         delete next.solar_hot_water_pump_hours_per_day;
       }
-      return next;
+      return reconcileDiscoveryDependencies(next, current);
     });
   }
 
@@ -343,7 +347,7 @@ function QuestionCard({ question, value, profile, sites, selectedSiteId, siteNam
     return <PoolHeaterCapacityCard question={question} profile={profile} value={value} locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} setAnswer={setAnswer} setRelatedAnswer={setRelatedAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "pool_equipment_ratings") {
-    return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={Array.isArray(siteLocationAnswers.pool_equipment) ? siteLocationAnswers.pool_equipment : []} heating={Array.isArray(siteLocationAnswers.pool_heating_method) ? siteLocationAnswers.pool_heating_method.filter((item) => item !== "heat_pump") : []} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
+    return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={Array.isArray(siteLocationAnswers.pool_equipment) ? siteLocationAnswers.pool_equipment : []} heating={Array.isArray(siteLocationAnswers.pool_heating_method) ? siteLocationAnswers.pool_heating_method.filter((item) => ratedPoolHeatingMethods.has(item)) : []} poolThermalKw={Number(siteLocationAnswers.pool_heating_profile) || undefined} poolElectricalKw={Number(siteLocationAnswers.pool_heater_electrical_kw) || undefined} poolHeaterCop={Number(siteLocationAnswers.pool_heater_cop) || undefined} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "heavy_loads") {
     return <HighPowerLoadsCard question={question} profile={profile} value={value} ratingsValue={siteLocationAnswers.household_motor_ratings} setAnswer={setAnswer} setRatings={(next) => setRelatedAnswer("household_motor_ratings", next)} onAskWattson={onAskWattson}/>;
@@ -389,6 +393,7 @@ function PoolHeaterCapacityCard({ question, profile, value, locationLabel, setAn
 }
 
 const poolLoadLabels: Record<string, string> = { filtration_pump: "Filtration or circulation pump", booster_cleaner_pump: "Booster or cleaner pump", sanitation: "Sanitation equipment", spa_jet_air_pump: "Spa jet or air pump", water_feature: "Water feature or auxiliary pump", controls: "Controls and automation", heat_pump: "Heat pump or air conditioning", resistive_electric: "Electric resistance heater", spa_inline_heater: "Built-in spa-bath heater", gas: "Gas heater controls and ignition", domestic_hot_water: "Domestic hot-water supply", water_pump: "Water, bore or pressure pump", septic_pump: "Sewage or septic pump", septic_aerator: "Septic aerator or treatment blower", sump_drainage_pump: "Sump or drainage pump", compressor: "Air compressor", welder: "Welder", saw_tools: "Large saws or workshop tools", refrigeration: "Refrigerator or upright freezer", chest_freezer: "Chest freezer", electric_water: "Electric water heating", pool_heat_pump: "Pool or spa electrical heating", ev: "EV charging", electric_oven: "Electric oven", electric_cooktop: "Electric cooktop", induction: "Induction cooktop", air_fryer: "Air fryer", microwave: "Microwave" };
+const ratedPoolHeatingMethods = new Set(["heat_pump", "resistive_electric", "spa_inline_heater", "gas", "hybrid"]);
 type HeatPumpUnit = {
   name?: string;
   model?: string;
@@ -403,7 +408,7 @@ type HeatPumpUnit = {
   thermalCapacityKw?: number;
   startingKw?: number;
 };
-type PoolLoadEntry = { name?: string; baseType?: string; quantity?: number; runningKw?: number; peakRunningKw?: number; startingKw?: number; simultaneous?: boolean; startingBasis?: "automatic" | "manufacturer"; runtimeMinutesPerDay?: number; longestRunMinutes?: number; inputAmps?: number; voltageV?: number; phase?: "single" | "three"; welderTechnology?: "inverter" | "transformer"; dutyCyclePercent?: number; inputKva?: number; units?: HeatPumpUnit[] };
+type PoolLoadEntry = { name?: string; baseType?: string; customPoolEquipment?: boolean; loadType?: "motor" | "heat_pump" | "non_motor"; quantity?: number; runningKw?: number; peakRunningKw?: number; startingKw?: number; simultaneous?: boolean; startingBasis?: "automatic" | "manufacturer"; runtimeMinutesPerDay?: number; longestRunMinutes?: number; scheduleMode?: "timer" | "automatic" | "manual" | "continuous"; timerStart?: string; timerEnd?: string; operatingWindow?: "daylight" | "overnight" | "mixed" | "demand"; inputAmps?: number; voltageV?: number; phase?: "single" | "three"; welderTechnology?: "inverter" | "transformer"; dutyCyclePercent?: number; inputKva?: number; units?: HeatPumpUnit[] };
 
 function PoolEquipmentLoadsCard({ question, profile, value, equipment, heating, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
   let saved: Record<string, PoolLoadEntry> = {};
@@ -424,24 +429,36 @@ function StructuredPoolEquipmentLoadsCard({ question, profile, value, equipment,
   return <section className="card overflow-hidden bg-white"><div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><Bot size={17}/><p className="text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div><div className="grid gap-4 p-6 md:grid-cols-2 md:p-8">{selected.length ? selected.map((key) => { const row = saved[key] ?? {}; return <article key={key} className="rounded-2xl border border-line bg-[#f8fbfe] p-4"><div className="flex items-start justify-between gap-3"><strong className="text-sm">{poolLoadLabels[key] ?? key.replaceAll("_", " ")}</strong><span className="rounded-full bg-[#eaf2fb] px-2 py-1 text-[9px] font-bold uppercase tracking-[.08em] text-brand">Electrical input</span></div><div className="mt-4 grid gap-3 sm:grid-cols-3"><label className="text-[11px] font-bold">Quantity<input type="number" min="1" step="1" value={row.quantity ?? 1} onChange={(event) => update(key, "quantity", event.target.value)} className="field mt-1.5"/></label><label className="text-[11px] font-bold">Running kW<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => update(key, "runningKw", event.target.value)} placeholder="e.g. 1.1" className="field mt-1.5"/></label><label className="text-[11px] font-bold">Starting kW<input type="number" min="0" step="0.01" value={row.startingKw ?? ""} onChange={(event) => update(key, "startingKw", event.target.value)} placeholder="if known" className="field mt-1.5"/></label></div><label className="mt-3 flex items-center gap-2 text-[11px] font-semibold"><input type="checkbox" checked={row.simultaneous ?? true} onChange={(event) => update(key, "simultaneous", event.target.checked)} className="size-4 accent-[#23679e]"/> May run at the same time as the other selected loads</label></article>; }) : <p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-4 text-xs leading-5 text-[#765918] md:col-span-2">Select the pool equipment first. Wattson will then show one rating card for each selected item.</p>}<div className="flex flex-wrap items-center gap-3 md:col-span-2"><button type="button" onClick={onAskWattson} className="rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white">Ask Wattson</button><span className="text-[11px] text-muted">A clear photo of each rating label can help identify these values.</span></div></div></section>;
 }
 
-function poolStartingMultiplier(key: string) {
+function poolStartingMultiplier(key: string, loadType?: PoolLoadEntry["loadType"]) {
+  if (loadType === "motor") return 3;
+  if (loadType === "heat_pump") return 2.5;
+  if (loadType === "non_motor") return 1;
   if (["filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature", "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "compressor", "saw_tools", "refrigeration", "chest_freezer"].includes(key)) return 3;
   if (["heat_pump", "pool_heat_pump"].includes(key)) return 2.5;
   return 1;
 }
 
-function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, heating, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
+function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, heating, poolThermalKw, poolElectricalKw, poolHeaterCop, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; poolThermalKw?: number; poolElectricalKw?: number; poolHeaterCop?: number; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
   let saved: Record<string, PoolLoadEntry> = {};
   if (typeof value === "string") { try { saved = JSON.parse(value) as Record<string, PoolLoadEntry>; } catch { saved = {}; } }
   const selected = Array.from(new Set([...equipment, ...heating].filter((item) => item && item !== "none")));
   const additionalToolKeys = Object.keys(saved).filter((key) => key.startsWith("saw_tools__") && selected.includes("saw_tools"));
-  const displayedEntries = [...selected, ...additionalToolKeys];
-  const saveEntry = (key: string, changes: Partial<PoolLoadEntry>) => setAnswer(JSON.stringify({ ...saved, [key]: { quantity: 0, simultaneous: true, ...saved[key], ...changes } }));
+  const additionalPoolEquipmentKeys = question.id === "pool_equipment_ratings" ? Object.keys(saved).filter((key) => saved[key]?.customPoolEquipment === true || key.startsWith("pool_equipment__")) : [];
+  const displayedEntries = [...selected, ...additionalToolKeys, ...additionalPoolEquipmentKeys];
+  const poolHeatPumpElectricalKw = poolElectricalKw ?? (poolThermalKw ? Number((poolThermalKw / (poolHeaterCop ?? 5)).toFixed(2)) : undefined);
+  const entryDefaults = (key: string): Partial<PoolLoadEntry> => question.id === "pool_equipment_ratings" && key === "heat_pump" ? { quantity: 1, runningKw: poolHeatPumpElectricalKw, simultaneous: true, startingBasis: "automatic" } : {};
+  const saveEntry = (key: string, changes: Partial<PoolLoadEntry>) => setAnswer(JSON.stringify({ ...saved, [key]: { quantity: 0, simultaneous: true, ...entryDefaults(key), ...saved[key], ...changes } }));
   const addAnotherTool = () => {
     let ordinal = additionalToolKeys.length + 2;
     while (saved[`saw_tools__${ordinal}`]) ordinal += 1;
     const key = `saw_tools__${ordinal}`;
     setAnswer(JSON.stringify({ ...saved, [key]: { name: `Workshop tool ${ordinal}`, baseType: "saw_tools", quantity: 1, simultaneous: true, startingBasis: "automatic" } }));
+  };
+  const addAnotherPoolEquipment = () => {
+    let ordinal = additionalPoolEquipmentKeys.length + 1;
+    while (saved[`pool_equipment__${ordinal}`]) ordinal += 1;
+    const key = `pool_equipment__${ordinal}`;
+    setAnswer(JSON.stringify({ ...saved, [key]: { name: `Additional pool equipment ${ordinal}`, baseType: "custom_pool_equipment", customPoolEquipment: true, loadType: "motor", quantity: 1, simultaneous: true, startingBasis: "automatic", scheduleMode: "timer" } }));
   };
   const removeAdditionalTool = (key: string) => {
     const next = { ...saved };
@@ -452,7 +469,7 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
   const updateRunning = (key: string, raw: string) => {
     const runningKw = numberValue(raw);
     const baseType = saved[key]?.baseType ?? key.split("__")[0];
-    const startingKw = runningKw === undefined ? undefined : Number((runningKw * poolStartingMultiplier(baseType)).toFixed(2));
+    const startingKw = runningKw === undefined ? undefined : Number((runningKw * poolStartingMultiplier(baseType, saved[key]?.loadType)).toFixed(2));
     const quantity = runningKw !== undefined && runningKw > 0 && (saved[key]?.quantity ?? 0) === 0 ? 1 : saved[key]?.quantity;
     saveEntry(key, { runningKw, startingKw, startingBasis: "automatic", quantity });
   };
@@ -461,25 +478,40 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
     <div className="grid gap-4 p-6 md:grid-cols-2 md:p-8">
       <div className="flex flex-wrap items-center gap-3 md:col-span-2"><button type="button" onClick={onAskWattson} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Photograph a label with Wattson</button><span className="text-[11px] text-muted">Wattson will read the model and the usable rating fields, and tell you if another label is needed.</span></div>
       {displayedEntries.length ? displayedEntries.map((key) => {
-        const row = saved[key] ?? {};
+        const row = { ...entryDefaults(key), ...(saved[key] ?? {}) };
         const baseType = row.baseType ?? key.split("__")[0];
         const additionalTool = key.startsWith("saw_tools__");
+        const additionalPoolEquipment = row.customPoolEquipment === true || key.startsWith("pool_equipment__");
         const workshopRuntime = ["saw_tools", "compressor", "welder"].includes(baseType);
-        const multiplier = poolStartingMultiplier(baseType);
+        const poolSchedule = question.id === "pool_equipment_ratings";
+        const showRuntime = workshopRuntime || poolSchedule;
+        const multiplier = poolStartingMultiplier(baseType, row.loadType);
         const estimatedStart = row.startingKw ?? (row.runningKw ? Number((row.runningKw * multiplier).toFixed(2)) : undefined);
         const energyInputKw = row.peakRunningKw ?? row.runningKw ?? row.inputKva;
         const dailyEnergyKwh = energyInputKw && row.runtimeMinutesPerDay ? Number((energyInputKw * (row.quantity ?? 1) * row.runtimeMinutesPerDay / 60).toFixed(2)) : undefined;
         const invalidRunDuration = Boolean(row.runtimeMinutesPerDay && row.longestRunMinutes && row.longestRunMinutes > row.runtimeMinutesPerDay);
+        const saveTimerTime = (field: "timerStart" | "timerEnd", nextValue: string) => {
+          const timerStart = field === "timerStart" ? nextValue : row.timerStart;
+          const timerEnd = field === "timerEnd" ? nextValue : row.timerEnd;
+          const runtimeMinutesPerDay = timerRuntimeMinutes(timerStart, timerEnd);
+          saveEntry(key, {
+            [field]: nextValue || undefined,
+            ...(runtimeMinutesPerDay === undefined ? {} : { runtimeMinutesPerDay, longestRunMinutes: runtimeMinutesPerDay }),
+          });
+        };
         return <article key={key} className="rounded-2xl border border-line bg-[#f8fbfe] p-4">
-          <div className="flex items-start justify-between gap-3">{baseType === "saw_tools" ? <label className="min-w-0 flex-1 text-[10px] font-bold">Tool name<input value={row.name ?? poolLoadLabels.saw_tools} onChange={(event) => saveEntry(key, { name: event.target.value, ...(additionalTool ? { baseType: "saw_tools" } : {}) })} className="field mt-1.5" placeholder="e.g. Drop saw, lathe or dust extractor"/></label> : <strong className="text-sm">{poolLoadLabels[baseType] ?? baseType.replaceAll("_", " ")}</strong>}{additionalTool ? <button type="button" onClick={() => removeAdditionalTool(key)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-[#e7b7af] text-[#a7442d]" aria-label={`Remove ${row.name || "additional tool"}`}><Trash2 size={15}/></button> : null}</div>
-          {baseType === "welder" ? <WelderRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" ? <HeatPumpRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : <><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">{baseType === "pool_heat_pump" ? "Rated electrical input" : "Running electrical input"}<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW{baseType === "pool_heat_pump" ? " input — not heating output capacity" : ""}</span></label></div>
+          <div className="flex items-start justify-between gap-3">{baseType === "saw_tools" || additionalPoolEquipment ? <label className="min-w-0 flex-1 text-[10px] font-bold">{additionalPoolEquipment ? "Equipment name" : "Tool name"}<input value={row.name ?? (additionalPoolEquipment ? "" : poolLoadLabels.saw_tools)} onChange={(event) => saveEntry(key, { name: event.target.value, ...(additionalTool ? { baseType: "saw_tools" } : {}), ...(additionalPoolEquipment ? { baseType: "custom_pool_equipment", customPoolEquipment: true } : {}) })} className="field mt-1.5" placeholder={additionalPoolEquipment ? "e.g. Second circulation pump or UV unit" : "e.g. Drop saw, lathe or dust extractor"}/></label> : <strong className="text-sm">{poolLoadLabels[baseType] ?? baseType.replaceAll("_", " ")}</strong>}{additionalTool || additionalPoolEquipment ? <button type="button" onClick={() => removeAdditionalTool(key)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-[#e7b7af] text-[#a7442d]" aria-label={`Remove ${row.name || (additionalPoolEquipment ? "additional pool equipment" : "additional tool")}`}><Trash2 size={15}/></button> : null}</div>
+          {additionalPoolEquipment ? <label className="mt-3 block text-[10px] font-bold">Equipment type<select value={row.loadType ?? "motor"} onChange={(event) => { const loadType = event.target.value as PoolLoadEntry["loadType"]; const startingKw = row.runningKw === undefined ? undefined : Number((row.runningKw * poolStartingMultiplier(baseType, loadType)).toFixed(2)); saveEntry(key, { loadType, startingKw, startingBasis: "automatic" }); }} className="field mt-1.5"><option value="motor">Pump, blower or other motor</option><option value="heat_pump">Heat pump or compressor</option><option value="non_motor">Controls, UV, dosing or non-motor load</option></select></label> : null}
+          {baseType === "welder" ? <WelderRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" && poolSchedule ? <PoolHeatPumpElectricalFields row={row} thermalKw={poolThermalKw} cop={poolHeaterCop ?? 5} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" ? <HeatPumpRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : <><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">{baseType === "pool_heat_pump" ? "Rated electrical input" : "Running electrical input"}<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW{baseType === "pool_heat_pump" ? " input — not heating output capacity" : ""}</span></label></div>
           <div className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">{multiplier > 1 ? "Wattson startup estimate" : "Planning input"}</span><strong className="mt-1 block text-sm">{estimatedStart === undefined ? "Enter running kW" : `${estimatedStart} kW`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">{multiplier > 1 ? <>Uses a {multiplier}× planning factor for this motor or compressor load. A variable-speed drive or soft starter may reduce it.</> : "No generic motor-start multiplier is applied; confirm the manufacturer's maximum electrical input when available."}</span></div></>}
-          {workshopRuntime ? <div className="mt-3 grid gap-3 rounded-xl border border-line bg-white p-3 sm:grid-cols-2"><label className="text-[10px] font-bold">Total use per workday<input type="number" min="0" step="0.5" value={row.runtimeMinutesPerDay === undefined ? "" : row.runtimeMinutesPerDay / 60} onChange={(event) => { const hours = numberValue(event.target.value); saveEntry(key, { runtimeMinutesPerDay: hours === undefined ? undefined : hours * 60 }); }} className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">hours across the whole day · 0.5 = 30 minutes</span></label><label className="text-[10px] font-bold">Longest continuous run<input type="number" min="0" max={row.runtimeMinutesPerDay || undefined} step="0.5" value={row.longestRunMinutes ?? ""} onChange={(event) => saveEntry(key, { longestRunMinutes: numberValue(event.target.value) })} className={`field mt-1.5 ${invalidRunDuration ? "border-[#c94c38]" : ""}`}/><span className="mt-1 block text-[9px] font-normal text-muted">minutes in one run</span></label>{invalidRunDuration ? <p className="rounded-lg border border-[#edc7bc] bg-[#fff0eb] p-3 text-[10px] font-semibold leading-4 text-[#913e31] sm:col-span-2">The longest single run cannot be longer than the total use for the whole workday.</p> : null}<div className="rounded-lg bg-[#eef6fd] p-3 sm:col-span-2"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">Runtime-based energy estimate</span><strong className="mt-1 block text-sm">{dailyEnergyKwh === undefined ? "Enter rating and daily hours" : `${dailyEnergyKwh} kWh/day`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">This estimates the tool&apos;s consumption, not the energy required from batteries or a generator. Direct solar may supply some or all of it when production and operation coincide. Running and startup ratings still apply whenever the tool operates.</span></div></div> : null}
+          {poolSchedule ? <div className="mt-3 grid gap-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 sm:grid-cols-2"><label className="text-[10px] font-bold">How it normally runs<select value={row.scheduleMode ?? "timer"} onChange={(event) => { const scheduleMode = event.target.value as PoolLoadEntry["scheduleMode"]; saveEntry(key, { scheduleMode, ...(scheduleMode === "continuous" ? { runtimeMinutesPerDay: 1440, longestRunMinutes: 1440 } : {}), ...(scheduleMode === "timer" ? {} : { timerStart: undefined, timerEnd: undefined }) }); }} className="field mt-1.5"><option value="timer">On a timer</option><option value="automatic">Automatic / demand controlled</option><option value="manual">Started manually</option><option value="continuous">Runs continuously</option></select></label><label className="text-[10px] font-bold">When it mostly runs<select value={row.operatingWindow ?? ""} onChange={(event) => saveEntry(key, { operatingWindow: event.target.value as PoolLoadEntry["operatingWindow"] || undefined })} className="field mt-1.5"><option value="">Choose period</option><option value="daylight">During daylight</option><option value="overnight">Mostly overnight</option><option value="mixed">Across day and night</option><option value="demand">Only when needed</option></select></label>{(row.scheduleMode ?? "timer") === "timer" ? <><label className="text-[10px] font-bold">Timer starts<input type="time" value={row.timerStart ?? ""} onChange={(event) => saveTimerTime("timerStart", event.target.value)} className="field mt-1.5"/></label><label className="text-[10px] font-bold">Timer stops<input type="time" value={row.timerEnd ?? ""} onChange={(event) => saveTimerTime("timerEnd", event.target.value)} className="field mt-1.5"/></label><p className="text-[9px] leading-4 text-muted sm:col-span-2">The timer window fills the daily runtime below, including schedules that cross midnight. Equal start and stop times are treated as unresolved; choose continuous for a 24-hour load.</p></> : null}</div> : null}
+          {showRuntime ? <div className="mt-3 grid gap-3 rounded-xl border border-line bg-white p-3 sm:grid-cols-2"><label className="text-[10px] font-bold">{workshopRuntime ? "Total use per workday" : "Typical total use per day"}<input type="number" min="0" max="24" step="0.5" value={row.runtimeMinutesPerDay === undefined ? "" : row.runtimeMinutesPerDay / 60} onChange={(event) => { const hours = numberValue(event.target.value); saveEntry(key, { runtimeMinutesPerDay: hours === undefined ? undefined : hours * 60 }); }} className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">hours across the whole day · 0.5 = 30 minutes</span></label><label className="text-[10px] font-bold">Longest continuous run<input type="number" min="0" max={row.runtimeMinutesPerDay || undefined} step="0.5" value={row.longestRunMinutes ?? ""} onChange={(event) => saveEntry(key, { longestRunMinutes: numberValue(event.target.value) })} className={`field mt-1.5 ${invalidRunDuration ? "border-[#c94c38]" : ""}`}/><span className="mt-1 block text-[9px] font-normal text-muted">minutes in one run</span></label>{invalidRunDuration ? <p className="rounded-lg border border-[#edc7bc] bg-[#fff0eb] p-3 text-[10px] font-semibold leading-4 text-[#913e31] sm:col-span-2">The longest single run cannot be longer than the total use for the whole day.</p> : null}<div className="rounded-lg bg-[#eef6fd] p-3 sm:col-span-2"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">Runtime-based energy estimate</span><strong className="mt-1 block text-sm">{dailyEnergyKwh === undefined ? "Enter rating and daily hours" : `${dailyEnergyKwh} kWh/day`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">{poolSchedule ? "This daily energy feeds solar and storage sizing. A daylight timer improves the chance of using solar directly, but the design does not assume sunshine will always be available." : "This estimates the tool’s consumption, not the energy required from batteries or a generator. Direct solar may supply some or all of it when production and operation coincide. Running and startup ratings still apply whenever the tool operates."}</span></div></div> : null}
           <label className="mt-3 flex items-center gap-2 text-[11px] font-semibold"><input type="checkbox" checked={row.simultaneous ?? true} onChange={(event) => saveEntry(key, { simultaneous: event.target.checked })} className="size-4 accent-[#23679e]"/> May run with the other selected loads</label>
           {!["welder", "heat_pump"].includes(baseType) ? <details className="mt-3 rounded-xl border border-line bg-white p-3"><summary className="cursor-pointer text-[10px] font-bold text-brand">I have the manufacturer’s maximum or starting value</summary><label className="mt-3 block text-[10px] font-bold">Starting or maximum input (kW)<input type="number" min="0" step="0.01" value={row.startingBasis === "manufacturer" ? row.startingKw ?? "" : ""} onChange={(event) => saveEntry(key, { startingKw: numberValue(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} className="field mt-1.5"/></label></details> : null}
         </article>;
       }) : <p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-4 text-xs leading-5 text-[#765918] md:col-span-2">Select the pool equipment first. Wattson will then show one rating card for each selected item.</p>}
       {selected.includes("saw_tools") ? <button type="button" onClick={addAnotherTool} className="flex h-11 items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand md:col-span-2"><Plus size={15}/>Add another tool</button> : null}
+      {question.id === "pool_equipment_ratings" ? <button type="button" onClick={addAnotherPoolEquipment} className="flex h-11 items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand md:col-span-2"><Plus size={15}/>Add another pump or piece of equipment</button> : null}
     </div>
   </section>;
 }
@@ -594,11 +626,12 @@ type PanelOrientation = { id: string; name: string; direction: string; slope: st
 type StructureCondition = { id: string; name: string; material: string; age: string; condition: string; constructionDetail?: string };
 type PanelObstruction = { id: string; areaId: string; kind: string; lengthM: string; widthM: string };
 
-function discoveryAnswerComplete(questionId: string, value: string | number | string[] | undefined) {
+function discoveryAnswerComplete(questionId: string, value: string | number | string[] | undefined, answers?: DiscoveryAnswers) {
   const unresolvedValues = new Set([unknownAnswer, "unknown", "not_checked", "not_decided", "undecided", "unknown_chemistry"]);
   if (typeof value === "string" && unresolvedValues.has(value)) return false;
   if (Array.isArray(value) && value.some((item) => unresolvedValues.has(item))) return false;
   if (value === undefined || value === "" || (Array.isArray(value) && value.length === 0)) return false;
+  if (questionId === "pool_equipment_ratings" && answers) return poolLoadRatingsComplete(value, answers);
   if (questionId === "panel_area_dimensions" && typeof value === "string") {
     try {
       const areas = JSON.parse(value) as PanelArea[];
@@ -638,6 +671,18 @@ function discoveryAnswerComplete(questionId: string, value: string | number | st
     } catch { return false; }
   }
   return true;
+}
+
+function poolLoadRatingsComplete(value: string | number | string[] | undefined, answers: DiscoveryAnswers) {
+  if (typeof value !== "string") return false;
+  try {
+    const ratings = JSON.parse(value) as Record<string, PoolLoadEntry>;
+    const equipment = (Array.isArray(answers.pool_equipment) ? answers.pool_equipment : [answers.pool_equipment]).filter((item): item is string => typeof item === "string" && item !== "none");
+    const heating = (Array.isArray(answers.pool_heating_method) ? answers.pool_heating_method : [answers.pool_heating_method]).filter((item): item is string => typeof item === "string" && ratedPoolHeatingMethods.has(item));
+    const selected = Array.from(new Set([...equipment, ...heating]));
+    const required = [...selected.map((key) => ratings[key]), ...Object.values(ratings).filter((row) => row.customPoolEquipment === true)];
+    return required.length > 0 && required.every((row) => row && Number(row.quantity) > 0 && Number(row.runningKw) > 0 && Number(row.runtimeMinutesPerDay) > 0 && !(Number(row.longestRunMinutes) > Number(row.runtimeMinutesPerDay)));
+  } catch { return false; }
 }
 
 function highPowerLoadRatingsComplete(value: string | number | string[] | undefined, selectedLoads: string[]) {
@@ -1164,8 +1209,8 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
 }
 
 function Review({ answers, questions, onSelectQuestion }: { answers: DiscoveryAnswers; questions: DiscoveryQuestion[]; onSelectQuestion: (questionId: string) => void }) {
-  const incomplete=questions.filter((question)=>!discoveryAnswerComplete(question.id, answers[question.id]));
-  return <section className="card overflow-hidden bg-white"><div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">Review</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">{incomplete.length ? "Complete your discovery" : "Ready for Wattson"}</h1><p className="mt-2 text-sm leading-6 text-muted">{incomplete.length ? `${incomplete.length} visible question${incomplete.length === 1 ? " is" : "s are"} still unanswered. Select any highlighted card to complete it before Wattson prepares the design.` : "Every visible question has been answered. These confirmed answers will form the design brief."}</p></div><div className="grid gap-3 p-6 md:grid-cols-2 md:p-8">{questions.map((question)=>{const missing=!discoveryAnswerComplete(question.id, answers[question.id]);return <button type="button" key={question.id} onClick={()=>onSelectQuestion(question.id)} className={`rounded-2xl border p-4 text-left transition hover:border-brand ${missing?"border-[#e7b43b] bg-[#fff9df] ring-1 ring-[#f1ce71]":"border-line bg-white"}`}><div className={`text-[10px] font-bold uppercase tracking-[.12em] ${missing?"text-[#8a6400]":"text-muted"}`}>{question.stage}{missing?" · Answer required":""}</div><div className="mt-2 text-xs font-bold">{question.title}</div><div className={`mt-2 text-xs ${missing?"font-bold text-[#8a6400]":"text-muted"}`}>{answerLabel(question,answers[question.id])}</div></button>})}</div></section>;
+  const incomplete=questions.filter((question)=>!discoveryAnswerComplete(question.id, answers[question.id], answers));
+  return <section className="card overflow-hidden bg-white"><div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">Review</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">{incomplete.length ? "Complete your discovery" : "Ready for Wattson"}</h1><p className="mt-2 text-sm leading-6 text-muted">{incomplete.length ? `${incomplete.length} visible question${incomplete.length === 1 ? " is" : "s are"} still unanswered. Select any highlighted card to complete it before Wattson prepares the design.` : "Every visible question has been answered. These confirmed answers will form the design brief."}</p></div><div className="grid gap-3 p-6 md:grid-cols-2 md:p-8">{questions.map((question)=>{const missing=!discoveryAnswerComplete(question.id, answers[question.id], answers);return <button type="button" key={question.id} onClick={()=>onSelectQuestion(question.id)} className={`rounded-2xl border p-4 text-left transition hover:border-brand ${missing?"border-[#e7b43b] bg-[#fff9df] ring-1 ring-[#f1ce71]":"border-line bg-white"}`}><div className={`text-[10px] font-bold uppercase tracking-[.12em] ${missing?"text-[#8a6400]":"text-muted"}`}>{question.stage}{missing?" · Answer required":""}</div><div className="mt-2 text-xs font-bold">{question.title}</div><div className={`mt-2 text-xs ${missing?"font-bold text-[#8a6400]":"text-muted"}`}>{answerLabel(question,answers[question.id])}</div></button>})}</div></section>;
 }
 
 function answerLabel(question: DiscoveryQuestion, value: string | number | string[] | undefined) {
@@ -1192,7 +1237,8 @@ function answerLabel(question: DiscoveryQuestion, value: string | number | strin
         const starting = (entry.startingKw ?? entry.runningKw ?? 0) * quantity;
         return Math.max(peak, simultaneousRunning + Math.max(0, starting - running));
       }, simultaneousRunning);
-      return `${Number(runningTotal.toFixed(2))} kW running total · ${Number(startupPeak.toFixed(2))} kW estimated startup peak${scheduledEnergy ? ` · ${Number(scheduledEnergy.toFixed(2))} kWh/workday scheduled` : ""}`;
+      const scheduleLabel = question.id === "pool_equipment_ratings" ? "kWh/day scheduled" : "kWh/workday scheduled";
+      return `${Number(runningTotal.toFixed(2))} kW running total · ${Number(startupPeak.toFixed(2))} kW estimated startup peak${scheduledEnergy ? ` · ${Number(scheduledEnergy.toFixed(2))} ${scheduleLabel}` : ""}`;
     } catch { return "Load totals need review"; }
   }
   if (typeof value === "string" && ["panel_area_dimensions", "orientation_and_pitch", "structure_condition", "panel_area_constraints"].includes(question.id)) {

@@ -208,20 +208,16 @@ export async function createSystem(
 }
 
 async function ensureWorkspace(supabase: SupabaseClient) {
-  const [siteResult, discoveryResult] = await Promise.all([
+  const [siteResult, discoveryResult, systemsResult] = await Promise.all([
     supabase.from("sites").select("*").order("created_at"),
     supabase.from("site_discoveries").select("site_id,impact_pending"),
+    supabase.from("projects").select("id,site_id,name,mode,phase").order("created_at"),
   ]);
   if (siteResult.error) throw siteResult.error;
   if (discoveryResult.error) throw discoveryResult.error;
+  if (systemsResult.error) throw systemsResult.error;
   const reviewNeeded = new Set((discoveryResult.data ?? []).filter((item) => item.impact_pending).map((item) => item.site_id));
   const sites = (siteResult.data ?? []).map((site) => ({ ...site, discovery_needs_review: reviewNeeded.has(site.id) }));
-
-  const systemsResult = await supabase
-    .from("projects")
-    .select("id,site_id,name,mode,phase")
-    .order("created_at");
-  if (systemsResult.error) throw systemsResult.error;
   const systems = systemsResult.data ?? [];
   return { sites, systems };
 }

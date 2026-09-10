@@ -25,7 +25,7 @@ export type ProposalSizingInput = {
 export type ProposalSizingResult = {
   method: "deterministic-v1";
   dailyEnergyKwh?: number;
-  dailyEnergySource?: "off_grid_daily_energy_use" | "current_energy_use";
+  dailyEnergySource?: "off_grid_daily_energy_use" | "current_energy_use" | "pool_equipment_schedule";
   peakSunHours?: number;
   weakestMonthPeakSunHours?: number;
   strongestMonthPeakSunHours?: number;
@@ -45,6 +45,7 @@ export type ProposalSizingResult = {
   startupPeakKw?: number;
   startupLoadName?: string;
   scheduledLoadEnergyKwh?: number;
+  scheduledPoolEnergyKwh?: number;
   batteryUsableKwh?: number;
   batteryOnlyDays?: number;
   batterySizingBasis?: "no_sun_autonomy" | "solar_assisted_typical_winter" | "daily_energy_fraction";
@@ -58,6 +59,8 @@ type LoadRating = {
   source?: "household" | "pool";
   name?: unknown;
   baseType?: unknown;
+  customPoolEquipment?: unknown;
+  loadType?: unknown;
   quantity?: unknown;
   runningKw?: unknown;
   peakRunningKw?: unknown;
@@ -131,7 +134,7 @@ function parsedRatings(discovery: Record<string, unknown>) {
           const heating = discoveryValue(discovery, "pool_heating_method");
           const selected = new Set([...answerList(equipment), ...answerList(heating)]);
           const recorded = equipment !== undefined || heating !== undefined;
-          ratings.push(...entries.filter(([key, rating]) => !recorded || selected.has(String(rating.baseType ?? key)))
+          ratings.push(...entries.filter(([key, rating]) => rating.customPoolEquipment === true || !recorded || selected.has(String(rating.baseType ?? key)))
             .map(([key, rating]) => ({ ...rating, source: "pool" as const, baseType: rating.baseType ?? key })));
         }
       }
@@ -155,6 +158,7 @@ function loadEnvelope(discovery: Record<string, unknown>) {
   let overlappingStartupLoadName = "";
   let standaloneStartupLoadName = "";
   let scheduledDailyEnergyKwh = 0;
+  let scheduledPoolEnergyKwh = 0;
   const warnings: string[] = [];
   for (const rating of ratings) {
     if (rating.quantity !== undefined && Number(rating.quantity) <= 0) continue;
@@ -163,11 +167,16 @@ function loadEnvelope(discovery: Record<string, unknown>) {
     const apparentInputKva = finitePositive(rating.inputKva);
     const runningKw = finitePositive(rating.peakRunningKw) ?? realRunningKw ?? apparentInputKva ?? 0;
     const motorType = String(rating.baseType);
-    const multiplier = ["compressor", "saw_tools", "filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature", "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "refrigeration", "chest_freezer"].includes(motorType) ? 3
+    const multiplier = rating.loadType === "motor" ? 3 : rating.loadType === "heat_pump" ? 2.5 : rating.loadType === "non_motor" ? 1
+      : ["compressor", "saw_tools", "filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature", "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "refrigeration", "chest_freezer"].includes(motorType) ? 3
       : ["heat_pump", "pool_heat_pump"].includes(motorType) ? 2.5 : 1;
     const startingKw = finitePositive(rating.startingKw) ?? runningKw * multiplier;
     const runtimeMinutesPerDay = finitePositive(rating.runtimeMinutesPerDay) ?? 0;
-    if (realRunningKw) scheduledDailyEnergyKwh += realRunningKw * quantity * runtimeMinutesPerDay / 60;
+    if (realRunningKw) {
+      const scheduledEnergyKwh = realRunningKw * quantity * runtimeMinutesPerDay / 60;
+      scheduledDailyEnergyKwh += scheduledEnergyKwh;
+      if (rating.source === "pool") scheduledPoolEnergyKwh += scheduledEnergyKwh;
+    }
     if (apparentInputKva && !realRunningKw) warnings.push(`${String(rating.name ?? rating.baseType ?? "Load")}: kVA is used only as a conservative power-screening envelope. Real kW/power factor is needed for its workday kWh; it is not included in that subtotal.`);
     if (runtimeMinutesPerDay > 1440 || Number(rating.longestRunMinutes) > runtimeMinutesPerDay && runtimeMinutesPerDay > 0) warnings.push(`${String(rating.name ?? rating.baseType ?? "Load")}: reconcile the total daily runtime and longest run before relying on its energy estimate.`);
     const entryContinuousKw = runningKw * quantity;
@@ -197,6 +206,7 @@ function loadEnvelope(discovery: Record<string, unknown>) {
     startupPeakKw: Math.max(overlappingStartupKw, standaloneStartupKw),
     startupLoadName: standaloneSetsPeak ? standaloneStartupLoadName : overlappingStartupLoadName,
     scheduledDailyEnergyKwh: rounded(scheduledDailyEnergyKwh),
+    scheduledPoolEnergyKwh: rounded(scheduledPoolEnergyKwh),
     warnings,
   };
 }
@@ -301,7 +311,12 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
   const discovery = input.discovery ?? {};
   const includesSolar = proposalIncludesSolar(discovery);
   const mode = normalizedMode(input.mode);
-  const energy = normalizedDailyEnergy(discovery);
+  const recordedEnergy = normalizedDailyEnergy(discovery);
+  const loads = loadEnvelope(discovery);
+  const scheduledPoolEnergyKwh = loads?.scheduledPoolEnergyKwh;
+  const energy = scheduledPoolEnergyKwh && (!recordedEnergy || scheduledPoolEnergyKwh > recordedEnergy.dailyKwh)
+    ? { dailyKwh: scheduledPoolEnergyKwh, source: "pool_equipment_schedule" as const }
+    : recordedEnergy;
   const peakSunHours = finitePositive(input.peakSunHours);
   const monthlySolar = Array.isArray(input.solarResource?.monthlyPeakSunHours)
     ? input.solarResource.monthlyPeakSunHours.map(Number).filter((value) => Number.isFinite(value) && value > 0)
@@ -310,6 +325,8 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
   const systemEfficiency = .8;
   const assumptions: string[] = [];
   const warnings: string[] = [];
+  if (energy?.source === "pool_equipment_schedule") assumptions.push("The entered pool-equipment schedule is the minimum known daily-energy basis because no larger whole-property daily total is recorded.");
+  else if (recordedEnergy && scheduledPoolEnergyKwh && scheduledPoolEnergyKwh > recordedEnergy.dailyKwh) assumptions.push("The entered pool-equipment schedule exceeds the recorded whole-property daily total, so the larger known pool subtotal is used as the minimum daily-energy basis pending reconciliation.");
   let pvKw: number | undefined;
   let panelCount: number | undefined;
   let energyTargetPvKw: number | undefined;
@@ -427,10 +444,9 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     if (!standaloneBackup && mode !== "off_grid") warnings.push("Grid-connected storage uses a 40% daily-energy shifting allowance; replace it with interval load and tariff objectives.");
   }
 
-  const loads = loadEnvelope(discovery);
   warnings.push(...(loads?.warnings ?? []));
   if (loads?.scheduledDailyEnergyKwh) {
-    assumptions.push(`Entered intermittent-load ratings and runtimes imply about ${loads.scheduledDailyEnergyKwh} kWh per workday. This is an unverified consumption subtotal, not a storage or generator-energy requirement; loads still add in kWh when they run at different times.`);
+    assumptions.push(`Entered scheduled-load ratings and runtimes imply about ${loads.scheduledDailyEnergyKwh} kWh per day. This is an unverified consumption subtotal; loads still add in kWh when they run at different times.`);
     if (energy && loads.scheduledDailyEnergyKwh > energy.dailyKwh) warnings.push(/high_power_loads|large_appliances/.test(generatorRoles)
       ? `The entered high-power tool runtimes imply about ${loads.scheduledDailyEnergyKwh} kWh/workday. Because the generator is explicitly assigned those loads, that subtotal informs generator operation and fuel planning rather than automatically increasing PV or storage; direct solar contribution is not relied upon.`
       : `The entered tool runtimes imply about ${loads.scheduledDailyEnergyKwh} kWh/workday, above the ${rounded(energy.dailyKwh)} kWh/day whole-system answer currently used for PV sizing. Reconcile the estimates and record operating times before assigning the demand between direct solar and generator or storage.`);
@@ -487,6 +503,7 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     startupPeakKw: loads?.startupPeakKw,
     startupLoadName: loads?.startupLoadName || undefined,
     scheduledLoadEnergyKwh: loads?.scheduledDailyEnergyKwh,
+    scheduledPoolEnergyKwh: loads?.scheduledPoolEnergyKwh,
     batteryUsableKwh,
     batteryOnlyDays: days,
     batterySizingBasis,

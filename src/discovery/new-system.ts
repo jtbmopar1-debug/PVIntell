@@ -476,7 +476,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
   },
   {
     id: "pool_equipment_ratings", stage: "needs", title: "What electrical load will each pool or spa component place on the system?",
-    noviceHelp: "Enter the electrical input shown on each equipment label. Running power helps size normal supply; starting or surge power helps check whether the inverter can start pumps and compressors.", technicalHelp: "Record quantity, continuous electrical input and starting/maximum input for every selected pump, heater and auxiliary load. Keep thermal heater output separate from electrical input, and confirm which loads can overlap.", type: "textarea", showWhen: hasPoolEquipmentToRate,
+    noviceHelp: "Enter the electrical input shown on each equipment label and how long it normally runs each day. Add its timer times when known. Running power and overlap size the supply; daily runtime sizes the energy the solar system must produce.", technicalHelp: "Record quantity, continuous electrical input, starting/maximum input, schedule and daily runtime for every selected pump, heater and auxiliary load. Keep thermal heater output separate from electrical input, and confirm which loads can overlap. A daylight schedule improves direct-solar opportunity but is not treated as guaranteed production.", type: "textarea", showWhen: hasPoolEquipmentToRate,
   },
   {
     id: "everyday_needs", stage: "needs", title: "What does this property need to power day-to-day?",

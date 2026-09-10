@@ -253,7 +253,7 @@ export function refreshProposalAfterSizingInput(settings: Record<string, unknown
 
 const proposalSizingDiscoveryKeys = new Set([
   "current_energy_use", "off_grid_daily_energy_use", "backup_preference", "battery_requirement", "backup_duration",
-  "generator_outage_role", "household_motor_ratings", "pool_equipment_ratings", "pool_heater_electrical_kw",
+  "generator_outage_role", "household_motor_ratings", "pool_equipment", "pool_equipment_ratings", "pool_heating_method", "pool_heater_electrical_kw",
 ]);
 const designPreferenceSchema = z.object({
   architecture: z.enum([
@@ -296,6 +296,7 @@ const discoveryKey = z.enum([
   "pool_heating_profile",
   "pool_heater_electrical_kw",
   "pool_heater_cop",
+  "pool_equipment",
   "pool_equipment_ratings",
   "household_motor_ratings",
   "everyday_needs",
@@ -339,7 +340,7 @@ const discoveryKey = z.enum([
 ]);
 const designDiscoverySchema = z.object({
   key: discoveryKey,
-  value: z.string().trim().min(1).max(1500),
+  value: z.string().trim().min(1).max(4000),
   confidence: z.enum(["user_confirmed", "evidence_provided"]).default("user_confirmed"),
 });
 const systemKnowledgeSchema = z.object({
