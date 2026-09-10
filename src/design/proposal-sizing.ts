@@ -46,6 +46,7 @@ export type ProposalSizingResult = {
   startupLoadName?: string;
   scheduledLoadEnergyKwh?: number;
   scheduledPoolEnergyKwh?: number;
+  directSolarLoadKw?: number;
   batteryUsableKwh?: number;
   batteryOnlyDays?: number;
   batterySizingBasis?: "no_sun_autonomy" | "solar_assisted_typical_winter" | "daily_energy_fraction";
@@ -70,6 +71,7 @@ type LoadRating = {
   runtimeMinutesPerDay?: unknown;
   longestRunMinutes?: unknown;
   startingBasis?: unknown;
+  operatingWindow?: unknown;
 };
 
 const finitePositive = (value: unknown) => {
@@ -159,6 +161,8 @@ function loadEnvelope(discovery: Record<string, unknown>) {
   let standaloneStartupLoadName = "";
   let scheduledDailyEnergyKwh = 0;
   let scheduledPoolEnergyKwh = 0;
+  let overlappingDaylightKw = 0;
+  let standaloneDaylightKw = 0;
   const warnings: string[] = [];
   for (const rating of ratings) {
     if (rating.quantity !== undefined && Number(rating.quantity) <= 0) continue;
@@ -178,10 +182,15 @@ function loadEnvelope(discovery: Record<string, unknown>) {
       if (rating.source === "pool") scheduledPoolEnergyKwh += scheduledEnergyKwh;
     }
     if (apparentInputKva && !realRunningKw) warnings.push(`${String(rating.name ?? rating.baseType ?? "Load")}: kVA is used only as a conservative power-screening envelope. Real kW/power factor is needed for its workday kWh; it is not included in that subtotal.`);
+    if (rating.source === "pool" && realRunningKw && !runtimeMinutesPerDay) warnings.push(`${String(rating.name ?? rating.baseType ?? "Pool equipment").replaceAll("_", " ")}: daily runtime is not recorded. Its running and startup demand are included in power checks, but its energy is excluded from PV and storage sizing until a typical runtime or monitored history is available.`);
     if (runtimeMinutesPerDay > 1440 || Number(rating.longestRunMinutes) > runtimeMinutesPerDay && runtimeMinutesPerDay > 0) warnings.push(`${String(rating.name ?? rating.baseType ?? "Load")}: reconcile the total daily runtime and longest run before relying on its energy estimate.`);
     const entryContinuousKw = runningKw * quantity;
     const entryStartupKw = startingKw + runningKw * Math.max(0, quantity - 1);
     const loadName = String(rating.name ?? rating.baseType ?? "largest motor").replaceAll("_", " ").trim();
+    if (rating.operatingWindow === "daylight") {
+      if (rating.simultaneous === false) standaloneDaylightKw = Math.max(standaloneDaylightKw, entryContinuousKw);
+      else overlappingDaylightKw += entryContinuousKw;
+    }
     if (rating.simultaneous === false) {
       standaloneContinuousKw = Math.max(standaloneContinuousKw, entryContinuousKw);
       if (entryStartupKw > standaloneStartupKw) {
@@ -207,6 +216,7 @@ function loadEnvelope(discovery: Record<string, unknown>) {
     startupLoadName: standaloneSetsPeak ? standaloneStartupLoadName : overlappingStartupLoadName,
     scheduledDailyEnergyKwh: rounded(scheduledDailyEnergyKwh),
     scheduledPoolEnergyKwh: rounded(scheduledPoolEnergyKwh),
+    directSolarLoadKw: rounded(Math.max(overlappingDaylightKw, standaloneDaylightKw)),
     warnings,
   };
 }
@@ -314,6 +324,7 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
   const recordedEnergy = normalizedDailyEnergy(discovery);
   const loads = loadEnvelope(discovery);
   const scheduledPoolEnergyKwh = loads?.scheduledPoolEnergyKwh;
+  const directSolarLoadKw = loads?.directSolarLoadKw;
   const energy = scheduledPoolEnergyKwh && (!recordedEnergy || scheduledPoolEnergyKwh > recordedEnergy.dailyKwh)
     ? { dailyKwh: scheduledPoolEnergyKwh, source: "pool_equipment_schedule" as const }
     : recordedEnergy;
@@ -339,7 +350,7 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
   warnings.push(...surfaceAssessment.warnings);
   let fitLimited = false;
 
-  if (!energy) warnings.push("PV and battery size withheld: representative daily energy is not recorded.");
+  if (!energy) warnings.push(directSolarLoadKw ? "Representative daily energy is not recorded. The PV power target can cover the recorded daylight loads in adequate sun, but annual-energy and storage sizing remain incomplete." : "PV and battery size withheld: representative daily energy is not recorded.");
   if (includesSolar && !peakSunHours) warnings.push("PV size withheld: peak sun hours are not available.");
   if (peakSunHours && !input.solarResource?.source) warnings.push("Solar-resource provenance is missing; refresh discovery to replace the legacy planning value with Site climatology.");
   const shading = String(discoveryValue(discovery, "shading") ?? "").toLowerCase();
@@ -351,14 +362,19 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     ].map((value) => String(value ?? "").replaceAll("_", " ").trim()).filter(Boolean).join("; ");
     warnings.push(`${shading === "significant" ? "Significant" : "Some"} local shade is recorded${shadeDetail ? ` (${shadeDetail})` : ""}. No numerical shade loss has been applied; production remains unverified until the affected mounting areas are assessed by time of day and season.`);
   }
-  if (includesSolar && energy && peakSunHours) {
+  if (includesSolar && ((energy && peakSunHours) || directSolarLoadKw)) {
     const offGridRecoveryMargin = mode === "off_grid" ? 1.2 : 1;
-    const requiredPvKw = energy.dailyKwh * offGridRecoveryMargin / (peakSunHours * systemEfficiency);
+    const energyRequiredPvKw = energy && peakSunHours ? energy.dailyKwh * offGridRecoveryMargin / (peakSunHours * systemEfficiency) : 0;
+    const directSolarRequiredPvKw = (directSolarLoadKw ?? 0) * 1.2;
+    const requiredPvKw = Math.max(energyRequiredPvKw, directSolarRequiredPvKw);
     energyTargetPvKw = rounded(requiredPvKw);
-    assumptions.push(`${Math.round(systemEfficiency * 100)}% planning conversion/system efficiency.`);
-    const basisLabel = input.solarResource?.basis === "weakest_month" ? "weakest design month" : "day-weighted annual average";
-    assumptions.push(`${peakSunHours} equivalent peak-sun-hours/day from ${String(input.solarResource?.source ?? "an explicitly entered planning value")} (${basisLabel}${input.solarResource?.period ? `, ${String(input.solarResource.period)}` : ""}).`);
-    if (mode === "off_grid") assumptions.push("20% off-grid generation and recovery margin.");
+    if (energy && peakSunHours) {
+      assumptions.push(`${Math.round(systemEfficiency * 100)}% planning conversion/system efficiency.`);
+      const basisLabel = input.solarResource?.basis === "weakest_month" ? "weakest design month" : "day-weighted annual average";
+      assumptions.push(`${peakSunHours} equivalent peak-sun-hours/day from ${String(input.solarResource?.source ?? "an explicitly entered planning value")} (${basisLabel}${input.solarResource?.period ? `, ${String(input.solarResource.period)}` : ""}).`);
+      if (mode === "off_grid") assumptions.push("20% off-grid generation and recovery margin.");
+    }
+    if (directSolarLoadKw && directSolarRequiredPvKw > energyRequiredPvKw) assumptions.push(`Solar-first power sizing uses ${rounded(directSolarLoadKw, 2)} kW of overlapping loads explicitly scheduled for daylight and a 1.2 DC-to-AC array ratio; the grid or another source still covers starts and poor sunlight.`);
     if (panelWatts) {
       energyTargetPanelCount = Math.ceil(requiredPvKw * 1000 / panelWatts - 1e-9);
       panelCount = panelCapacity === undefined ? energyTargetPanelCount : Math.min(energyTargetPanelCount, panelCapacity);
@@ -504,6 +520,7 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     startupLoadName: loads?.startupLoadName || undefined,
     scheduledLoadEnergyKwh: loads?.scheduledDailyEnergyKwh,
     scheduledPoolEnergyKwh: loads?.scheduledPoolEnergyKwh,
+    directSolarLoadKw: loads?.directSolarLoadKw,
     batteryUsableKwh,
     batteryOnlyDays: days,
     batterySizingBasis,

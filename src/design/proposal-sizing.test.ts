@@ -73,6 +73,34 @@ describe("deterministic proposal sizing", () => {
     expect(result).toMatchObject({ dailyEnergyKwh: 9.6, dailyEnergySource: "pool_equipment_schedule", panelCount: 8, pvKw: 3.68, inverterKw: 4 });
   });
 
+  it("sizes a grid-tied solar-first pool proposal for its overlapping daylight loads", () => {
+    const result = deriveProposalSizing({
+      mode: "grid-tied",
+      peakSunHours: 4.41,
+      representativePanelWatts: 450,
+      discovery: {
+        pool_equipment: "sanitation, filtration_pump",
+        pool_heating_method: "heat_pump",
+        pool_equipment_ratings: JSON.stringify({
+          filtration_pump: { quantity: 1, runningKw: 2, startingKw: 6, runtimeMinutesPerDay: 240, simultaneous: true, operatingWindow: "daylight" },
+          sanitation: { quantity: 1, runningKw: .3, startingKw: .3, runtimeMinutesPerDay: 240, simultaneous: true, operatingWindow: "daylight" },
+          heat_pump: { quantity: 1, runningKw: 1.34, startingKw: 3.35, scheduleMode: "automatic", simultaneous: true, operatingWindow: "daylight" },
+        }),
+      },
+    });
+
+    expect(result).toMatchObject({
+      dailyEnergyKwh: 9.2,
+      dailyEnergySource: "pool_equipment_schedule",
+      directSolarLoadKw: 3.64,
+      startupPeakKw: 7.64,
+      panelCount: 10,
+      pvKw: 4.5,
+      inverterKw: 4,
+    });
+    expect(result.simultaneousLoadKw).toBeCloseTo(3.64);
+  });
+
   it("retains user-added pool equipment outside the original checklist", () => {
     const result = deriveProposalSizing({ mode: "grid-tied", discovery: {
       pool_equipment: "filtration_pump",
@@ -81,6 +109,17 @@ describe("deterministic proposal sizing", () => {
     expect(result.scheduledPoolEnergyKwh).toBe(2);
     expect(result.simultaneousLoadKw).toBe(.2);
     expect(result.startupPeakKw).toBe(.2);
+  });
+
+  it("uses an automatic pool load for power sizing without inventing daily runtime", () => {
+    const result = deriveProposalSizing({ mode: "grid-tied", discovery: {
+      pool_heating_method: "heat_pump",
+      pool_equipment_ratings: JSON.stringify({ heat_pump: { quantity: 1, runningKw: 1.34, startingKw: 3.35, scheduleMode: "automatic", simultaneous: true } }),
+    } });
+    expect(result.simultaneousLoadKw).toBe(1.34);
+    expect(result.startupPeakKw).toBeCloseTo(3.35);
+    expect(result.scheduledLoadEnergyKwh).toBe(0);
+    expect(result.warnings).toContainEqual(expect.stringContaining("energy is excluded from PV and storage sizing"));
   });
 
   it("does not let an excluded generator's stale recharge role reduce storage", () => {

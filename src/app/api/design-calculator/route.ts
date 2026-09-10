@@ -56,7 +56,7 @@ const calculatorSchema = z.object({
     sizingMethod: z.enum(["deterministic-v1", "user-adjusted"]).optional(),
     sizingInputs: z.object({
       dailyEnergyKwh: finite.optional(), dailyEnergySource: z.enum(["off_grid_daily_energy_use", "current_energy_use", "pool_equipment_schedule"]).optional(),
-      peakSunHours: finite.max(24).optional(), systemEfficiency: finite.max(1).optional(), simultaneousLoadKw: finite.optional(),
+      peakSunHours: finite.max(24).optional(), systemEfficiency: finite.max(1).optional(), simultaneousLoadKw: finite.optional(), directSolarLoadKw: finite.optional(),
       startupPeakKw: finite.optional(), startupLoadName: z.string().trim().max(160).optional(), batteryOnlyDays: finite.optional(),
       scheduledLoadEnergyKwh: finite.optional(),
       batterySizingBasis: z.enum(["no_sun_autonomy", "solar_assisted_typical_winter", "daily_energy_fraction"]).optional(),

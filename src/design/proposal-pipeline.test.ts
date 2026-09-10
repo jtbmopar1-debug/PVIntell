@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { applyWattsonActions } from "@/ai/actions";
+import { applyWattsonActions, refreshProposalAfterSizingInput } from "@/ai/actions";
 import { deterministicProposalActions } from "./proposal-action";
 import { siteDiscoveryActions } from "@/discovery/site-actions";
 import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { PUT } from "@/app/api/design-calculator/route";
-import { createProposedAsBuiltDraft, ProposalScopeOverview, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
+import { createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
 import type { DesignCalculatorState, Project } from "@/domain/models";
 
 const auth = vi.hoisted(() => ({ client: undefined as unknown }));
@@ -192,6 +192,94 @@ describe("discovery → stored proposal → calculator save", () => {
     const design = built.project.settings.designCalculator as Record<string, unknown>;
     expect(design.sizingInputs).toMatchObject({ dailyEnergyKwh: 20, startupPeakKw: 5.4 });
     expect(Number(design.targetPvKw)).toBeGreaterThan(7.2);
+  });
+
+  it("retains a newly calculated representative string layout when sizing changes", () => {
+    const settings: Record<string, unknown> = {
+      peakSunHours: 4,
+      solarResource: { source: "Test solar resource", basis: "annual_average" },
+      designDiscovery: {
+        current_energy_use: { value: "438 kWh/month" },
+        proposed_panel_location: { value: "main_roof" },
+      },
+      designCalculator: {
+        panelCount: 6,
+        panelWatts: 450,
+        panelType: "bifacial",
+        panelProfileBasis: "representative",
+        pvStrings: 1,
+        panelsPerString: 6,
+        updatedBy: "wattson",
+      },
+    };
+
+    refreshProposalAfterSizingInput(settings, "grid_tied");
+
+    expect(settings.designCalculator).toMatchObject({ panelCount: 11, pvStrings: 1, panelsPerString: 11 });
+  });
+
+  it("recovers a missing string layout from complete recorded module electrical values", () => {
+    const layout = recoverRecordedStringLayout({
+      panelType: "bifacial",
+      panelProfileBasis: "user_equipment",
+      panelCount: 10,
+      panelWatts: 450,
+      panelVmpV: 33,
+      panelVocV: 39.5,
+      panelImpA: 13.64,
+      panelIscA: 14.4,
+      panelVocTemperatureCoefficientPercentPerC: -.25,
+    }, 10);
+
+    expect(layout).toMatchObject({ strings: 1, panelsPerString: 10, stringVmpV: 330, stringVocV: 395 });
+  });
+
+  it("does not repeatedly prepend the inverter rating while reconciling a draft", () => {
+    const design = { inverterKw: 4 } as DesignCalculatorState;
+    const first = planningNodeDetail({ id: "pv-inverter", label: "Solar string inverter", detail: "Converts the PV strings to AC", image: "/inverter.jpg", x: 0, y: 0 }, design);
+    const second = planningNodeDetail(first, design);
+    const third = planningNodeDetail(second, design);
+
+    expect(third.detail).toBe("4 kW continuous rating proposed; Converts the PV strings to AC");
+  });
+
+  it("adds one explicit protective-earth path from every inverter to the main earthing terminal", () => {
+    const design = {
+      architecture: "ac_coupled",
+      inverterArrangement: "string_inverter",
+      inverterKw: 4,
+      panelCount: 10,
+      panelWatts: 450,
+      pvStrings: 1,
+      panelsPerString: 10,
+    } as DesignCalculatorState;
+    const first = ensureInverterProtectiveEarth(createProposedAsBuiltDraft(design, true));
+    const second = ensureInverterProtectiveEarth(first);
+    const inverterEarths = second.connections?.filter((connection) => connection.kind === "earth" && connection.from === "pv-inverter");
+
+    expect(inverterEarths).toEqual([
+      expect.objectContaining({ to: "switchboard", label: "PV inverter protective earth" }),
+    ]);
+    expect(second.connections).toContainEqual(expect.objectContaining({ from: "switchboard", to: "earth", kind: "earth" }));
+  });
+
+  it("bonds the PV frames independently of the removable inverter", () => {
+    const design = {
+      architecture: "ac_coupled",
+      inverterArrangement: "string_inverter",
+      panelCount: 10,
+      panelWatts: 450,
+      pvStrings: 1,
+      panelsPerString: 10,
+    } as DesignCalculatorState;
+    const first = ensurePvArrayEarth(createProposedAsBuiltDraft(design, true));
+    const second = ensurePvArrayEarth(first);
+    const frameBonds = second.connections?.filter((connection) => connection.kind === "earth" && /array frame bond/i.test(connection.label));
+
+    expect(frameBonds).toEqual([
+      expect.objectContaining({ from: "solar", to: "switchboard" }),
+    ]);
+    expect(frameBonds?.some((connection) => connection.to.includes("inverter"))).toBe(false);
   });
 
   it("removing the selected load removes its old surge on rebuild", async () => {

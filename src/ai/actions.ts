@@ -188,6 +188,7 @@ function sizingFields(settings: Record<string, unknown>, mode: string, panelWatt
       peakSunHours: sizing.peakSunHours,
       systemEfficiency: sizing.systemEfficiency,
       simultaneousLoadKw: sizing.simultaneousLoadKw,
+      directSolarLoadKw: sizing.directSolarLoadKw,
       startupPeakKw: sizing.startupPeakKw,
       startupLoadName: sizing.startupLoadName,
       scheduledLoadEnergyKwh: sizing.scheduledLoadEnergyKwh,
@@ -232,18 +233,20 @@ export function refreshProposalAfterSizingInput(settings: Record<string, unknown
   } else {
     for (const key of ["batteryVoltage", "usableBatteryPercent", "batteryQuantity", "batteryChemistry", "batteryAh"]) delete refreshed[key];
   }
+  if (previousSignature !== nextSignature) {
+    delete refreshed.proposedAsBuiltDraft;
+    delete refreshed.proposedChecklist;
+    refreshed.fitStatus = "unverified";
+  }
   if (calculator.panelProfileBasis === "representative" && fields.panelCount) {
     const layout = defaultProposalPanelStringLayout(fields.panelCount, proposalPanelProfile(calculator.panelType));
     refreshed.pvStrings = layout?.strings;
     refreshed.panelsPerString = layout?.panelsPerString;
     refreshed.stringDesign = layout;
-  }
-  if (previousSignature !== nextSignature) {
+  } else if (previousSignature !== nextSignature) {
     delete refreshed.pvStrings;
     delete refreshed.panelsPerString;
-    delete refreshed.proposedAsBuiltDraft;
-    delete refreshed.proposedChecklist;
-    refreshed.fitStatus = "unverified";
+    delete refreshed.stringDesign;
   }
   for (const key of ["targetPvKw", "panelCount", "inverterKw", "batteryUsableKwh"]) {
     if (refreshed[key] === undefined) delete refreshed[key];
@@ -969,8 +972,9 @@ export async function applyWattsonActions(
         ? settings.designCalculator as Record<string, unknown>
         : {};
       const previousPanelWatts = Number(previous.panelWatts) || undefined;
-      const useDefaultCandidate = input.representative_panel_watts === undefined
-        && (!previous.existingPanelGroup && previous.updatedBy !== "user" || previousPanelWatts === undefined);
+      const useDefaultCandidate = input.existing_panel_available_count === undefined
+        && !previous.existingPanelGroup
+        && !(previous.updatedBy === "user" && previous.panelProfileBasis === "user_equipment");
       const candidate = useDefaultCandidate ? {
         ...defaultProposalPanel,
         ...proposalPanelProfile(input.panel_type),
@@ -1147,6 +1151,7 @@ export async function applyWattsonActions(
           peakSunHours: sizing.sizing.peakSunHours,
           systemEfficiency: sizing.sizing.systemEfficiency,
           simultaneousLoadKw: sizing.sizing.simultaneousLoadKw,
+          directSolarLoadKw: sizing.sizing.directSolarLoadKw,
           startupPeakKw: sizing.sizing.startupPeakKw,
           startupLoadName: sizing.sizing.startupLoadName,
           scheduledLoadEnergyKwh: sizing.sizing.scheduledLoadEnergyKwh,

@@ -244,6 +244,7 @@ export interface DesignCalculatorState {
     peakSunHours?: number;
     systemEfficiency?: number;
     simultaneousLoadKw?: number;
+    directSolarLoadKw?: number;
     startupPeakKw?: number;
     startupLoadName?: string;
     scheduledLoadEnergyKwh?: number;
