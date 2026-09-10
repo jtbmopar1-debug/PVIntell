@@ -4,6 +4,13 @@ export const unknownAnswer = "__unknown__";
 export type DiscoveryStage = "discovery" | "site" | "needs" | "design";
 export type DiscoveryAnswers = Record<string, string | number | string[]>;
 
+/** The system topology produced by a completed discovery. */
+export function discoveryProjectType(answers: DiscoveryAnswers) {
+  if (answers.utility_relationship === "off_grid" || answers.target_grid_role === "replace_grid") return "off-grid" as const;
+  const outcomes = Array.isArray(answers.primary_outcome) ? answers.primary_outcome : [answers.primary_outcome];
+  return outcomes.length === 1 && outcomes[0] === "cost" ? "grid-tied" as const : "hybrid" as const;
+}
+
 export interface DiscoveryQuestion {
   id: string;
   stage: DiscoveryStage;
@@ -19,6 +26,14 @@ export interface DiscoveryQuestion {
 function includesSolarPanels(answers: DiscoveryAnswers) {
   const locations = answers.panel_location;
   return !(locations === "none" || (Array.isArray(locations) && locations.includes("none")));
+}
+
+function hasExistingPanelInterest(answers: DiscoveryAnswers) {
+  return answerValues(answers.panel_construction_interest).includes("existing");
+}
+
+function needsShadeDetail(answers: DiscoveryAnswers) {
+  return answers.shading === "some" || answers.shading === "significant";
 }
 
 function hasResidentialUse(answers: DiscoveryAnswers) {
@@ -60,7 +75,7 @@ function hasGarageArea(answers: DiscoveryAnswers) {
 }
 
 function hasEvUse(answers: DiscoveryAnswers) {
-  const selected = [answers.everyday_needs, answers.heavy_loads, answers.future_changes]
+  const selected = [answers.everyday_needs, answers.heavy_loads]
     .flatMap((value) => Array.isArray(value) ? value : [value]);
   return selected.includes("ev");
 }
@@ -70,7 +85,7 @@ function answerValues(value: string | number | string[] | undefined) {
 }
 
 function hasLargeLoadCandidates(answers: DiscoveryAnswers) {
-  const selected = [answers.everyday_needs, answers.cooking_energy, answers.water_heating_energy, answers.space_heating_energy, answers.pool_equipment, answers.pool_heating_method, answers.future_changes]
+  const selected = [answers.everyday_needs, answers.cooking_energy, answers.water_heating_energy, answers.space_heating_energy, answers.pool_equipment, answers.pool_heating_method]
     .flatMap(answerValues);
   return selected.some((value) => [
     "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "tools", "compressor", "fridge_freezer", "chest_freezer", "cooling", "ev",
@@ -94,8 +109,9 @@ function hasBatteryBus(answers: DiscoveryAnswers) {
 }
 
 function shouldIncludeBattery(answers: DiscoveryAnswers) {
-  const panelLocations = answerValues(answers.panel_location);
-  return replacesGrid(answers) || answers.battery_requirement === "include" || panelLocations.includes("none") || (answers.backup_preference !== undefined && answers.backup_preference !== "none");
+  if (answers.battery_requirement === "none") return false;
+  if (answers.battery_requirement === "include") return true;
+  return answers.backup_preference !== undefined && answers.backup_preference !== "none";
 }
 
 function needsModuleElectronicsCompatibility(answers: DiscoveryAnswers) {
@@ -235,6 +251,12 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: includesSolarPanels,
   },
   {
+    id: "existing_panel_selection", stage: "site", title: "Which existing panels should this proposal use?",
+    noviceHelp: "Select panels already saved in Site equipment, or enter the panel group here if it has not been recorded yet. Then decide explicitly how the proposal should treat it.",
+    technicalHelp: "Link or create one homogeneous module group, record its quantity, construction and STC wattage, and set its proposal disposition. Exact voltage, current and temperature values remain required before string design.",
+    type: "textarea", showWhen: hasExistingPanelInterest,
+  },
+  {
     id: "panel_area_dimensions", stage: "site", title: "How much usable space is available for panels?",
     noviceHelp: "Enter the usable length and width of each separate roof face, fence, wall or ground area. Measure only the clear area where panels could actually fit.",
     technicalHelp: "Record usable—not total—dimensions for each mounting plane. Keep separate faces, orientations or mounting areas on separate rows.", type: "textarea", showWhen: includesSolarPanels,
@@ -258,9 +280,60 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: includesSolarPanels,
   },
   {
+    id: "shade_affected_areas", stage: "site", title: "Which possible panel areas are affected by shade?",
+    noviceHelp: "Select each recorded mounting area that receives shade. If you are unsure, choose that option rather than guessing.",
+    technicalHelp: "Identify every affected mounting plane so its production can later be modelled separately from unshaded planes.",
+    type: "multi_choice", options: [], showWhen: needsShadeDetail,
+  },
+  {
+    id: "shade_time_windows", stage: "site", title: "When during the day does the shade usually occur?",
+    noviceHelp: "Select every period that is commonly affected. The same amount of shade can have a different impact depending on when it crosses the panels.",
+    technicalHelp: "Record the observed shade windows. A later assessment should resolve their actual solar-time boundaries for each mounting plane.",
+    type: "multi_choice", options: [
+      { value: "morning", label: "Morning", description: "Shade mainly affects early production." },
+      { value: "midday", label: "Middle of the day", description: "Shade affects the usually stronger production period." },
+      { value: "afternoon", label: "Afternoon", description: "Shade mainly affects later production." },
+      { value: "none", label: "Not sure yet", description: "Record that the daily shade window still needs assessment." },
+    ], showWhen: needsShadeDetail,
+  },
+  {
+    id: "shade_seasonality", stage: "site", title: "When is the shade likely to be most significant?",
+    noviceHelp: "The sun follows a different path through the year, and deciduous trees can also change with the seasons.",
+    technicalHelp: "Record the observed or expected seasonal pattern; do not convert it to an annual loss without a monthly or interval shade assessment.",
+    type: "choice", options: [
+      { value: "winter", label: "Mostly winter", description: "Lower winter sun creates the greatest shade effect." },
+      { value: "summer", label: "Mostly summer", description: "Summer vegetation or another seasonal cause creates the greatest effect." },
+      { value: "year_round", label: "Similar year-round", description: "The obstruction appears to affect the area throughout the year." },
+      { value: "not_assessed", label: "Not sure yet", description: "A seasonal observation or shade assessment is still needed." },
+    ], showWhen: needsShadeDetail,
+  },
+  {
+    id: "shade_extent", stage: "site", title: "At its worst, roughly how much of the panel area is shaded?",
+    noviceHelp: "Use the largest portion you commonly see shaded at one time. This records scale only; PVIntell will not treat it as an exact energy-loss percentage.",
+    technicalHelp: "Record maximum observed spatial coverage separately from duration and season. Shaded area is not directly equivalent to energy loss.",
+    type: "choice", options: [
+      { value: "under_quarter", label: "Less than one quarter", description: "A smaller portion of the possible panel area is affected." },
+      { value: "quarter_to_half", label: "About one quarter to half", description: "A substantial portion is affected at the worst time." },
+      { value: "over_half", label: "More than half", description: "Most of the possible panel area can be affected." },
+      { value: "not_assessed", label: "Not sure yet", description: "Photos or a shade assessment are needed to establish the extent." },
+    ], showWhen: needsShadeDetail,
+  },
+  {
     id: "structure_condition", stage: "site", title: "What do you know about the roof or supporting structure?",
     noviceHelp: "Choose the surface or support type, approximate age and current condition for each possible panel area. If an inspection is needed, gather that evidence before completing discovery.",
     technicalHelp: "Record each possible mounting structure separately. These selections identify where structural condition or mounting compatibility still needs verification.", type: "textarea", showWhen: includesSolarPanels,
+  },
+  {
+    id: "battery_requirement", stage: "needs", title: "Should this system design include battery storage?",
+    noviceHelp: "Battery storage can increase solar self-use without providing outage backup. Choose whether storage belongs in the proposed system; outage operation is handled separately.",
+    technicalHelp: "Record the storage requirement independently from backup/islanding scope. A non-backup battery may still provide self-consumption, tariff or export-control functions.",
+    type: "choice", options: [
+      { value: "include", label: "Include battery storage", description: "Design suitable storage for the recorded energy goals and operating limits." },
+      { value: "none", label: "No battery storage", description: "Keep the proposed system battery-free." },
+    ], showWhen: (answers) => !isPoolOnly(answers) && (
+      replacesGrid(answers)
+      || (answers.utility_relationship === "grid_connected" && (answers.backup_preference === "none" || !requestsOutagePlanning(answers)))
+    ),
   },
   {
     id: "current_energy_use", stage: "needs", title: "How much electricity does the property currently use?",
@@ -435,27 +508,9 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: (answers) => !isPoolOnly(answers) && answers.utility_relationship === "grid_connected" && answers.target_grid_role !== "replace_grid" && requestsOutagePlanning(answers),
   },
   {
-    id: "battery_requirement", stage: "needs", title: "Should this system design include battery storage?",
-    noviceHelp: "Battery storage can increase solar self-use without providing outage backup. Choose whether storage belongs in the proposed system; outage operation is handled separately.",
-    technicalHelp: "Record the storage requirement independently from backup/islanding scope. A non-backup battery may still provide self-consumption, tariff or export-control functions.",
-    type: "choice", options: [
-      { value: "include", label: "Include battery storage", description: "Design suitable storage for the recorded energy goals and operating limits." },
-      { value: "none", label: "No battery storage", description: "Keep the proposed system battery-free." },
-    ], showWhen: (answers) => answers.utility_relationship === "grid_connected" && answers.target_grid_role !== "replace_grid" && !isPoolOnly(answers) && !answerValues(answers.panel_location).includes("none") && (answers.backup_preference === "none" || !requestsOutagePlanning(answers)),
-  },
-  {
     id: "outage_essential_loads", stage: "needs", title: "Which items must stay on in an outage?",
     noviceHelp: "Common essentials are a fridge/freezer, a few lights, internet, a water or sewage pump, medical equipment and selected outlets.", type: "textarea",
     showWhen: (answers) => answers.backup_preference === "essentials",
-  },
-  {
-    id: "backup_duration", stage: "needs", title: "How long should the system keep running without the grid?",
-    noviceHelp: "This is the outage target for the whole system. Solar, battery storage and any selected generator are assessed together; it is not automatically the amount of energy the battery must store.", type: "choice", options: [
-      { value: "few_hours", label: "A few hours", description: "Short local outages." },
-      { value: "overnight", label: "Overnight", description: "A longer outage through the night." },
-      { value: "one_day", label: "About one day", description: "Essential use for roughly 24 hours." },
-      { value: "multiple_days", label: "Several days", description: "Solar, storage and any selected generator must work together through the extended outage." },
-    ], showWhen: (answers) => replacesGrid(answers) || (answers.backup_preference !== undefined && answers.backup_preference !== "none"),
   },
   {
     id: "generator_requirement", stage: "needs", title: "Should this system design include generator supply?",
@@ -482,7 +537,19 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "high_power_loads", label: "Run large appliances", description: "Power selected items such as a welder, compressor, pump or large heater." },
       { value: "backup_circuits", label: "Keep essential circuits on", description: "Power the lights, fridge, internet and other circuits chosen for backup." },
       { value: "automatic_low_reserve", label: "Start when batteries get low", description: "Start the generator automatically when the batteries reach the chosen level." },
-    ], showWhen: (answers) => ["include", "existing", "planned"].includes(String(answers.generator_requirement)),
+    ], showWhen: (answers) => ["include", "existing", "planned"].includes(String(answers.generator_requirement))
+      && (!replacesGrid(answers) || ["include", "none"].includes(String(answers.battery_requirement))),
+  },
+  {
+    id: "backup_duration", stage: "needs", title: "How long should the system keep running without the grid?",
+    noviceHelp: "This is the outage target for the whole system. Solar, battery storage and any selected generator are assessed together; it is not automatically the amount of energy the battery must store.", type: "choice", options: [
+      { value: "few_hours", label: "A few hours", description: "Short local outages." },
+      { value: "overnight", label: "Overnight", description: "A longer outage through the night." },
+      { value: "one_day", label: "About one day", description: "Essential use for roughly 24 hours." },
+      { value: "multiple_days", label: "Several days", description: "Solar, storage and any selected generator must work together through the extended outage." },
+    ], showWhen: (answers) => replacesGrid(answers)
+      ? answers.battery_requirement === "include" || ["include", "existing", "planned"].includes(String(answers.generator_requirement))
+      : answers.backup_preference !== undefined && answers.backup_preference !== "none",
   },
   {
     id: "heavy_loads", stage: "needs", title: "Which high-power loads could operate together?",
@@ -629,6 +696,18 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
   return newSystemQuestions
     .filter((question) => !question.showWhen || question.showWhen(answers))
     .map((question) => {
+      if (question.id === "shade_affected_areas") {
+        let areas: Array<{ id?: unknown; name?: unknown }> = [];
+        try {
+          const parsed = typeof answers.panel_area_dimensions === "string" ? JSON.parse(answers.panel_area_dimensions) : [];
+          if (Array.isArray(parsed)) areas = parsed;
+        } catch { /* The fallback below keeps the question answerable. */ }
+        const options = areas
+          .filter((area) => area.id)
+          .map((area) => ({ value: String(area.id), label: String(area.name || "Panel area"), description: "Include this recorded mounting area in the shade assessment." }));
+        options.push({ value: "none", label: "Not sure which area", description: "Record that the affected mounting area still needs to be identified." });
+        return { ...question, options };
+      }
       if (question.id === "future_changes") {
         const everyday = new Set(answerValues(answers.everyday_needs));
         const buildings = new Set(answerValues(answers.building_type));
@@ -648,26 +727,25 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
         const waterHeating = new Set(answerValues(answers.water_heating_energy));
         const spaceHeating = new Set(answerValues(answers.space_heating_energy));
         const poolHeating = new Set(answerValues(answers.pool_heating_method));
-        const future = new Set(answerValues(answers.future_changes));
         const buildings = new Set(answerValues(answers.building_type));
         const options: NonNullable<DiscoveryQuestion["options"]> = [];
         const add = (value: string, label: string, description: string) => options.push({ value, label, description });
-        if (everyday.has("water_pump") || future.has("water_pump")) add("water_pump", "Water or bore pump", "A pressure, bore or irrigation pump that may start automatically.");
+        if (everyday.has("water_pump")) add("water_pump", "Water or bore pump", "A pressure, bore or irrigation pump that may start automatically.");
         if (everyday.has("septic_pump")) add("septic_pump", "Sewage or septic pump", "An automatic wastewater pump with a starting surge.");
         if (everyday.has("septic_aerator")) add("septic_aerator", "Septic aerator or treatment blower", "A motor load that may run for long periods.");
         if (everyday.has("sump_drainage_pump")) add("sump_drainage_pump", "Sump or drainage pump", "An automatic drainage pump that may start while other loads are running.");
-        if (everyday.has("compressor") || buildings.has("shed_workshop") || buildings.has("farm_building") || future.has("workshop")) {
+        if (everyday.has("compressor") || buildings.has("shed_workshop") || buildings.has("farm_building")) {
           add("compressor", "Air compressor", "A motor load with a startup surge.");
           add("welder", "Welder", "A high-demand workshop load.");
         }
-        if (everyday.has("tools") || buildings.has("shed_workshop") || buildings.has("farm_building") || future.has("workshop")) add("saw_tools", "Large saws or workshop tools", "Bench saws, planers, grinders and similar tools.");
+        if (everyday.has("tools") || buildings.has("shed_workshop") || buildings.has("farm_building")) add("saw_tools", "Large saws or workshop tools", "Bench saws, planers, grinders and similar tools.");
         if (everyday.has("fridge_freezer")) {
           add("refrigeration", "Refrigerator or upright freezer", "A refrigeration compressor may start while another appliance is running.");
           add("chest_freezer", "Chest freezer", "Select this separately if a chest freezer can start while the refrigerator or another load is running.");
         } else if (everyday.has("chest_freezer")) add("chest_freezer", "Chest freezer", "A compressor load that may start automatically while another load is running.");
         if (spaceHeating.has("heat_pump") || everyday.has("cooling")) add("heat_pump", "Heat pump or air conditioning", "A heating or cooling compressor load.");
-        if (["electric_resistive", "heat_pump", "instant_electric"].some((value) => waterHeating.has(value)) || future.has("electric_hot_water")) add("electric_water", "Electric water heating", "Cylinder, instant heater or heat-pump water heater.");
-        if (["heat_pump", "resistive_electric", "spa_inline_heater"].some((value) => poolHeating.has(value)) || future.has("heated_pool")) add("pool_heat_pump", "Pool or spa electrical heating", "A pool heat pump, resistance heater or spa-bath inline heater.");
+        if (["electric_resistive", "heat_pump", "instant_electric"].some((value) => waterHeating.has(value))) add("electric_water", "Electric water heating", "Cylinder, instant heater or heat-pump water heater.");
+        if (["heat_pump", "resistive_electric", "spa_inline_heater"].some((value) => poolHeating.has(value))) add("pool_heat_pump", "Pool or spa electrical heating", "A pool heat pump, resistance heater or spa-bath inline heater.");
         if (hasEvUse(answers)) add("ev", "EV charging", "Vehicle charging that may overlap with household demand.");
         const cookingOptions: Array<[string, string, string]> = [
           ["electric_oven", "Electric oven", "May cycle or heat while other cooking loads operate."],
@@ -678,7 +756,19 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
         ];
         cookingOptions.filter(([value]) => cooking.has(value)).forEach(([value, label, description]) => add(value, label, description));
         add("none", "None of these overlap", "The listed larger loads are not expected to run at the same time.");
-        return { ...question, noviceHelp: "Select every listed load that could realistically be operating at the same time. Wattson uses this for inverter peak-power and startup-surge planning, not daily energy use.", options };
+        const batteryFreeGenerator = replacesGrid(answers)
+          && answers.battery_requirement === "none"
+          && ["include", "existing", "planned"].includes(String(answers.generator_requirement));
+        return { ...question, noviceHelp: batteryFreeGenerator
+          ? "Select every listed load that could realistically operate together. Wattson uses their running and startup demand to check the generator, PV/inverter arrangement and whichever source path will actually supply them. Their individual runtimes are recorded separately for workday energy."
+          : "Select every listed load that could realistically be operating at the same time. Wattson uses this for inverter peak-power and startup-surge planning; their individual runtimes are recorded separately for workday energy.", options };
+      }
+      if (question.id === "architecture_preference" && replacesGrid(answers) && answers.battery_requirement === "none") {
+        return {
+          ...question,
+          noviceHelp: `${question.noviceHelp} Note: some hybrid and off-grid inverters require a battery. Check that the model selected supports battery-free operation and the planned generator connection.`,
+          technicalHelp: "Confirm the selected inverter's documented battery-free operating support and generator input or transfer compatibility where applicable.",
+        };
       }
       if (question.id === "backup_duration" && answers.utility_relationship === "grid_connected") {
         return {
@@ -686,6 +776,42 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
           title: "How long should the system keep running without the grid?",
           noviceHelp: "Choose the complete outage-survival target. Solar can recharge the battery during the outage, and a generator is counted only if you select one. Wattson must calculate the sources together rather than multiplying the whole bill by the number of days.",
           technicalHelp: "Treat this as a system-autonomy target. Verify it with a time-series energy balance covering backed-up load energy, solar recovery, battery limits and any explicitly selected generator dispatch; do not equate outage days with battery-only days.",
+        };
+      }
+      if (question.id === "backup_duration" && answers.utility_relationship === "off_grid") {
+        const batteryIncluded = answers.battery_requirement === "include";
+        return {
+          ...question,
+          title: "How long should the system cover periods without enough solar?",
+          noviceHelp: `Choose the complete low-solar operating target. Solar, ${batteryIncluded ? "the selected battery storage and " : ""}any generator or other supply selected later must be assessed together; this answer does not assume either source.`,
+          technicalHelp: `Treat this as a standalone system-autonomy target. Verify chronological load and solar operation${batteryIncluded ? ", battery limits and recharge time" : ""}, plus any generator or other source explicitly selected later; do not infer an unselected source.`,
+        };
+      }
+      if (question.id === "battery_requirement" && replacesGrid(answers)) {
+        return {
+          ...question,
+          noviceHelp: "An off-grid system does not automatically require a battery or a generator. Record the battery decision here; a later question separately records whether generator supply is included and what it should power.",
+          options: question.options?.map((option) => option.value === "none"
+            ? { ...option, label: "No battery storage", description: "Keep the proposal battery-free. Later questions establish whether a generator or another source supplies loads when solar is insufficient, or whether those loads may stop." }
+            : option),
+        };
+      }
+      if (question.id === "generator_outage_role" && replacesGrid(answers)) {
+        const batteryIncluded = answers.battery_requirement === "include";
+        return {
+          ...question,
+          title: "What should the generator do when extra power is needed?",
+          noviceHelp: batteryIncluded
+            ? "Choose every intended role. The generator may recharge the batteries, carry high-power loads, supply selected circuits, or combine compatible roles when solar and stored energy are insufficient."
+            : "Choose every intended role. In this battery-free design, the generator may carry high-power loads, supply selected circuits, or do both through a compatible and safely controlled power arrangement.",
+          technicalHelp: batteryIncluded
+            ? "Define the generator source path, charger demand, transferred circuits, load steps, start controls, interlocking and neutral/earth arrangement for low-solar or low-reserve operation."
+            : "Define the generator source path, transferred circuits, PV interaction, load steps, interlocking and neutral/earth arrangement. Confirm the selected equipment supports stable battery-free operation and prevents unsafe source interconnection.",
+          options: question.options
+            ?.filter((option) => batteryIncluded || !["battery_recharge", "automatic_low_reserve"].includes(option.value))
+            .map((option) => option.value === "backup_circuits"
+              ? { ...option, label: "Supply selected circuits", description: "Power the lights, tools and other circuits selected for generator supply." }
+              : option),
         };
       }
       if (question.id === "pool_heating_method") {
@@ -712,12 +838,14 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
           ? {
               value: "none",
               label: "No solar panels — generator or other source",
-              description: "Use battery storage supplied by a generator or another local energy source. Grid charging is not available at this Site.",
+              description: answers.battery_requirement === "none"
+                ? "Use a generator or another local source directly. No public-grid charging or battery storage is assumed."
+                : "Use battery storage supplied by a generator or another local energy source. Grid charging is not available at this Site.",
             }
           : option),
       };
     })
-    .filter((question) => question.id !== "heavy_loads" || (question.options?.filter((option) => option.value !== "none").length ?? 0) >= 2);
+    .filter((question) => question.id !== "heavy_loads" || (question.options?.filter((option) => option.value !== "none").length ?? 0) >= 1);
 }
 
 export function helpForExperience(question: DiscoveryQuestion, profile: OnboardingAnswers) {

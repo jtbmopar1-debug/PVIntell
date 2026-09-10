@@ -1,7 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
-import { defaultProposalPanel, defaultProposalPanelStringLayout, defaultProposalPanelWarnings } from "@/design/candidate-panel";
-import { deriveProposalSizing, type ProposalSizingInput } from "@/design/proposal-sizing";
+import { defaultProposalPanel, defaultProposalPanelStringLayout, defaultProposalPanelWarnings, proposalPanelProfile } from "@/design/candidate-panel";
+import { deriveProposalSizing, solarFirstPowerAlternative, supplementaryArrayPlan, type ProposalSizingInput } from "@/design/proposal-sizing";
+import { recommendedPanelOrientation } from "@/design/panel-orientation";
+import { generatorFromDiscovery, proposalIncludesSolar } from "@/design/proposal-inputs";
+import { assessPanelSurfaces } from "@/design/panel-surfaces";
+import type { DesignCalculatorState } from "@/domain/models";
 
 const componentType = z.enum([
   "panel",
@@ -36,16 +40,21 @@ const preliminaryDesignSchema = z.object({
   starting_stage: z.string().trim().min(1).max(800),
   expansion_path: z.string().trim().min(1).max(1200),
   next_validation: z.string().trim().min(1).max(800),
+  inverter_arrangement: z.enum(["combined", "modular", "string_inverter", "optimiser_string", "microinverters", "compare", "existing"]).optional(),
   pv_kw: z.number().positive().max(1000).optional(),
   panel_count: z.number().int().positive().max(10000).optional(),
   representative_panel_watts: z.number().positive().max(5000).optional(),
+  existing_panel_name: z.string().trim().min(1).max(160).optional(),
+  existing_panel_available_count: z.number().int().positive().max(10000).optional(),
+  existing_panel_max_use_count: z.number().int().positive().max(10000).optional(),
+  existing_panel_assessment_required: z.boolean().optional(),
   pv_strings: z.number().int().positive().max(1000).optional(),
   panels_per_string: z.number().int().positive().max(1000).optional(),
   panel_vmp_v: z.number().positive().max(5000).optional(),
   panel_voc_v: z.number().positive().max(5000).optional(),
   panel_imp_a: z.number().positive().max(1000).optional(),
   panel_isc_a: z.number().positive().max(1000).optional(),
-  panel_type: z.enum(["bifacial", "monofacial", "other", "not_selected"]).default("not_selected"),
+  panel_type: z.enum(["bifacial", "monofacial", "flexible", "other", "not_selected"]).default("not_selected"),
   panel_length_mm: z.number().positive().max(10000).optional(),
   panel_width_mm: z.number().positive().max(10000).optional(),
   panel_weight_kg: z.number().positive().max(500).optional(),
@@ -61,6 +70,44 @@ const proposedDesignAdjustmentSchema = z.object({
 });
 
 type PreliminaryDesign = z.infer<typeof preliminaryDesignSchema>;
+
+const commonGeneratorRatingsKw = [1, 2, 3, 3.5, 5, 6, 7.5, 8.5, 10, 12, 15, 20, 25, 30, 40, 50, 60, 75, 100];
+
+/**
+ * Produce a searchable preliminary generator class while retaining the actual
+ * running and motor-start requirements as separate checks. For a large motor,
+ * an initial class is screened using a conservative 15% assumed difference
+ * between continuous and advertised peak output. The
+ * returned motorStartKw must still be demonstrated by the selected datasheet.
+ */
+export function generatorPlanningTargets(input: {
+  included: boolean;
+  purchaseStatus?: string;
+  roles?: string;
+  inverterKw?: number;
+  continuousLoadKw?: number;
+  startupPeakKw?: number;
+}) {
+  if (!input.included) return {};
+  const assignedHighPowerLoads = input.purchaseStatus === "not_purchased"
+    && /high_power_loads|large_appliances/.test(String(input.roles ?? "").toLowerCase());
+  const runningMinimumKw = assignedHighPowerLoads
+    ? (input.continuousLoadKw ?? 0) * 1.15
+    : (input.inverterKw ?? 0) * .85;
+  const catalogueClassMinimumKw = assignedHighPowerLoads && input.startupPeakKw
+    ? Math.max(runningMinimumKw, input.startupPeakKw / 1.15)
+    : runningMinimumKw;
+  const firstClassIndex = commonGeneratorRatingsKw.findIndex((rating) => rating >= catalogueClassMinimumKw);
+  const selectedClassIndex = firstClassIndex;
+  const continuousKw = catalogueClassMinimumKw > 0
+    ? selectedClassIndex >= 0 ? commonGeneratorRatingsKw[selectedClassIndex] : Math.ceil(catalogueClassMinimumKw / 25) * 25
+    : undefined;
+  return {
+    continuousKw,
+    motorStartKw: assignedHighPowerLoads ? input.startupPeakKw : undefined,
+    assignedHighPowerLoads,
+  };
+}
 
 /**
  * AI output supplies narrative and representative equipment assumptions only.
@@ -108,7 +155,7 @@ export function validatePreliminarySizing(
   };
 }
 
-function sizingFields(settings: Record<string, unknown>, mode: string, panelWatts?: number) {
+function sizingFields(settings: Record<string, unknown>, mode: string, panelWatts?: number, selectedPanelCount?: number) {
   const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
     ? settings.designDiscovery as Record<string, unknown>
     : {};
@@ -118,6 +165,7 @@ function sizingFields(settings: Record<string, unknown>, mode: string, panelWatt
     autonomyDays: Number(settings.autonomyDays) || undefined,
     discovery,
     representativePanelWatts: panelWatts,
+    selectedPanelCount,
     representativePanelLengthMm: Number((settings.designCalculator as Record<string, unknown> | undefined)?.panelLengthMm) || undefined,
     representativePanelWidthMm: Number((settings.designCalculator as Record<string, unknown> | undefined)?.panelWidthMm) || undefined,
     solarResource: settings.solarResource && typeof settings.solarResource === "object"
@@ -141,6 +189,8 @@ function sizingFields(settings: Record<string, unknown>, mode: string, panelWatt
       systemEfficiency: sizing.systemEfficiency,
       simultaneousLoadKw: sizing.simultaneousLoadKw,
       startupPeakKw: sizing.startupPeakKw,
+      startupLoadName: sizing.startupLoadName,
+      scheduledLoadEnergyKwh: sizing.scheduledLoadEnergyKwh,
       batteryOnlyDays: sizing.batteryOnlyDays,
       batterySizingBasis: sizing.batterySizingBasis,
       weakestMonthPvKwh: sizing.weakestMonthPvKwh,
@@ -166,7 +216,7 @@ export function refreshProposalAfterSizingInput(settings: Record<string, unknown
   }
   const previousSignature = [calculator.targetPvKw, calculator.panelCount, calculator.inverterKw, calculator.batteryUsableKwh].join("|");
   const fields = sizingFields(settings, mode, Number(calculator.panelWatts) || undefined);
-  if (calculator.panelModel === defaultProposalPanel.model) {
+  if (calculator.panelProfileBasis === "representative") {
     fields.sizingWarnings = [...fields.sizingWarnings, ...defaultProposalPanelWarnings];
   }
   const nextSignature = [fields.targetPvKw, fields.panelCount, fields.inverterKw, fields.batteryUsableKwh].join("|");
@@ -182,8 +232,8 @@ export function refreshProposalAfterSizingInput(settings: Record<string, unknown
   } else {
     for (const key of ["batteryVoltage", "usableBatteryPercent", "batteryQuantity", "batteryChemistry", "batteryAh"]) delete refreshed[key];
   }
-  if (calculator.panelModel === defaultProposalPanel.model && fields.panelCount) {
-    const layout = defaultProposalPanelStringLayout(fields.panelCount);
+  if (calculator.panelProfileBasis === "representative" && fields.panelCount) {
+    const layout = defaultProposalPanelStringLayout(fields.panelCount, proposalPanelProfile(calculator.panelType));
     refreshed.pvStrings = layout?.strings;
     refreshed.panelsPerString = layout?.panelsPerString;
     refreshed.stringDesign = layout;
@@ -254,11 +304,16 @@ const discoveryKey = z.enum([
   "proposed_panel_location",
   "storage_supply_source",
   "panel_construction_interest",
+  "existing_panel_selection",
   "usable_solar_space",
   "panel_area_dimensions",
   "panel_area_constraints",
   "orientation_and_pitch",
   "shading",
+  "shade_affected_areas",
+  "shade_time_windows",
+  "shade_seasonality",
+  "shade_extent",
   "structure_condition",
   "installation_access",
   "property_constraints",
@@ -499,7 +554,7 @@ export const wattsonActionTools = [
         starting_stage: { type: "string", description: "A useful minimum starting stage, clearly described as proposed." },
         expansion_path: { type: "string", description: "How the design can expand without stranding the starting equipment." },
         next_validation: { type: "string", description: "The single most important measurement or evidence still needed." },
-        panel_type: { type: "string", enum: ["bifacial", "monofacial", "other", "not_selected"] },
+        panel_type: { type: "string", enum: ["bifacial", "monofacial", "flexible", "other", "not_selected"] },
         fit_status: { type: "string", enum: ["unverified"], description: "The deterministic baseline does not prove physical fit." },
         azimuth_degrees: { type: "number", minimum: 0, maximum: 360, description: "Proposed panel facing direction in degrees from true north clockwise: 0 north, 90 east, 180 south, 270 west." },
         tilt_degrees: { type: "number", minimum: 0, maximum: 90, description: "Proposed panel tilt from horizontal, in degrees." },
@@ -869,7 +924,8 @@ export async function applyWattsonActions(
   actions: WattsonActionRequest[],
 ) {
   const applied: AppliedWattsonAction[] = [];
-  for (const action of actions) {
+  for (let actionIndex = 0; actionIndex < actions.length; actionIndex++) {
+    const action = actions[actionIndex];
     if (action.name === "record_proposed_component") {
       const parsed = proposedComponentSchema.safeParse(action.arguments);
       if (!parsed.success) continue;
@@ -913,30 +969,56 @@ export async function applyWattsonActions(
         : {};
       const previousPanelWatts = Number(previous.panelWatts) || undefined;
       const useDefaultCandidate = input.representative_panel_watts === undefined
-        && (previousPanelWatts === undefined || previous.panelModel === defaultProposalPanel.model);
-      const representativePanelWatts = input.representative_panel_watts
-        ?? previousPanelWatts
-        ?? defaultProposalPanel.watts;
-      const candidate = useDefaultCandidate ? defaultProposalPanel : undefined;
+        && (!previous.existingPanelGroup && previous.updatedBy !== "user" || previousPanelWatts === undefined);
+      const candidate = useDefaultCandidate ? {
+        ...defaultProposalPanel,
+        ...proposalPanelProfile(input.panel_type),
+      } : undefined;
+      const representativePanelWatts = input.representative_panel_watts ?? candidate?.watts ?? previousPanelWatts ?? defaultProposalPanel.watts;
       const sizing = validatePreliminarySizing(
         { ...input, representative_panel_watts: representativePanelWatts },
         settings,
         String(current.data.mode),
         candidate ? { lengthMm: candidate.lengthMm, widthMm: candidate.widthMm } : undefined,
       );
-      const retainUserModule = previous.updatedBy === "user" && Number(previous.panelWatts) === representativePanelWatts;
-      const candidateStringLayout = candidate && sizing.panelCount
-        ? defaultProposalPanelStringLayout(sizing.panelCount)
-        : undefined;
       const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
         ? settings.designDiscovery as Record<string, { value?: unknown }>
         : {};
+      const recordedBatteryRequirement = String(discovery.battery_requirement?.value ?? "").trim().toLowerCase();
+      const batteryExplicitlyExcluded = /^(?:none|no battery storage)$/.test(recordedBatteryRequirement);
+      const standaloneMode = ["off-grid", "off_grid"].includes(String(current.data.mode).toLowerCase());
+      const solarFirstUpgrade = standaloneMode && batteryExplicitlyExcluded ? solarFirstPowerAlternative({
+        panelCount: sizing.panelCount,
+        panelWatts: representativePanelWatts,
+        inverterKw: sizing.inverterKw,
+        startupPeakKw: sizing.sizing.startupPeakKw,
+      }) : undefined;
+      let proposedPanelCount = solarFirstUpgrade?.totalPanelCount ?? sizing.panelCount;
+      let proposedPvKw = solarFirstUpgrade?.targetPvKw ?? sizing.pvKw;
+      const proposedInverterKw = solarFirstUpgrade?.inverterKw ?? sizing.inverterKw;
+      const retainUserModule = previous.updatedBy === "user" && Number(previous.panelWatts) === representativePanelWatts;
+      let candidateStringLayout = candidate && proposedPanelCount
+        ? defaultProposalPanelStringLayout(proposedPanelCount, candidate)
+        : undefined;
       const recordedChemistry = String(discovery.battery_chemistry?.value ?? "").toLowerCase();
       const isLeadAcid = /lead|agm|gel/.test(recordedChemistry);
       const batteryChemistry = recordedChemistry === "lifepo4"
         ? "LiFePO₄"
         : recordedChemistry ? recordedChemistry.replaceAll("_", " ") : "LiFePO₄ (planning selection)";
       const nominalDcVoltage = Number(String(discovery.dc_system_voltage?.value ?? "").match(/\d+(?:\.\d+)?/)?.[0]);
+      const generatorRoles = String(discovery.generator_outage_role?.value ?? "").toLowerCase();
+      const generatorDetails = generatorFromDiscovery(discovery);
+      const generatorIncluded = generatorDetails.included;
+      const generatorTargets = generatorPlanningTargets({
+        included: generatorIncluded,
+        purchaseStatus: generatorDetails.purchaseStatus,
+        roles: generatorRoles,
+        inverterKw: proposedInverterKw,
+        continuousLoadKw: sizing.sizing.simultaneousLoadKw,
+        startupPeakKw: sizing.sizing.startupPeakKw,
+      });
+      const calculatedGeneratorContinuousKw = generatorTargets.continuousKw;
+      const calculatedGeneratorSurgeKw = generatorTargets.motorStartKw;
       const batteryVoltage = sizing.batteryUsableKwh
         ? (Number(previous.batteryVoltage) || (nominalDcVoltage === 48 && !isLeadAcid ? 51.2 : nominalDcVoltage || 51.2))
         : undefined;
@@ -946,6 +1028,44 @@ export async function applyWattsonActions(
       const batteryAh = sizing.batteryUsableKwh && batteryVoltage && usableBatteryPercent
         ? Math.ceil(sizing.batteryUsableKwh * 1000 / (batteryVoltage * usableBatteryPercent / 100))
         : undefined;
+      const existingPanelAvailable = input.existing_panel_assessment_required ? input.existing_panel_available_count : undefined;
+      const existingPanelAllocation = existingPanelAvailable ? Math.min(input.existing_panel_max_use_count ?? existingPanelAvailable, existingPanelAvailable) : undefined;
+      let existingPanelsUsed = existingPanelAllocation && proposedPanelCount ? Math.min(existingPanelAllocation, proposedPanelCount) : undefined;
+      // A second array is selected independently. Discovery establishes its
+      // required capacity here; module class, wattage and quantity stay open
+      // until a compatible option is assessed for its own mounting surface and
+      // inverter/MPPT input.
+      let supplementaryCapacityRequiredKw: number | undefined;
+      let supplementaryPanelsRequired = existingPanelsUsed !== undefined && proposedPanelCount ? Math.max(0, proposedPanelCount - existingPanelsUsed) : undefined;
+      if (existingPanelsUsed !== undefined) {
+        const targetFrontSidePvKw = solarFirstUpgrade ? solarFirstUpgrade.inverterKw * 1.2 : sizing.pvKw;
+        if (targetFrontSidePvKw) {
+          existingPanelsUsed = Math.min(existingPanelAllocation ?? 0, Math.ceil(targetFrontSidePvKw * 1000 / representativePanelWatts));
+        }
+        const supplementary = targetFrontSidePvKw ? supplementaryArrayPlan({
+          targetPvKw: targetFrontSidePvKw,
+          existingPanelCount: existingPanelsUsed,
+          existingPanelWatts: representativePanelWatts,
+        }) : undefined;
+        supplementaryCapacityRequiredKw = supplementary?.requiredCapacityKw || undefined;
+        supplementaryPanelsRequired = supplementaryCapacityRequiredKw ? supplementary?.planningCount : undefined;
+        proposedPanelCount = existingPanelsUsed + (supplementaryPanelsRequired ?? 0);
+        proposedPvKw = supplementary?.totalPlannedPvKw ?? Number((existingPanelsUsed * representativePanelWatts / 1000).toFixed(2));
+        // Electrically different modules are represented as independent arrays;
+        // final series counts wait for both module and MPPT datasheets.
+        candidateStringLayout = undefined;
+      }
+      const existingPanelsSurplus = existingPanelAvailable && existingPanelsUsed !== undefined ? existingPanelAvailable - existingPanelsUsed : undefined;
+      const existingPanelWarnings = existingPanelAvailable ? [
+        `${existingPanelAvailable} user-owned ${input.representative_panel_watts} W panels are recorded, with up to ${existingPanelAllocation} made available to this proposal. The proposal uses ${existingPanelsUsed ?? 0}; ${existingPanelsSurplus ?? 0} remain unused${supplementaryCapacityRequiredKw ? `, and a separate array supplying at least ${supplementaryCapacityRequiredKw} kW is included` : ""}.`,
+        "Existing-panel suitability is provisional until the exact model, dimensions, weight, Voc, Vmp, Isc, Imp, temperature coefficient, condition and inverter/MPPT limits are verified. Any electrically different additional modules must use a separately compatible string or input.",
+      ] : [];
+      const solarFirstWarnings = solarFirstUpgrade ? [
+        `Solar-first power sizing increases the proposal from the ${sizing.pvKw ?? "unconfirmed"} kW energy baseline to at least ${proposedPvKw} kW of front-side panel capacity with a ${proposedInverterKw} kW inverter class so the ${sizing.sizing.startupLoadName ?? "largest motor"} can be assessed against its ${sizing.sizing.startupPeakKw} kW starting demand. Direct operation still requires adequate sunlight and documented inverter motor-start performance.`,
+      ] : [];
+      const generatorSizingWarnings = generatorTargets.assignedHighPowerLoads && calculatedGeneratorContinuousKw && calculatedGeneratorSurgeKw ? [
+        `${calculatedGeneratorContinuousKw} kW is the preliminary, slightly up-specified marketed generator class screened from the recorded running and ${calculatedGeneratorSurgeKw} kW startup demand. Select it only if the exact model documents at least ${calculatedGeneratorSurgeKw} kW motor-start output and acceptable voltage/frequency recovery; continuous kW alone does not prove motor-start suitability.`,
+      ] : [];
       const nextDesign: Record<string, unknown> = {
         ...previous,
         designBasis: input.design_basis,
@@ -953,14 +1073,32 @@ export async function applyWattsonActions(
         expansionPath: input.expansion_path,
         nextValidation: input.next_validation,
         panelType: candidate?.panelType ?? input.panel_type,
-        targetPvKw: sizing.pvKw,
+        inverterArrangement: input.inverter_arrangement,
+        panelProfileBasis: candidate ? "representative" : "user_equipment",
+        mountingLocations: String(discovery.proposed_panel_location?.value ?? "").split(",").map((location) => location.trim()).filter(Boolean),
+        targetPvKw: proposedPvKw,
         panelWatts: representativePanelWatts,
-        panelCount: sizing.panelCount,
+        panelCount: proposedPanelCount,
+        existingPanelGroup: existingPanelAvailable ? {
+          name: input.existing_panel_name ?? "Existing panels",
+          availableCount: existingPanelAvailable,
+          maximumAvailableToProposal: existingPanelAllocation,
+          proposedUseCount: existingPanelsUsed,
+          surplusCount: existingPanelsSurplus,
+          supplementaryCount: supplementaryPanelsRequired,
+          supplementaryTargetPvKw: supplementaryCapacityRequiredKw,
+          wattsEach: input.representative_panel_watts,
+          supplementaryWattsEach: undefined,
+          supplementaryPanelType: undefined,
+          supplementaryLengthMm: undefined,
+          supplementaryWidthMm: undefined,
+          assessmentStatus: "provisional_pending_datasheet_and_condition",
+        } : undefined,
         energyTargetPvKw: sizing.sizing.energyTargetPvKw,
         energyTargetPanelCount: sizing.sizing.energyTargetPanelCount,
         planningPanelCapacity: sizing.sizing.planningPanelCapacity,
         fitLimited: sizing.sizing.fitLimited,
-        pvStrings: candidateStringLayout?.strings,
+        pvStrings: supplementaryCapacityRequiredKw ? 2 : candidateStringLayout?.strings,
         panelsPerString: candidateStringLayout?.panelsPerString,
         stringDesign: candidateStringLayout,
         panelManufacturer: candidate?.manufacturer ?? (retainUserModule ? previous.panelManufacturer : undefined),
@@ -983,9 +1121,18 @@ export async function applyWattsonActions(
         panelVocTemperatureCoefficientPercentPerC: candidate?.vocTemperatureCoefficientPercentPerC ?? (retainUserModule ? previous.panelVocTemperatureCoefficientPercentPerC : undefined),
         requiredPanelAreaM2: retainUserModule ? previous.requiredPanelAreaM2 : undefined,
         fitStatus: "unverified",
-        azimuthDegrees: input.azimuth_degrees ?? previous.azimuthDegrees,
-        tiltDegrees: input.tilt_degrees ?? previous.tiltDegrees,
-        inverterKw: sizing.inverterKw,
+        ...recommendedPanelOrientation({
+          azimuthDegrees: input.azimuth_degrees ?? previous.azimuthDegrees,
+          tiltDegrees: input.tilt_degrees ?? previous.tiltDegrees,
+        }, (settings.solarResource as { latitude?: number } | undefined)?.latitude),
+        inverterKw: proposedInverterKw,
+        generatorIncluded: generatorIncluded || undefined,
+        generatorPurchaseStatus: generatorDetails.purchaseStatus || undefined,
+        generatorContinuousKw: generatorIncluded ? generatorDetails.purchaseStatus === "not_purchased" ? calculatedGeneratorContinuousKw : generatorDetails.continuousKw : undefined,
+        generatorSurgeKw: generatorIncluded ? generatorDetails.purchaseStatus === "not_purchased" ? calculatedGeneratorSurgeKw : generatorDetails.surgeKw : undefined,
+        generatorConnectionMethod: generatorDetails.connectionMethod,
+        generatorType: generatorDetails.generatorType,
+        generatorFuel: generatorDetails.fuel,
         batteryUsableKwh: sizing.batteryUsableKwh,
         batteryChemistry: sizing.batteryUsableKwh ? batteryChemistry : undefined,
         batteryVoltage,
@@ -1000,23 +1147,34 @@ export async function applyWattsonActions(
           systemEfficiency: sizing.sizing.systemEfficiency,
           simultaneousLoadKw: sizing.sizing.simultaneousLoadKw,
           startupPeakKw: sizing.sizing.startupPeakKw,
+          startupLoadName: sizing.sizing.startupLoadName,
+          scheduledLoadEnergyKwh: sizing.sizing.scheduledLoadEnergyKwh,
           batteryOnlyDays: sizing.sizing.batteryOnlyDays,
           batterySizingBasis: sizing.sizing.batterySizingBasis,
           weakestMonthPvKwh: sizing.sizing.weakestMonthPvKwh,
           assumedNonSolarLoadKwh: sizing.sizing.assumedNonSolarLoadKwh,
         },
-        sizingAssumptions: sizing.sizing.assumptions,
-        sizingWarnings: [...sizing.sizing.warnings, ...(candidate ? defaultProposalPanelWarnings : [])],
+        sizingAssumptions: [...sizing.sizing.assumptions, ...(solarFirstUpgrade ? [`Solar-first proposal adds the panel and inverter capacity needed to assess the recorded ${sizing.sizing.startupPeakKw} kW motor-start demand before relying on generator or grid support.`] : [])],
+        sizingWarnings: [...sizing.sizing.warnings, ...solarFirstWarnings, ...generatorSizingWarnings, ...generatorDetails.warnings, ...existingPanelWarnings, ...(candidate ? defaultProposalPanelWarnings : [])],
         updatedAt: new Date().toISOString(),
         updatedBy: "wattson",
       };
-      const previousSizingSignature = [previous.targetPvKw, previous.panelCount, previous.inverterKw, previous.batteryUsableKwh].join("|");
-      const nextSizingSignature = [nextDesign.targetPvKw, nextDesign.panelCount, nextDesign.inverterKw, nextDesign.batteryUsableKwh].join("|");
-      if (previousSizingSignature !== nextSizingSignature) {
-        delete nextDesign.proposedAsBuiltDraft;
-        delete nextDesign.proposedChecklist;
+      // A rebuild is a new proposal even if its four headline sizes match.
+      // Generator route, panel grouping, orientation and architecture may change.
+      delete nextDesign.proposedAsBuiltDraft;
+      delete nextDesign.proposedChecklist;
+      if (!proposalIncludesSolar(discovery)) {
+        nextDesign.panelCount = 0;
+        nextDesign.targetPvKw = 0;
+        for (const key of ["existingPanelGroup", "pvStrings", "panelsPerString", "stringDesign", "panelLengthMm", "panelWidthMm", "panelWeightKg", "panelVmpV", "panelVocV", "panelImpA", "panelIscA"]) delete nextDesign[key];
       }
-      for (const key of ["targetPvKw", "panelCount", "energyTargetPvKw", "energyTargetPanelCount", "planningPanelCapacity", "pvStrings", "panelsPerString", "stringDesign", "panelManufacturer", "panelModel", "panelSupplier", "panelProductUrl", "panelDatasheetUrl", "panelDatasheetVersion", "panelVmpV", "panelVocV", "panelImpA", "panelIscA", "panelLengthMm", "panelWidthMm", "panelThicknessMm", "panelWeightKg", "panelWeightBasis", "panelMaximumSystemVoltageV", "panelMaximumSeriesFuseA", "panelVocTemperatureCoefficientPercentPerC", "requiredPanelAreaM2", "inverterKw", "batteryUsableKwh", "batteryChemistry", "batteryVoltage", "batteryAh", "batteryQuantity", "usableBatteryPercent"]) {
+      const finalSurfaceAssessment = assessPanelSurfaces(discovery, nextDesign as DesignCalculatorState, (settings.solarResource as { latitude?: number } | undefined)?.latitude);
+      nextDesign.sizingWarnings = [...new Set([...(nextDesign.sizingWarnings as string[]), ...finalSurfaceAssessment.warnings])];
+      if (finalSurfaceAssessment.status === "exceeds_space") {
+        nextDesign.fitLimited = true;
+        nextDesign.fitStatus = "does_not_fit";
+      }
+      for (const key of ["targetPvKw", "panelCount", "energyTargetPvKw", "energyTargetPanelCount", "planningPanelCapacity", "pvStrings", "panelsPerString", "stringDesign", "panelManufacturer", "panelModel", "panelSupplier", "panelProductUrl", "panelDatasheetUrl", "panelDatasheetVersion", "panelVmpV", "panelVocV", "panelImpA", "panelIscA", "panelLengthMm", "panelWidthMm", "panelThicknessMm", "panelWeightKg", "panelWeightBasis", "panelMaximumSystemVoltageV", "panelMaximumSeriesFuseA", "panelVocTemperatureCoefficientPercentPerC", "requiredPanelAreaM2", "inverterKw", "generatorIncluded", "generatorPurchaseStatus", "generatorContinuousKw", "generatorSurgeKw", "batteryUsableKwh", "batteryChemistry", "batteryVoltage", "batteryAh", "batteryQuantity", "usableBatteryPercent"]) {
         if (nextDesign[key] === undefined) delete nextDesign[key];
       }
       settings.designCalculator = nextDesign;
@@ -1033,7 +1191,7 @@ export async function applyWattsonActions(
     if (action.name === "update_proposed_design") {
       const parsed = proposedDesignAdjustmentSchema.safeParse(action.arguments);
       if (!parsed.success) continue;
-      const current = await supabase.from("projects").select("settings").eq("id", projectId).single();
+      const current = await supabase.from("projects").select("settings,mode").eq("id", projectId).single();
       if (current.error) throw current.error;
       const settings = (current.data.settings ?? {}) as Record<string, unknown>;
       if (!settings.designCalculator || typeof settings.designCalculator !== "object") continue;
@@ -1043,20 +1201,36 @@ export async function applyWattsonActions(
       const panelCount = parsed.data.panel_count;
       const panelCapacity = Number(calculator.planningPanelCapacity);
       if (Number.isFinite(panelCapacity) && panelCapacity >= 0 && panelCount > panelCapacity) continue;
-      const stringLayout = calculator.panelModel === defaultProposalPanel.model
-        ? defaultProposalPanelStringLayout(panelCount)
+      const knownPanelProfile = calculator.panelProfileBasis === "representative" && !calculator.existingPanelGroup;
+      const stringLayout = knownPanelProfile
+        ? defaultProposalPanelStringLayout(panelCount, proposalPanelProfile(calculator.panelType))
         : undefined;
+      const dependentSizing = sizingFields(settings, String(current.data.mode), panelWatts, panelCount);
       calculator.panelCount = panelCount;
       calculator.targetPvKw = Number((panelCount * panelWatts / 1000).toFixed(2));
-      calculator.fitLimited = Number.isFinite(panelCapacity) ? panelCount > panelCapacity : calculator.fitLimited;
+      calculator.energyTargetPvKw = dependentSizing.energyTargetPvKw;
+      calculator.energyTargetPanelCount = dependentSizing.energyTargetPanelCount;
+      calculator.planningPanelCapacity = dependentSizing.planningPanelCapacity;
+      calculator.fitLimited = dependentSizing.fitLimited;
       calculator.pvStrings = stringLayout?.strings;
       calculator.panelsPerString = stringLayout?.panelsPerString;
       calculator.stringDesign = stringLayout;
+      calculator.sizingInputs = dependentSizing.sizingInputs;
+      calculator.sizingAssumptions = dependentSizing.sizingAssumptions;
+      calculator.inverterKw = dependentSizing.inverterKw;
+      if (dependentSizing.batteryUsableKwh) {
+        const batteryVoltage = Number(calculator.batteryVoltage) || 51.2;
+        const usableBatteryPercent = Number(calculator.usableBatteryPercent) || 80;
+        calculator.batteryUsableKwh = dependentSizing.batteryUsableKwh;
+        calculator.batteryVoltage = batteryVoltage;
+        calculator.usableBatteryPercent = usableBatteryPercent;
+        calculator.batteryAh = Math.ceil(dependentSizing.batteryUsableKwh * 1000 / (batteryVoltage * usableBatteryPercent / 100));
+      }
       calculator.sizingMethod = "user-adjusted";
       calculator.updatedBy = "user";
       calculator.updatedAt = new Date().toISOString();
       calculator.sizingWarnings = [
-        ...((Array.isArray(calculator.sizingWarnings) ? calculator.sizingWarnings : []) as string[])
+        ...dependentSizing.sizingWarnings
           .filter((warning) => !warning.startsWith("Panel count adjusted to ")),
         `Panel count adjusted to ${panelCount} at the user's request; verify the final string layout against the selected inverter MPPT limits and cold-weather module voltage.`,
       ];
@@ -1109,26 +1283,31 @@ export async function applyWattsonActions(
     }
 
     if (action.name === "record_design_discovery") {
-      const parsed = designDiscoverySchema.safeParse(action.arguments);
-      if (!parsed.success) continue;
+      const batch = [];
+      while (actionIndex < actions.length && actions[actionIndex].name === "record_design_discovery") {
+        const parsed = designDiscoverySchema.safeParse(actions[actionIndex].arguments);
+        if (parsed.success) batch.push(parsed.data);
+        actionIndex++;
+      }
+      actionIndex--;
+      if (!batch.length) continue;
       const current = await supabase.from("projects").select("settings,mode").eq("id", projectId).single();
       if (current.error) throw current.error;
       const settings = (current.data.settings ?? {}) as Record<string, unknown>;
       const discovery = (settings.designDiscovery ?? {}) as Record<string, unknown>;
-      discovery[parsed.data.key] = {
-        value: parsed.data.value,
-        confidence: parsed.data.confidence,
-        recordedAt: new Date().toISOString(),
+      for (const input of batch) discovery[input.key] = {
+        value: input.value, confidence: input.confidence, recordedAt: new Date().toISOString(),
       };
       settings.designDiscovery = discovery;
-      if (proposalSizingDiscoveryKeys.has(parsed.data.key))
+      if (batch.some((input) => proposalSizingDiscoveryKeys.has(input.key))
+        && !actions.slice(actionIndex + 1).some((next) => next.name === "record_preliminary_design"))
         refreshProposalAfterSizingInput(settings, String(current.data.mode));
       const changed = await supabase.from("projects").update({ settings }).eq("id", projectId);
       if (changed.error) throw changed.error;
-      applied.push({
-        type: "design_discovery_updated",
-        summary: `Added ${parsed.data.key.replaceAll("_", " ")} to the discovery notes`,
-      });
+      applied.push(...batch.map((input) => ({
+        type: "design_discovery_updated" as const,
+        summary: `Added ${input.key.replaceAll("_", " ")} to the discovery notes`,
+      })));
     }
 
     if (action.name === "record_system_knowledge") {

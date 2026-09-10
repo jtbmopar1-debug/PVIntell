@@ -2,7 +2,7 @@ import { z } from "zod";
 import tzLookup from "tz-lookup";
 import { applyWattsonActions, type WattsonActionRequest } from "@/ai/actions";
 import { createSystem } from "@/data/cloud-project";
-import { newSystemQuestions, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers } from "@/discovery/new-system";
+import { discoveryProjectType, newSystemQuestions, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers } from "@/discovery/new-system";
 import { invalidateProposalAfterDiscovery } from "@/design/invalidate-proposal";
 import { deterministicProposalActions } from "@/design/proposal-action";
 import { refreshProjectSolarResource } from "@/design/refresh-solar-resource";
@@ -22,12 +22,6 @@ function outcomeText(value: unknown): string {
     independence: "Become less dependent on public electricity",
     combination: "Reduce electricity use/cost and improve resilience",
   } as Record<string, string>)[String(value)] ?? "Design a suitable solar power system";
-}
-
-function projectType(answers: DiscoveryAnswers) {
-  if (answers.utility_relationship === "off_grid" || answers.target_grid_role === "replace_grid") return "off-grid" as const;
-  const outcomes = Array.isArray(answers.primary_outcome) ? answers.primary_outcome : [answers.primary_outcome];
-  return outcomes.length === 1 && outcomes[0] === "cost" ? "grid-tied" as const : "hybrid" as const;
 }
 
 function proposedSystemVoltage(answers: DiscoveryAnswers) {
@@ -79,6 +73,7 @@ function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
     ["pool_heater_electrical_kw", answers.pool_heater_electrical_kw],
     ["pool_heater_cop", answers.pool_heater_cop],
     ["pool_equipment_ratings", answers.pool_equipment_ratings],
+    ["pool_equipment", answers.pool_equipment],
     ["household_motor_ratings", answers.household_motor_ratings],
     ["everyday_needs", answers.everyday_needs],
     ["heavy_or_surge_loads", answers.heavy_loads],
@@ -87,10 +82,15 @@ function discoveryActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
     ["proposed_panel_location", answers.panel_location],
     ["storage_supply_source", answers.storage_supply_source_off_grid ?? answers.storage_supply_source_grid],
     ["panel_construction_interest", answers.panel_construction_interest],
+    ["existing_panel_selection", answers.existing_panel_selection],
     ["panel_area_dimensions", answers.panel_area_dimensions],
     ["panel_area_constraints", answers.panel_area_constraints],
-    ["orientation_and_pitch", structuredPanelAnswer(answers.orientation_and_pitch, "orientation")],
+    ["orientation_and_pitch", answers.orientation_and_pitch],
     ["shading", answers.shading],
+    ["shade_affected_areas", answers.shade_affected_areas],
+    ["shade_time_windows", answers.shade_time_windows],
+    ["shade_seasonality", answers.shade_seasonality],
+    ["shade_extent", answers.shade_extent],
     ["structure_condition", structuredPanelAnswer(answers.structure_condition, "structure")],
     ["expected_expansion", answers.future_changes],
     ["ev_status", answers.ev_status],
@@ -186,7 +186,7 @@ export async function PATCH(request: Request) {
   if (project.error || !project.data) return Response.json({ error: "Power system not found." }, { status: 404 });
   const answers = parsed.data.answers as DiscoveryAnswers;
   try {
-    await refreshProjectSolarResource(context.supabase, context.userId, project.data.id, project.data.site_id, projectType(answers) === "off-grid");
+    await refreshProjectSolarResource(context.supabase, context.userId, project.data.id, project.data.site_id, discoveryProjectType(answers) === "off-grid");
   } catch (problem) {
     return Response.json({ error: problem instanceof Error ? problem.message : "Could not calculate the Site solar resource" }, { status: 503 });
   }
@@ -204,7 +204,7 @@ export async function PATCH(request: Request) {
   const systemUpdate = await context.supabase.from("projects").update({
     name: String(answers.system_name || "Home solar"),
     description: outcomeText(answers.primary_outcome),
-    mode: projectType(answers) === "grid-tied" ? "grid_tied" : projectType(answers) === "hybrid" ? "hybrid" : "off_grid",
+    mode: discoveryProjectType(answers) === "grid-tied" ? "grid_tied" : discoveryProjectType(answers) === "hybrid" ? "hybrid" : "off_grid",
     system_voltage: proposedSystemVoltage(answers) ?? null,
   }).eq("id", project.data.id).eq("owner_id", context.userId);
   if (systemUpdate.error) return Response.json({ error: systemUpdate.error.message }, { status: 400 });
@@ -221,7 +221,7 @@ export async function PATCH(request: Request) {
     completed_at: new Date().toISOString(),
   }, { onConflict: "project_id,template_key" });
   if (questionnaire.error) return Response.json({ error: questionnaire.error.message }, { status: 400 });
-  return Response.json({ saved: true, affectedDesigns, designUrl: `/sites/${project.data.site_id}/systems/${project.data.id}/design/schematic` });
+  return Response.json({ saved: true, affectedDesigns, designUrl: `/sites/${project.data.site_id}/systems/${project.data.id}/design/schematic?proposal=intro` });
 }
 
 export async function POST(request: Request) {
@@ -310,9 +310,9 @@ export async function POST(request: Request) {
   let createdSystemId: string | undefined;
   try {
     const systemName = String(answers.system_name || "Home solar");
-    const systemId = await createSystem(context.supabase, context.userId, siteId, systemName, projectType(answers), outcomeText(answers.primary_outcome), proposedSystemVoltage(answers));
+    const systemId = await createSystem(context.supabase, context.userId, siteId, systemName, discoveryProjectType(answers), outcomeText(answers.primary_outcome), proposedSystemVoltage(answers));
     createdSystemId = systemId;
-    await refreshProjectSolarResource(context.supabase, context.userId, systemId, siteId, projectType(answers) === "off-grid");
+    await refreshProjectSolarResource(context.supabase, context.userId, systemId, siteId, discoveryProjectType(answers) === "off-grid");
     const advanced = await context.supabase.from("projects").update({ phase: "design" }).eq("id", systemId).eq("owner_id", context.userId);
     if (advanced.error) throw advanced.error;
     if (parsed.data.draftId) {
@@ -370,7 +370,7 @@ export async function POST(request: Request) {
     }
     const cleared = await context.supabase.from("profiles").update(profileUpdate).eq("id", context.userId);
     if (cleared.error) throw cleared.error;
-    return Response.json({ siteId, systemId, designUrl: `/sites/${siteId}/systems/${systemId}/design/schematic` });
+    return Response.json({ siteId, systemId, designUrl: `/sites/${siteId}/systems/${systemId}/design/schematic?proposal=intro` });
   } catch (problem) {
     if (createdSystemId) await context.supabase.from("projects").delete().eq("id", createdSystemId).eq("owner_id", context.userId);
     if (createdSiteId) await context.supabase.from("sites").delete().eq("id", createdSiteId).eq("owner_id", context.userId);

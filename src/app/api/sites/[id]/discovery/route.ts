@@ -3,7 +3,7 @@ import { applyWattsonActions } from "@/ai/actions";
 import { invalidateProposalAfterDiscovery } from "@/design/invalidate-proposal";
 import { deterministicProposalActions } from "@/design/proposal-action";
 import { refreshProjectSolarResource } from "@/design/refresh-solar-resource";
-import type { DiscoveryAnswers } from "@/discovery/new-system";
+import { discoveryProjectType, type DiscoveryAnswers } from "@/discovery/new-system";
 import { siteDiscoveryActions } from "@/discovery/site-actions";
 import { createClient } from "@/lib/supabase/server";
 
@@ -51,7 +51,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if ("error" in context) return context.error;
   const baseline = context.discovery?.baseline_answers ?? (context.discovery?.status === "completed" ? context.discovery.answers : undefined);
   const changed = Boolean(baseline) && JSON.stringify(baseline) !== JSON.stringify(parsed.data.answers);
-  const systems = await context.supabase.from("projects").select("id,phase,mode").eq("site_id", id).eq("owner_id", context.userId);
+  const systems = await context.supabase.from("projects").select("id,phase,mode,updated_at").eq("site_id", id).eq("owner_id", context.userId).order("updated_at", { ascending: false });
   if (systems.error) return Response.json({ error: systems.error.message }, { status: 400 });
   const saved = await context.supabase.from("site_discoveries").upsert({
     site_id: id,
@@ -70,13 +70,17 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
   const requestedSystem = parsed.data.systemId ? systems.data.find((system) => system.id === parsed.data.systemId) : undefined;
   const activeDesigns = systems.data.filter((system) => !["monitor", "diagnose", "maintain", "explain"].includes(system.phase));
-  const targetSystem = requestedSystem ?? (activeDesigns.length === 1 ? activeDesigns[0] : systems.data.length === 1 ? systems.data[0] : undefined);
+  const targetSystem = requestedSystem ?? activeDesigns[0] ?? systems.data[0];
   let affectedDesigns = 0;
   const targets = requestedSystem ? [requestedSystem] : activeDesigns;
   try {
     if (changed) affectedDesigns = await invalidateProposalAfterDiscovery(context.supabase, context.userId, targets.map((system) => system.id));
+    const nextProjectType = discoveryProjectType(parsed.data.answers as DiscoveryAnswers);
+    const nextMode = nextProjectType === "grid-tied" ? "grid_tied" : nextProjectType === "hybrid" ? "hybrid" : "off_grid";
     for (const system of targets) {
-      await refreshProjectSolarResource(context.supabase, context.userId, system.id, id, system.mode === "off_grid" || parsed.data.answers.target_grid_role === "replace_grid");
+      const updatedSystem = await context.supabase.from("projects").update({ mode: nextMode }).eq("id", system.id).eq("owner_id", context.userId);
+      if (updatedSystem.error) throw updatedSystem.error;
+      await refreshProjectSolarResource(context.supabase, context.userId, system.id, id, nextMode === "off_grid");
       await applyWattsonActions(context.supabase, system.id, [
         ...siteDiscoveryActions(parsed.data.answers as DiscoveryAnswers),
         ...deterministicProposalActions(parsed.data.answers as DiscoveryAnswers),
@@ -85,6 +89,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   } catch (problem) {
     return Response.json({ error: problem instanceof Error ? problem.message : "Could not rebuild the affected proposal" }, { status: 400 });
   }
-  const designUrl = targetSystem ? `/sites/${id}/systems/${targetSystem.id}/design/schematic` : `/sites/${id}`;
+  const designUrl = targetSystem ? `/sites/${id}/systems/${targetSystem.id}/design/schematic?proposal=intro` : `/sites/${id}`;
   return Response.json({ saved: true, affectedDesigns, designUrl });
 }

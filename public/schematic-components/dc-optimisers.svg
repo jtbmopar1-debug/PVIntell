@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 110" role="img" aria-label="Generic DC optimiser diagram">
+  <rect width="180" height="110" rx="12" fill="#f6f8fb"/>
+  <path d="M15 40h32m86 0h32M15 70h32m86 0h32" stroke="#334155" stroke-width="4"/>
+  <rect x="45" y="22" width="90" height="66" rx="8" fill="#e2e8f0" stroke="#64748b" stroke-width="2"/>
+  <text x="90" y="49" font-family="sans-serif" font-size="12" text-anchor="middle" fill="#18344d">DC optimiser</text>
+  <text x="90" y="70" font-family="sans-serif" font-size="10" text-anchor="middle" fill="#52667b">Planning symbol</text>
+</svg>

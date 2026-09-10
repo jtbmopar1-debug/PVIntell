@@ -9,7 +9,7 @@ export default async function PowerSystemPage({ params, searchParams }: { params
   const supabase = await createClient(); const claims = await supabase.auth.getClaims(); const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") redirect("/login");
   const { id, systemId } = await params; const query = await searchParams;
-  if (query.view === "setup") redirect(`/sites/${id}/discovery`);
+  if (query.view === "setup") redirect(`/sites/${id}/discovery?system=${systemId}`);
   const requestedView = query.view as WorkspaceView | undefined; let workspace;
   try { workspace = await loadSiteWorkspace(supabase, id, systemId, query.conversation); } catch { redirect(`/sites/${id}`); }
   const { project, messages, conversationId, site, sites, systems, questionnaireDrafts, siteEquipment } = workspace;

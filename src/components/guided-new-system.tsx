@@ -30,7 +30,12 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const combinedInitialSetup = !stageFilter && !siteDiscoveryId;
   const questionsFor = (values: DiscoveryAnswers) => visibleDiscoveryQuestions(values).filter((item) => item.id !== "household_motor_ratings" && (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"));
   const initialQuestions = questionsFor(initialAnswers);
-  const [index, setIndex] = useState(() => Math.max(0, initialQuestions.findIndex((question) => question.id === initialQuestionId)));
+  const [index, setIndex] = useState(() => {
+    const requestedIndex = initialQuestions.findIndex((question) => question.id === initialQuestionId);
+    if (requestedIndex >= 0) return requestedIndex;
+    const firstIncompleteIndex = initialQuestions.findIndex((question) => !discoveryAnswerComplete(question.id, initialAnswers[question.id]));
+    return Math.max(0, firstIncompleteIndex);
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [helpQuestion, setHelpQuestion] = useState<DiscoveryQuestion>();
@@ -78,20 +83,46 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
       const next = { ...current, [question.id]: value };
       if (question.id === "panel_location" && Array.isArray(value) && value.includes("none")) {
         delete next.panel_construction_interest;
+        delete next.existing_panel_selection;
         delete next.usable_solar_space;
         delete next.panel_area_dimensions;
         delete next.panel_area_constraints;
         delete next.orientation_and_pitch;
         delete next.shading;
+        delete next.shade_affected_areas;
+        delete next.shade_time_windows;
+        delete next.shade_seasonality;
+        delete next.shade_extent;
         delete next.structure_condition;
         delete next.storage_supply_source_off_grid;
         delete next.storage_supply_source_grid;
       }
+      if (question.id === "panel_construction_interest" && (!Array.isArray(value) || !value.includes("existing"))) delete next.existing_panel_selection;
+      if (question.id === "shading" && !["some", "significant"].includes(String(value))) {
+        delete next.shade_affected_areas;
+        delete next.shade_time_windows;
+        delete next.shade_seasonality;
+        delete next.shade_extent;
+      }
       if (question.id === "battery_chemistry" && value !== "custom_home_built") delete next.custom_battery_assessment;
+      if (question.id === "heavy_loads" && Array.isArray(value)) {
+        const retainedLoadTypes = new Set(value.filter((item) => item !== "none"));
+        try {
+          const ratings = JSON.parse(String(next.household_motor_ratings ?? "{}")) as Record<string, { baseType?: string }>;
+          const retainedRatings = Object.fromEntries(Object.entries(ratings).filter(([key, rating]) => retainedLoadTypes.has(rating.baseType ?? key.split("__")[0])));
+          if (Object.keys(retainedRatings).length) next.household_motor_ratings = JSON.stringify(retainedRatings);
+          else delete next.household_motor_ratings;
+        } catch { delete next.household_motor_ratings; }
+      }
       if (question.id === "battery_requirement" && value === "none") {
         delete next.dc_system_voltage;
         delete next.battery_chemistry;
         delete next.custom_battery_assessment;
+        if (Array.isArray(next.generator_outage_role)) {
+          const nonBatteryRoles = next.generator_outage_role.filter((role) => !["battery_recharge", "automatic_low_reserve"].includes(role));
+          if (nonBatteryRoles.length) next.generator_outage_role = nonBatteryRoles;
+          else delete next.generator_outage_role;
+        }
       }
       if (question.id === "garage_conditioning" && ["none", "attached_unconditioned"].includes(String(value))) delete next.garage_floor_area;
       if (question.id === "water_heating_energy" && (!Array.isArray(value) || !value.includes("solar_thermal"))) {
@@ -144,8 +175,8 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not complete discovery");
-      router.push(body.designUrl ?? returnUrl ?? (siteDiscoveryId ? `/sites/${siteDiscoveryId}` : "/dashboard"));
-      router.refresh();
+      const destination = body.designUrl ?? returnUrl ?? (siteDiscoveryId ? `/sites/${siteDiscoveryId}` : "/dashboard");
+      window.location.assign(destination);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Could not complete discovery"); setSaving(false); setBuildingProposal(false); }
   }
 
@@ -206,10 +237,84 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   </div>;
 }
 
+type ExistingPanelAnswer = {
+  inventoryEquipmentId?: string;
+  name?: string;
+  panelType?: string;
+  quantity?: number;
+  maxUseQuantity?: number;
+  watts?: number;
+  proposalUse?: "include" | "assess" | "exclude";
+};
+
+type InventoryPanelOption = {
+  id: string;
+  name: string;
+  manufacturer?: string | null;
+  model?: string | null;
+  quantity: number;
+  condition: string;
+  specifications?: Record<string, string | number>;
+};
+
+function ExistingPanelSelectionCard({ question, profile, siteId, value, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; siteId: string; value: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
+  const [inventory, setInventory] = useState<InventoryPanelOption[]>([]);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [inventoryLoading, setInventoryLoading] = useState(false);
+  let current: ExistingPanelAnswer = {};
+  try { if (typeof value === "string" && value.trim()) current = JSON.parse(value) as ExistingPanelAnswer; } catch { /* Replace an older free-text response as fields are completed. */ }
+  const update = (next: Partial<ExistingPanelAnswer>) => setAnswer(JSON.stringify({ ...current, ...next }));
+  useEffect(() => {
+    if (!siteId || siteId === "__new__") { setInventory([]); return; }
+    let active = true;
+    setInventoryLoading(true);
+    fetch(`/api/equipment?siteId=${encodeURIComponent(siteId)}&type=panel`)
+      .then(async (response) => response.ok ? response.json() as Promise<{ equipment?: InventoryPanelOption[] }> : Promise.reject(new Error("Could not load inventory")))
+      .then((payload) => { if (active) setInventory(payload.equipment ?? []); })
+      .catch(() => { if (active) setInventory([]); })
+      .finally(() => { if (active) setInventoryLoading(false); });
+    return () => { active = false; };
+  }, [siteId]);
+  const selectInventoryPanel = (panel: InventoryPanelOption) => {
+    const specifications = panel.specifications ?? {};
+    const rawWatts = specifications.ratedPower ?? specifications.panelWatts ?? specifications.watts ?? specifications.power_w ?? specifications.stcWatts;
+    const watts = Number(String(rawWatts ?? "").match(/\d+(?:\.\d+)?/)?.[0]);
+    const rawType = String(specifications.panelType ?? specifications.panel_type ?? "").toLowerCase();
+    const panelType = rawType.includes("bifacial") ? "bifacial" : rawType.includes("flex") ? "flexible" : rawType ? "rigid" : current.panelType;
+    update({ inventoryEquipmentId: panel.id, name: [panel.manufacturer, panel.model].filter(Boolean).join(" ") || panel.name, quantity: panel.quantity, maxUseQuantity: panel.quantity, ...(watts > 0 ? { watts } : {}), ...(panelType ? { panelType } : {}) });
+    setInventoryOpen(false);
+  };
+  const choices: Array<{ value: NonNullable<ExistingPanelAnswer["proposalUse"]>; label: string; detail: string }> = [
+    { value: "include", label: "Include and assess for application", detail: "Include this panel group in the proposal and assess its suitability for the planned application." },
+    { value: "assess", label: "Assess before deciding", detail: "Keep them as a candidate until electrical details and condition are checked." },
+    { value: "exclude", label: "Do not include", detail: "Record that they exist without sizing this proposal around them." },
+  ];
+  return <section className="card overflow-hidden bg-white">
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
+    <div className="p-6 md:p-8">
+      {siteId && siteId !== "__new__" ? <div className="relative mb-5 rounded-xl border border-line bg-[#f7fafc] p-3"><button type="button" onClick={() => setInventoryOpen((open) => !open)} className="flex w-full items-center justify-between gap-3 text-left"><span className="text-xs text-muted">Already recorded this equipment?</span><span className="flex items-center gap-1.5 text-xs font-bold text-brand">{inventoryLoading ? "Loading inventory…" : inventory.length ? `Choose from ${inventory.length} applicable item${inventory.length === 1 ? "" : "s"}` : "No unused panels recorded"}<ChevronDown size={15} className={`transition-transform ${inventoryOpen ? "rotate-180" : ""}`}/></span></button>{inventoryOpen ? <div className="mt-3 grid gap-2 border-t border-line pt-3">{inventory.length ? inventory.map((panel) => <button key={panel.id} type="button" onClick={() => selectInventoryPanel(panel)} className={`rounded-xl border p-3 text-left ${current.inventoryEquipmentId === panel.id ? "border-brand bg-[#edf5fd]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><strong className="block text-xs">{panel.name}</strong><span className="mt-1 block text-[10px] text-muted">{[panel.manufacturer, panel.model, `${panel.quantity} available`, panel.condition.replaceAll("_", " ")].filter(Boolean).join(" · ")}</span></button>) : <p className="text-[11px] leading-5 text-muted">There are no applicable, unassigned solar-panel items at this Site. Enter the panel details below.</p>}</div> : null}</div> : null}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="text-xs font-bold sm:col-span-2">Panel group or model<input value={current.name ?? ""} onChange={(event) => update({ name: event.target.value })} className="field" placeholder="For example: eight workshop panels"/></label>
+        <label className="text-xs font-bold">Panel type<select value={current.panelType ?? ""} onChange={(event) => update({ panelType: event.target.value })} className="field"><option value="">Select type</option><option value="rigid">Standard rigid</option><option value="bifacial">Bifacial</option><option value="flexible">Flexible or lightweight</option><option value="building_integrated">Building-integrated</option></select></label>
+        <label className="text-xs font-bold">Quantity owned<input type="number" min="1" step="1" value={current.quantity ?? ""} onChange={(event) => { const quantity = event.target.value ? Number(event.target.value) : undefined; update({ quantity, maxUseQuantity: current.maxUseQuantity && quantity ? Math.min(current.maxUseQuantity, quantity) : current.maxUseQuantity }); }} className="field" placeholder="10"/></label>
+        <label className="text-xs font-bold">Maximum available for this proposal<input type="number" min="1" max={current.quantity || undefined} step="1" value={current.maxUseQuantity ?? ""} onChange={(event) => update({ maxUseQuantity: event.target.value ? Number(event.target.value) : undefined })} className="field" placeholder="3"/><span className="mt-1 block text-[10px] font-normal leading-4 text-muted">PVIntell will use no more than this amount; the remainder stays available for another project.</span></label>
+        <label className="text-xs font-bold sm:col-span-2">Rated power per panel<div className="relative"><input type="number" min="1" step="1" value={current.watts ?? ""} onChange={(event) => update({ watts: event.target.value ? Number(event.target.value) : undefined })} className="field pr-16" placeholder="580"/><span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">W</span></div></label>
+      </div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">{choices.map((choice) => <button key={choice.value} type="button" onClick={() => update({ proposalUse: choice.value })} className={`rounded-xl border p-3 text-left ${current.proposalUse === choice.value ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white"}`}><span className="flex items-start justify-between gap-2 text-xs font-bold">{choice.label}{current.proposalUse === choice.value ? <Check size={15} className="text-brand"/> : null}</span><span className="mt-1 block text-[10px] leading-4 text-muted">{choice.detail}</span></button>)}</div>
+      <p className="mt-4 rounded-xl border border-[#ead07a] bg-[#fff8d8] p-3 text-[11px] leading-5 text-[#6f5513]">Existing panels stay as their own compatible panel group. PVIntell may add separate strings or another compatible input for any shortfall; final string voltage, current and equipment limits still require the exact panel datasheet.</p>
+      <button type="button" onClick={onAskWattson} className="mt-4 flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button>
+    </div>
+  </section>;
+}
+
 function QuestionCard({ question, value, profile, sites, selectedSiteId, siteName, siteLocationAnswers, panelLocations, panelAreaDimensions, setAnswer, setRelatedAnswer, setSite, setSiteLocation, onAskWattson }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; sites: Array<{ id: string; name: string }>; selectedSiteId: string; siteName: string; siteLocationAnswers: DiscoveryAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setRelatedAnswer: (key: string, value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void; setSiteLocation: (location: DiscoveryAnswers) => void; onAskWattson: () => void }) {
   const unknown = value === unknownAnswer;
   const choices = question.type === "choice" || question.type === "multi_choice";
   const needsLocalAuthorityCheck = question.id === "panel_location" && Array.isArray(value) && value.some((item) => ["ground", "fence", "wall_facade", "carport_pergola"].includes(item));
+  const helpText = helpForExperience(question, profile);
+  const noteIndex = helpText.indexOf("Note:");
+  const helpIntroduction = noteIndex >= 0 ? helpText.slice(0, noteIndex).trim() : helpText;
+  const helpNote = noteIndex >= 0 ? helpText.slice(noteIndex).trim() : "";
   if (question.id === "system_name") {
     return <SystemSetupQuestionCard sites={sites} selectedSiteId={selectedSiteId} siteName={siteName} defaultRegion={String(profile.location ?? "")} siteLocationAnswers={siteLocationAnswers} value={value} setAnswer={setAnswer} setSite={setSite} setSiteLocation={setSiteLocation} onAskWattson={onAskWattson}/>;
   }
@@ -218,6 +323,9 @@ function QuestionCard({ question, value, profile, sites, selectedSiteId, siteNam
   }
   if (question.id === "panel_area_dimensions") {
     return <PanelDimensionsCard question={question} profile={profile} panelLocations={panelLocations} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
+  }
+  if (question.id === "existing_panel_selection") {
+    return <ExistingPanelSelectionCard question={question} profile={profile} siteId={typeof siteLocationAnswers.site_id === "string" ? siteLocationAnswers.site_id : ""} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "orientation_and_pitch") {
     return <OrientationCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
@@ -246,8 +354,8 @@ function QuestionCard({ question, value, profile, sites, selectedSiteId, siteNam
     return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={selectedMotors} heating={[]} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   return <section className="card overflow-hidden bg-white">
-    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
-    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const nextValues=option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const captureExisting=option.value==="existing"&&["panel_construction_interest","architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition ${selected?"theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.id === "pool_heating_profile" && !unknown ? <PoolHeatingCalculator embedded locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} onSave={setAnswer}/>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpIntroduction}</p>{helpNote ? <p className="mt-3 rounded-xl border border-[#ead07a] bg-[#fff8d8] px-3 py-2.5 text-xs font-semibold leading-5 text-[#6f5513]">{helpNote}</p> : null}</div></div></div>
+    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const nextValues=option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const captureExisting=option.value==="existing"&&["architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition ${selected?"theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.id === "pool_heating_profile" && !unknown ? <PoolHeatingCalculator embedded locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} onSave={setAnswer}/>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
       {needsLocalAuthorityCheck && <p className="mt-4 rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[11px] leading-5 text-[#765918]">Ground, fence, wall and canopy arrays might be restricted or require planning, building or other consent. Check with the relevant local authority before purchasing equipment or starting work.</p>}
       <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help now, then return and answer this question.</span></div>
     </div>
@@ -295,7 +403,7 @@ type HeatPumpUnit = {
   thermalCapacityKw?: number;
   startingKw?: number;
 };
-type PoolLoadEntry = { quantity?: number; runningKw?: number; peakRunningKw?: number; startingKw?: number; simultaneous?: boolean; startingBasis?: "automatic" | "manufacturer"; inputAmps?: number; voltageV?: number; phase?: "single" | "three"; welderTechnology?: "inverter" | "transformer"; dutyCyclePercent?: number; inputKva?: number; units?: HeatPumpUnit[] };
+type PoolLoadEntry = { name?: string; baseType?: string; quantity?: number; runningKw?: number; peakRunningKw?: number; startingKw?: number; simultaneous?: boolean; startingBasis?: "automatic" | "manufacturer"; runtimeMinutesPerDay?: number; longestRunMinutes?: number; inputAmps?: number; voltageV?: number; phase?: "single" | "three"; welderTechnology?: "inverter" | "transformer"; dutyCyclePercent?: number; inputKva?: number; units?: HeatPumpUnit[] };
 
 function PoolEquipmentLoadsCard({ question, profile, value, equipment, heating, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
   let saved: Record<string, PoolLoadEntry> = {};
@@ -326,11 +434,25 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
   let saved: Record<string, PoolLoadEntry> = {};
   if (typeof value === "string") { try { saved = JSON.parse(value) as Record<string, PoolLoadEntry>; } catch { saved = {}; } }
   const selected = Array.from(new Set([...equipment, ...heating].filter((item) => item && item !== "none")));
+  const additionalToolKeys = Object.keys(saved).filter((key) => key.startsWith("saw_tools__") && selected.includes("saw_tools"));
+  const displayedEntries = [...selected, ...additionalToolKeys];
   const saveEntry = (key: string, changes: Partial<PoolLoadEntry>) => setAnswer(JSON.stringify({ ...saved, [key]: { quantity: 0, simultaneous: true, ...saved[key], ...changes } }));
+  const addAnotherTool = () => {
+    let ordinal = additionalToolKeys.length + 2;
+    while (saved[`saw_tools__${ordinal}`]) ordinal += 1;
+    const key = `saw_tools__${ordinal}`;
+    setAnswer(JSON.stringify({ ...saved, [key]: { name: `Workshop tool ${ordinal}`, baseType: "saw_tools", quantity: 1, simultaneous: true, startingBasis: "automatic" } }));
+  };
+  const removeAdditionalTool = (key: string) => {
+    const next = { ...saved };
+    delete next[key];
+    setAnswer(JSON.stringify(next));
+  };
   const numberValue = (raw: string) => raw === "" ? undefined : Number(raw);
   const updateRunning = (key: string, raw: string) => {
     const runningKw = numberValue(raw);
-    const startingKw = runningKw === undefined ? undefined : Number((runningKw * poolStartingMultiplier(key)).toFixed(2));
+    const baseType = saved[key]?.baseType ?? key.split("__")[0];
+    const startingKw = runningKw === undefined ? undefined : Number((runningKw * poolStartingMultiplier(baseType)).toFixed(2));
     const quantity = runningKw !== undefined && runningKw > 0 && (saved[key]?.quantity ?? 0) === 0 ? 1 : saved[key]?.quantity;
     saveEntry(key, { runningKw, startingKw, startingBasis: "automatic", quantity });
   };
@@ -338,18 +460,26 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><Bot size={17}/><p className="text-xs leading-5 text-muted">Use the rating shown on each label. For heat pumps, enter only the advertised heating capacity; PVIntell handles the planning conversion.</p></div></div>
     <div className="grid gap-4 p-6 md:grid-cols-2 md:p-8">
       <div className="flex flex-wrap items-center gap-3 md:col-span-2"><button type="button" onClick={onAskWattson} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Photograph a label with Wattson</button><span className="text-[11px] text-muted">Wattson will read the model and the usable rating fields, and tell you if another label is needed.</span></div>
-      {selected.length ? selected.map((key) => {
+      {displayedEntries.length ? displayedEntries.map((key) => {
         const row = saved[key] ?? {};
-        const multiplier = poolStartingMultiplier(key);
+        const baseType = row.baseType ?? key.split("__")[0];
+        const additionalTool = key.startsWith("saw_tools__");
+        const workshopRuntime = ["saw_tools", "compressor", "welder"].includes(baseType);
+        const multiplier = poolStartingMultiplier(baseType);
         const estimatedStart = row.startingKw ?? (row.runningKw ? Number((row.runningKw * multiplier).toFixed(2)) : undefined);
+        const energyInputKw = row.peakRunningKw ?? row.runningKw ?? row.inputKva;
+        const dailyEnergyKwh = energyInputKw && row.runtimeMinutesPerDay ? Number((energyInputKw * (row.quantity ?? 1) * row.runtimeMinutesPerDay / 60).toFixed(2)) : undefined;
+        const invalidRunDuration = Boolean(row.runtimeMinutesPerDay && row.longestRunMinutes && row.longestRunMinutes > row.runtimeMinutesPerDay);
         return <article key={key} className="rounded-2xl border border-line bg-[#f8fbfe] p-4">
-          <strong className="text-sm">{poolLoadLabels[key] ?? key.replaceAll("_", " ")}</strong>
-          {key === "welder" ? <WelderRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : key === "heat_pump" ? <HeatPumpRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : <><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">{key === "pool_heat_pump" ? "Rated electrical input" : "Running electrical input"}<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW{key === "pool_heat_pump" ? " input — not heating output capacity" : ""}</span></label></div>
+          <div className="flex items-start justify-between gap-3">{baseType === "saw_tools" ? <label className="min-w-0 flex-1 text-[10px] font-bold">Tool name<input value={row.name ?? poolLoadLabels.saw_tools} onChange={(event) => saveEntry(key, { name: event.target.value, ...(additionalTool ? { baseType: "saw_tools" } : {}) })} className="field mt-1.5" placeholder="e.g. Drop saw, lathe or dust extractor"/></label> : <strong className="text-sm">{poolLoadLabels[baseType] ?? baseType.replaceAll("_", " ")}</strong>}{additionalTool ? <button type="button" onClick={() => removeAdditionalTool(key)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-[#e7b7af] text-[#a7442d]" aria-label={`Remove ${row.name || "additional tool"}`}><Trash2 size={15}/></button> : null}</div>
+          {baseType === "welder" ? <WelderRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" ? <HeatPumpRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : <><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">{baseType === "pool_heat_pump" ? "Rated electrical input" : "Running electrical input"}<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW{baseType === "pool_heat_pump" ? " input — not heating output capacity" : ""}</span></label></div>
           <div className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">{multiplier > 1 ? "Wattson startup estimate" : "Planning input"}</span><strong className="mt-1 block text-sm">{estimatedStart === undefined ? "Enter running kW" : `${estimatedStart} kW`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">{multiplier > 1 ? <>Uses a {multiplier}× planning factor for this motor or compressor load. A variable-speed drive or soft starter may reduce it.</> : "No generic motor-start multiplier is applied; confirm the manufacturer's maximum electrical input when available."}</span></div></>}
+          {workshopRuntime ? <div className="mt-3 grid gap-3 rounded-xl border border-line bg-white p-3 sm:grid-cols-2"><label className="text-[10px] font-bold">Total use per workday<input type="number" min="0" step="0.5" value={row.runtimeMinutesPerDay === undefined ? "" : row.runtimeMinutesPerDay / 60} onChange={(event) => { const hours = numberValue(event.target.value); saveEntry(key, { runtimeMinutesPerDay: hours === undefined ? undefined : hours * 60 }); }} className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">hours across the whole day · 0.5 = 30 minutes</span></label><label className="text-[10px] font-bold">Longest continuous run<input type="number" min="0" max={row.runtimeMinutesPerDay || undefined} step="0.5" value={row.longestRunMinutes ?? ""} onChange={(event) => saveEntry(key, { longestRunMinutes: numberValue(event.target.value) })} className={`field mt-1.5 ${invalidRunDuration ? "border-[#c94c38]" : ""}`}/><span className="mt-1 block text-[9px] font-normal text-muted">minutes in one run</span></label>{invalidRunDuration ? <p className="rounded-lg border border-[#edc7bc] bg-[#fff0eb] p-3 text-[10px] font-semibold leading-4 text-[#913e31] sm:col-span-2">The longest single run cannot be longer than the total use for the whole workday.</p> : null}<div className="rounded-lg bg-[#eef6fd] p-3 sm:col-span-2"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">Runtime-based energy estimate</span><strong className="mt-1 block text-sm">{dailyEnergyKwh === undefined ? "Enter rating and daily hours" : `${dailyEnergyKwh} kWh/day`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">This estimates the tool&apos;s consumption, not the energy required from batteries or a generator. Direct solar may supply some or all of it when production and operation coincide. Running and startup ratings still apply whenever the tool operates.</span></div></div> : null}
           <label className="mt-3 flex items-center gap-2 text-[11px] font-semibold"><input type="checkbox" checked={row.simultaneous ?? true} onChange={(event) => saveEntry(key, { simultaneous: event.target.checked })} className="size-4 accent-[#23679e]"/> May run with the other selected loads</label>
-          {!["welder", "heat_pump"].includes(key) ? <details className="mt-3 rounded-xl border border-line bg-white p-3"><summary className="cursor-pointer text-[10px] font-bold text-brand">I have the manufacturer’s maximum or starting value</summary><label className="mt-3 block text-[10px] font-bold">Starting or maximum input (kW)<input type="number" min="0" step="0.01" value={row.startingBasis === "manufacturer" ? row.startingKw ?? "" : ""} onChange={(event) => saveEntry(key, { startingKw: numberValue(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} className="field mt-1.5"/></label></details> : null}
+          {!["welder", "heat_pump"].includes(baseType) ? <details className="mt-3 rounded-xl border border-line bg-white p-3"><summary className="cursor-pointer text-[10px] font-bold text-brand">I have the manufacturer’s maximum or starting value</summary><label className="mt-3 block text-[10px] font-bold">Starting or maximum input (kW)<input type="number" min="0" step="0.01" value={row.startingBasis === "manufacturer" ? row.startingKw ?? "" : ""} onChange={(event) => saveEntry(key, { startingKw: numberValue(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} className="field mt-1.5"/></label></details> : null}
         </article>;
       }) : <p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-4 text-xs leading-5 text-[#765918] md:col-span-2">Select the pool equipment first. Wattson will then show one rating card for each selected item.</p>}
+      {selected.includes("saw_tools") ? <button type="button" onClick={addAnotherTool} className="flex h-11 items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand md:col-span-2"><Plus size={15}/>Add another tool</button> : null}
     </div>
   </section>;
 }
@@ -475,6 +605,13 @@ function discoveryAnswerComplete(questionId: string, value: string | number | st
       return areas.length > 0 && areas.every((area) => area.name.trim() && Number(area.lengthM) > 0 && Number(area.widthM) > 0);
     } catch { return false; }
   }
+  if (questionId === "existing_panel_selection" && typeof value === "string") {
+    try {
+      const panels = JSON.parse(value) as ExistingPanelAnswer;
+      const allocationValid = panels.proposalUse !== "include" || (Number(panels.maxUseQuantity) > 0 && Number(panels.maxUseQuantity) <= Number(panels.quantity));
+      return Boolean(panels.name?.trim() && panels.panelType && Number(panels.quantity) > 0 && Number(panels.watts) > 0 && panels.proposalUse && allocationValid);
+    } catch { return false; }
+  }
   if (questionId === "generator_details" && typeof value === "string") {
     try {
       const generator = JSON.parse(value) as GeneratorDetails;
@@ -508,6 +645,7 @@ function highPowerLoadRatingsComplete(value: string | number | string[] | undefi
   if (typeof value !== "string") return false;
   try {
     const ratings = JSON.parse(value) as Record<string, PoolLoadEntry>;
+    if (Object.values(ratings).some((row) => Number(row.runtimeMinutesPerDay) > 0 && Number(row.longestRunMinutes) > Number(row.runtimeMinutesPerDay))) return false;
     return selectedLoads.every((key) => {
       const row = ratings[key];
       if (!row || Number(row.quantity) <= 0) return false;
@@ -1045,6 +1183,7 @@ function answerLabel(question: DiscoveryQuestion, value: string | number | strin
       const entries = Object.values(JSON.parse(value) as Record<string, PoolLoadEntry>).filter((entry) => (entry.quantity ?? 0) > 0 && ((entry.peakRunningKw ?? entry.runningKw) ?? 0) > 0);
       if (!entries.length) return "No additional electrical load included";
       const runningTotal = entries.reduce((sum, entry) => sum + (entry.peakRunningKw ?? entry.runningKw ?? 0) * (entry.quantity ?? 0), 0);
+      const scheduledEnergy = entries.reduce((sum, entry) => sum + (entry.peakRunningKw ?? entry.runningKw ?? entry.inputKva ?? 0) * (entry.quantity ?? 0) * (entry.runtimeMinutesPerDay ?? 0) / 60, 0);
       const simultaneousRunning = entries.reduce((sum, entry) => sum + (entry.simultaneous === false ? 0 : (entry.peakRunningKw ?? entry.runningKw ?? 0) * (entry.quantity ?? 0)), 0);
       const startupPeak = entries.reduce((peak, entry) => {
         if (entry.simultaneous === false) return peak;
@@ -1053,7 +1192,7 @@ function answerLabel(question: DiscoveryQuestion, value: string | number | strin
         const starting = (entry.startingKw ?? entry.runningKw ?? 0) * quantity;
         return Math.max(peak, simultaneousRunning + Math.max(0, starting - running));
       }, simultaneousRunning);
-      return `${Number(runningTotal.toFixed(2))} kW running total · ${Number(startupPeak.toFixed(2))} kW estimated startup peak`;
+      return `${Number(runningTotal.toFixed(2))} kW running total · ${Number(startupPeak.toFixed(2))} kW estimated startup peak${scheduledEnergy ? ` · ${Number(scheduledEnergy.toFixed(2))} kWh/workday scheduled` : ""}`;
     } catch { return "Load totals need review"; }
   }
   if (typeof value === "string" && ["panel_area_dimensions", "orientation_and_pitch", "structure_condition", "panel_area_constraints"].includes(question.id)) {

@@ -10,6 +10,7 @@ import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/
 import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
 import { loadMonitoringSnapshot } from "@/monitoring/repository";
 import { buildMonitoringWattsonContext } from "@/monitoring/wattson-context";
+import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -347,6 +348,7 @@ export async function POST(request: Request) {
         project: parsed.data.project,
         recentConversation: priorHistory,
         questionnaireContext: {
+          dailyMonitorLog: await loadDailyLogContext(supabase, userId, { systemId: parsed.data.projectId, siteId: owned.data.site_id }),
           onboardingLocation: profileResult.data.home_location,
           userTimezone: profileResult.data.timezone,
           userAssessment: profileResult.data.onboarding_assessment ?? {},

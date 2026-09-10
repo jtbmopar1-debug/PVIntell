@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { refreshProposalAfterSizingInput, validatePreliminarySizing } from "./actions";
+import { generatorPlanningTargets, refreshProposalAfterSizingInput, validatePreliminarySizing } from "./actions";
 
 const settings = {
   peakSunHours: 4.2,
@@ -7,6 +7,7 @@ const settings = {
     current_energy_use: { value: "900 kWh/month" },
     backup_preference: { value: "most_home" },
     backup_duration: { value: "multiple_days" },
+    generator_requirement: { value: "include" },
     generator_outage_role: { value: "battery_recharge, automatic_low_reserve" },
     household_motor_ratings: { value: JSON.stringify({
       heat_pump: { quantity: 2, runningKw: .8, simultaneous: true },
@@ -25,6 +26,31 @@ const required = {
 };
 
 describe("preliminary proposal sizing boundary", () => {
+  it("sizes generator running class separately from the recorded motor-start requirement", () => {
+    expect(generatorPlanningTargets({
+      included: true,
+      purchaseStatus: "not_purchased",
+      roles: "high_power_loads, backup_circuits",
+      inverterKw: 4,
+      continuousLoadKw: 3,
+      startupPeakKw: 9,
+    })).toMatchObject({
+      continuousKw: 8.5,
+      motorStartKw: 9,
+      assignedHighPowerLoads: true,
+    });
+  });
+
+  it("does not add a proposal-specific extra generator class after the calculated requirement", () => {
+    expect(generatorPlanningTargets({
+      included: true,
+      purchaseStatus: "not_purchased",
+      roles: "high_power_loads",
+      continuousLoadKw: 1.8,
+      startupPeakKw: 5.4,
+    }).continuousKw).toBe(5);
+  });
+
   it("replaces AI candidates with sizing derived from 900 kWh/month", () => {
     const result = validatePreliminarySizing({
       ...required,

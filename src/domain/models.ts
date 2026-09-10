@@ -164,10 +164,11 @@ export interface DesignCalculatorState {
   };
   architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
   designBasis?: string;
+  inverterArrangement?: "combined" | "modular" | "string_inverter" | "optimiser_string" | "microinverters" | "compare" | "existing";
   startingStage?: string;
   expansionPath?: string;
   nextValidation?: string;
-  panelType?: "bifacial" | "monofacial" | "other" | "not_selected";
+  panelType?: "bifacial" | "monofacial" | "flexible" | "other" | "not_selected";
   panelManufacturer?: string;
   panelModel?: string;
   panelSupplier?: string;
@@ -178,6 +179,21 @@ export interface DesignCalculatorState {
   mountingLocations?: string[];
   panelWatts?: number;
   panelCount?: number;
+  existingPanelGroup?: {
+    name: string;
+    availableCount: number;
+    maximumAvailableToProposal?: number;
+    proposedUseCount?: number;
+    surplusCount?: number;
+    supplementaryCount?: number;
+    supplementaryTargetPvKw?: number;
+    wattsEach?: number;
+    supplementaryWattsEach?: number;
+    supplementaryPanelType?: string;
+    supplementaryLengthMm?: number;
+    supplementaryWidthMm?: number;
+    assessmentStatus: "provisional_pending_datasheet_and_condition";
+  };
   energyTargetPvKw?: number;
   energyTargetPanelCount?: number;
   planningPanelCapacity?: number;
@@ -200,6 +216,7 @@ export interface DesignCalculatorState {
   panelIscA?: number;
   targetPvKw?: number;
   panelLengthMm?: number;
+  panelProfileBasis?: "representative" | "user_equipment";
   panelWidthMm?: number;
   panelThicknessMm?: number;
   panelWeightKg?: number;
@@ -228,6 +245,8 @@ export interface DesignCalculatorState {
     systemEfficiency?: number;
     simultaneousLoadKw?: number;
     startupPeakKw?: number;
+    startupLoadName?: string;
+    scheduledLoadEnergyKwh?: number;
     batteryOnlyDays?: number;
     batterySizingBasis?: "no_sun_autonomy" | "solar_assisted_typical_winter" | "daily_energy_fraction";
     weakestMonthPvKwh?: number;

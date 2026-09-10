@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen, Calculator, ChevronRight, CircleHelp, CloudSun, FileText, Link2, LockKeyhole, LogOut, MessageSquareText, SlidersHorizontal, UserRound, Wrench } from "lucide-react";
+import { ArrowLeft, BookOpen, Calculator, ChevronRight, CircleHelp, CloudSun, FileText, Link2, LockKeyhole, LogOut, MessageSquareText, PackageOpen, SlidersHorizontal, UserRound, Wrench } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -19,16 +19,20 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   if (sites.error) throw sites.error; if (projects.error) throw projects.error; if (profile.error) throw profile.error; if (discoveryDrafts.error) throw discoveryDrafts.error;
   const weatherSite = sites.data?.find((site) => site.id === requestedSiteId) ?? sites.data?.[0];
   const weatherHref = weatherSite ? `/sites/${weatherSite.id}/weather` : "/dashboard";
-  const resumable = (projects.data ?? []).find((project) => project.site_id === weatherSite?.id && ["discover", "design", "build", "check", "commission"].includes(project.phase));
-  const steps = resumable && ["build", "check", "commission"].includes(resumable.phase) ? await supabase.from("installation_steps").select("id,completed_at").eq("project_id", resumable.id).order("position") : { data: [], error: null };
+  const resumableProjects = (projects.data ?? []).filter((project) => ["discover", "design", "build", "check", "commission"].includes(project.phase));
+  const buildProjectIds = resumableProjects.filter((project) => ["build", "check", "commission"].includes(project.phase)).map((project) => project.id);
+  const steps = buildProjectIds.length ? await supabase.from("installation_steps").select("id,project_id,completed_at").in("project_id", buildProjectIds).order("position") : { data: [], error: null };
   if (steps.error) throw steps.error;
-  const unfinished = steps.data?.find((step) => !step.completed_at);
   const guidedDraft = (profile.data.onboarding_assessment as { guidedNewSystem?: { status?: string; questionId?: string | null; answers?: Record<string, unknown> } } | null)?.guidedNewSystem;
   const hasGuidedDraft = guidedDraft?.status === "draft" && Boolean(guidedDraft.questionId || Object.keys(guidedDraft.answers ?? {}).length);
   const legacyDraftName = typeof guidedDraft?.answers?.system_name === "string" ? guidedDraft.answers.system_name.trim() : "";
-  const resumeHref = hasGuidedDraft ? "/discovery/new-system" : !resumable ? undefined : resumable.phase === "discover" ? `/sites/${resumable.site_id}/discovery` : resumable.phase === "design" ? `/sites/${resumable.site_id}/systems/${resumable.id}/design` : unfinished ? `/sites/${resumable.site_id}/systems/${resumable.id}/build/${unfinished.id}` : `/sites/${resumable.site_id}/systems/${resumable.id}?view=build`;
   const settings = [
-    ...(resumeHref ? [{ href: resumeHref, title: hasGuidedDraft && legacyDraftName ? `Continue System Build — ${legacyDraftName}` : resumable?.name ? `Continue System Build — ${resumable.name}` : "Continue System Build", detail: hasGuidedDraft ? "Return to the exact discovery question where you left off." : `Return to the last saved work for ${resumable?.name}.`, icon: Wrench, highlight: true }] : []),
+    ...(hasGuidedDraft ? [{ href: "/discovery/new-system", title: legacyDraftName ? `Continue System Build — ${legacyDraftName}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", icon: Wrench, highlight: true }] : []),
+    ...resumableProjects.map((project) => {
+      const unfinished = steps.data?.find((step) => step.project_id === project.id && !step.completed_at);
+      const href = project.phase === "discover" ? `/sites/${project.site_id}/discovery?system=${project.id}` : project.phase === "design" ? `/sites/${project.site_id}/systems/${project.id}/design` : unfinished ? `/sites/${project.site_id}/systems/${project.id}/build/${unfinished.id}` : `/sites/${project.site_id}/systems/${project.id}?view=build`;
+      return { href, title: `Continue System Build — ${project.name}`, detail: `Return to the last saved work for ${project.name}.`, icon: Wrench, highlight: true };
+    }),
     ...(discoveryDrafts.data ?? []).map((draft) => {
       const answers = (draft.answers ?? {}) as Record<string, unknown>;
       const name = typeof answers.system_name === "string" && answers.system_name.trim() ? answers.system_name.trim() : "System Build";
@@ -37,8 +41,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     { href: "/account", title: "Account & location", detail: "Identity, password, Sites and system map positions", icon: UserRound },
     { href: "/onboarding?edit=1", title: "Onboarding answers", detail: "Review how Wattson adapts to your experience, situation and goals", icon: CircleHelp },
     { href: "/settings/preferences", title: "Preferences", detail: "Measurement units and display settings", icon: SlidersHorizontal },
+    { href: `/settings/inventory${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Unused Inventory", detail: "Owned equipment that has not been assigned to a system", icon: PackageOpen },
     { href: `/settings/tools${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Tools", detail: "Solar finances, azimuth, panel tilt, cable sizing and voltage drop", icon: Calculator },
-    { href: "/settings/connections", title: "Connections", detail: "Match monitoring devices and services to systems", icon: Link2 },
+    { href: `/monitor${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Monitor", detail: "Daily solar, forecast comparisons, SOC and generator log", icon: SlidersHorizontal },
+    { href: "/settings/connections", title: "Connect", detail: "Connect Junctek battery monitors to systems", icon: Link2 },
     { href: weatherHref, title: "Solar weather", detail: weatherSite ? `Forecast and production outlook · ${weatherSite.name}` : "Forecast and production outlook", icon: CloudSun },
     { href: "/glossary", title: "Glossary", detail: "Plain-language solar, battery and electrical terms", icon: BookOpen },
     { href: "/wattson-chats", title: "Wattson chats", detail: "Review, continue or delete saved conversations", icon: MessageSquareText },

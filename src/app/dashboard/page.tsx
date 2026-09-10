@@ -62,7 +62,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
   const resumeHrefs = Object.fromEntries(systems.filter((system) => ["discover", "design", "build", "check", "commission"].includes(system.phase)).map((system) => {
     const unfinished = (installationSteps.data ?? []).find((step) => step.project_id === system.id && !step.completed_at);
-    const href = system.phase === "discover" ? `/sites/${system.siteId}/discovery` : `/systems?site=${system.siteId}`;
+    const href = system.phase === "discover" ? `/sites/${system.siteId}/discovery?system=${system.id}` : system.phase === "design" ? `/sites/${system.siteId}/systems/${system.id}/design` : unfinished ? `/sites/${system.siteId}/systems/${system.id}/build/${unfinished.id}` : `/sites/${system.siteId}/systems/${system.id}?view=build`;
     return [system.id, href];
   }));
   const defaultSystemSiteId = systems.find((system) => system.id === profile.data.dashboard_default_system_id)?.siteId;

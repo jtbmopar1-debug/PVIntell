@@ -15,6 +15,24 @@ const equipmentSchema = z.object({
   photoPath: z.string().trim().max(500).optional(),
 });
 
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const siteId = searchParams.get("siteId");
+  const type = searchParams.get("type");
+  if (!siteId || !z.uuid().safeParse(siteId).success) return Response.json({ error: "A valid Site is required" }, { status: 400 });
+  const supabase = await createClient();
+  const claims = await supabase.auth.getClaims();
+  const userId = claims.data?.claims?.sub;
+  if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const site = await supabase.from("sites").select("id").eq("id", siteId).eq("owner_id", userId).maybeSingle();
+  if (site.error || !site.data) return Response.json({ error: "Site not found" }, { status: 404 });
+  let query = supabase.from("site_equipment").select("id,site_id,assigned_project_id,type,name,manufacturer,model,quantity,condition,status,specifications").eq("site_id", siteId).is("assigned_project_id", null).in("status", ["available", "considering"]);
+  if (type && equipmentSchema.shape.type.safeParse(type).success) query = query.eq("type", type);
+  const result = await query.order("created_at");
+  if (result.error) return Response.json({ error: result.error.message }, { status: 400 });
+  return Response.json({ equipment: result.data ?? [] });
+}
+
 export async function POST(request: Request) {
   const parsed = equipmentSchema.safeParse(await request.json());
   if (!parsed.success) return Response.json({ error: "Invalid equipment details" }, { status: 400 });

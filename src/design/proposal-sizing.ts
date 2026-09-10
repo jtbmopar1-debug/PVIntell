@@ -1,9 +1,16 @@
+import { answerList, generatorFromDiscovery, proposalIncludesSolar } from "./proposal-inputs";
+import { assessPanelSurfaces } from "./panel-surfaces";
+
 export type ProposalSizingInput = {
   mode: string;
   peakSunHours?: number;
   autonomyDays?: number;
   discovery?: Record<string, unknown>;
   representativePanelWatts?: number;
+  /** The panel count currently selected in the editable proposal. When set,
+   * dependent production and storage evidence is recalculated from this plan
+   * while the independently calculated energy target remains available. */
+  selectedPanelCount?: number;
   representativePanelLengthMm?: number;
   representativePanelWidthMm?: number;
   solarResource?: {
@@ -11,6 +18,7 @@ export type ProposalSizingInput = {
     source?: unknown;
     period?: unknown;
     monthlyPeakSunHours?: unknown;
+    latitude?: number;
   };
 };
 
@@ -35,6 +43,8 @@ export type ProposalSizingResult = {
   inverterKw?: number;
   simultaneousLoadKw?: number;
   startupPeakKw?: number;
+  startupLoadName?: string;
+  scheduledLoadEnergyKwh?: number;
   batteryUsableKwh?: number;
   batteryOnlyDays?: number;
   batterySizingBasis?: "no_sun_autonomy" | "solar_assisted_typical_winter" | "daily_energy_fraction";
@@ -45,16 +55,19 @@ export type ProposalSizingResult = {
 };
 
 type LoadRating = {
+  source?: "household" | "pool";
+  name?: unknown;
+  baseType?: unknown;
   quantity?: unknown;
   runningKw?: unknown;
   peakRunningKw?: unknown;
   startingKw?: unknown;
   inputKva?: unknown;
   simultaneous?: unknown;
+  runtimeMinutesPerDay?: unknown;
+  longestRunMinutes?: unknown;
+  startingBasis?: unknown;
 };
-
-type PanelArea = { id?: unknown; lengthM?: unknown; widthM?: unknown };
-type PanelObstruction = { areaId?: unknown; kind?: unknown; lengthM?: unknown; widthM?: unknown };
 
 const finitePositive = (value: unknown) => {
   const number = Number(value);
@@ -78,7 +91,7 @@ function energyAsDailyKwh(value: unknown, defaultPeriod: "day" | "month") {
   // A kW nameplate is power, not energy. Reject it unless the text explicitly
   // supplies an energy unit as well.
   if (/\bkw\b/.test(normalized) && !/\bkwh\b/.test(normalized)) return undefined;
-  const amount = finitePositive(normalized.match(/\d+(?:\.\d+)?/)?.[0]);
+  const amount = finitePositive(normalized.match(/[+-]?(?:\d+(?:\.\d+)?|\.\d+)/)?.[0]);
   if (!amount) return undefined;
   const kwh = /\bmwh\b/.test(normalized) ? amount * 1000
     : /\bwh\b/.test(normalized) && !/\bkwh\b/.test(normalized) ? amount / 1000
@@ -103,59 +116,89 @@ function parsedRatings(discovery: Record<string, unknown>) {
     const raw = discoveryValue(discovery, key);
     try {
       const value = typeof raw === "string" ? JSON.parse(raw) : raw;
-      if (value && typeof value === "object") ratings.push(...Object.values(value as Record<string, LoadRating>));
+      if (value && typeof value === "object") {
+        const entries = Object.entries(value as Record<string, LoadRating>).filter(([, rating]) => rating && typeof rating === "object" && !Array.isArray(rating));
+        if (key === "household_motor_ratings") {
+          // Guided discovery persists this answer under
+          // `heavy_or_surge_loads`; retain the legacy key for older records.
+          const selectedLoadsValue = discoveryValue(discovery, "heavy_or_surge_loads")
+            ?? discoveryValue(discovery, "heavy_loads");
+          const selectedLoadsRecorded = selectedLoadsValue !== undefined && String(selectedLoadsValue).trim() !== "";
+          const selectedLoads = new Set(String(selectedLoadsValue ?? "").split(",").map((item) => item.trim()).filter((item) => item && item !== "none"));
+          ratings.push(...entries.filter(([entryKey, rating]) => !selectedLoadsRecorded || selectedLoads.has(String(rating.baseType ?? entryKey.split("__")[0]))).map(([entryKey, rating]) => ({ ...rating, baseType: rating.baseType ?? entryKey.split("__")[0] })));
+        } else {
+          const equipment = discoveryValue(discovery, "pool_equipment");
+          const heating = discoveryValue(discovery, "pool_heating_method");
+          const selected = new Set([...answerList(equipment), ...answerList(heating)]);
+          const recorded = equipment !== undefined || heating !== undefined;
+          ratings.push(...entries.filter(([key, rating]) => !recorded || selected.has(String(rating.baseType ?? key)))
+            .map(([key, rating]) => ({ ...rating, source: "pool" as const, baseType: rating.baseType ?? key })));
+        }
+      }
     } catch { /* Free-text ratings are evidence notes, not numeric sizing inputs. */ }
   }
   const poolHeaterKw = finitePositive(discoveryValue(discovery, "pool_heater_electrical_kw"));
-  if (poolHeaterKw) ratings.push({ quantity: 1, runningKw: poolHeaterKw, simultaneous: true });
+  const heatingSelection = discoveryValue(discovery, "pool_heating_method");
+  const hasElectricPoolHeat = heatingSelection === undefined || answerList(heatingSelection).some((value) => ["heat_pump", "pool_heat_pump", "resistive_electric", "spa_inline_heater", "hybrid"].includes(value));
+  if (poolHeaterKw && hasElectricPoolHeat && !ratings.some((rating) => rating.source === "pool" && ["heat_pump", "pool_heat_pump", "resistive_electric", "spa_inline_heater"].includes(String(rating.baseType))))
+    ratings.push({ quantity: 1, runningKw: poolHeaterKw, simultaneous: true });
   return ratings;
 }
 
-function parsedArray<T>(value: unknown): T[] {
-  try {
-    const parsed = typeof value === "string" ? JSON.parse(value) : value;
-    return Array.isArray(parsed) ? parsed as T[] : [];
-  } catch { return []; }
-}
-
-function planningPanelCapacity(input: ProposalSizingInput, discovery: Record<string, unknown>) {
-  const panelLengthM = finitePositive(input.representativePanelLengthMm) && Number(input.representativePanelLengthMm) / 1000;
-  const panelWidthM = finitePositive(input.representativePanelWidthMm) && Number(input.representativePanelWidthMm) / 1000;
-  if (!panelLengthM || !panelWidthM) return undefined;
-  const areas = parsedArray<PanelArea>(discoveryValue(discovery, "panel_area_dimensions"));
-  if (!areas.length) return undefined;
-  const obstructions = parsedArray<PanelObstruction>(discoveryValue(discovery, "panel_area_constraints"));
-  const gapM = .02;
-  const moduleAreaM2 = panelLengthM * panelWidthM;
-  let total = 0;
-  for (const area of areas) {
-    const lengthM = finitePositive(area.lengthM);
-    const widthM = finitePositive(area.widthM);
-    if (!lengthM || !widthM) continue;
-    const portrait = Math.floor((lengthM + gapM) / (panelLengthM + gapM)) * Math.floor((widthM + gapM) / (panelWidthM + gapM));
-    const landscape = Math.floor((lengthM + gapM) / (panelWidthM + gapM)) * Math.floor((widthM + gapM) / (panelLengthM + gapM));
-    const obstructionAreaM2 = obstructions
-      .filter((item) => String(item.kind) !== "none" && String(item.areaId) === String(area.id))
-      .reduce((sum, item) => sum + (finitePositive(item.lengthM) ?? 0) * (finitePositive(item.widthM) ?? 0), 0);
-    total += Math.max(0, Math.max(portrait, landscape) - Math.ceil(obstructionAreaM2 / moduleAreaM2));
-  }
-  return total > 0 ? total : 0;
-}
-
 function loadEnvelope(discovery: Record<string, unknown>) {
-  const ratings = parsedRatings(discovery).filter((rating) => rating.simultaneous !== false);
+  const ratings = parsedRatings(discovery);
   if (!ratings.length) return undefined;
-  let continuousKw = 0;
-  let largestStartIncrementKw = 0;
+  let overlappingContinuousKw = 0;
+  let overlappingLargestStartIncrementKw = 0;
+  let standaloneContinuousKw = 0;
+  let standaloneStartupKw = 0;
+  let overlappingStartupLoadName = "";
+  let standaloneStartupLoadName = "";
+  let scheduledDailyEnergyKwh = 0;
+  const warnings: string[] = [];
   for (const rating of ratings) {
+    if (rating.quantity !== undefined && Number(rating.quantity) <= 0) continue;
     const quantity = Math.max(1, finitePositive(rating.quantity) ?? 1);
-    const runningKw = finitePositive(rating.peakRunningKw ?? rating.runningKw ?? rating.inputKva) ?? 0;
-    const startingKw = finitePositive(rating.startingKw) ?? runningKw;
-    continuousKw += runningKw * quantity;
-    largestStartIncrementKw = Math.max(largestStartIncrementKw, Math.max(0, startingKw - runningKw));
+    const realRunningKw = finitePositive(rating.runningKw);
+    const apparentInputKva = finitePositive(rating.inputKva);
+    const runningKw = finitePositive(rating.peakRunningKw) ?? realRunningKw ?? apparentInputKva ?? 0;
+    const motorType = String(rating.baseType);
+    const multiplier = ["compressor", "saw_tools", "filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature", "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "refrigeration", "chest_freezer"].includes(motorType) ? 3
+      : ["heat_pump", "pool_heat_pump"].includes(motorType) ? 2.5 : 1;
+    const startingKw = finitePositive(rating.startingKw) ?? runningKw * multiplier;
+    const runtimeMinutesPerDay = finitePositive(rating.runtimeMinutesPerDay) ?? 0;
+    if (realRunningKw) scheduledDailyEnergyKwh += realRunningKw * quantity * runtimeMinutesPerDay / 60;
+    if (apparentInputKva && !realRunningKw) warnings.push(`${String(rating.name ?? rating.baseType ?? "Load")}: kVA is used only as a conservative power-screening envelope. Real kW/power factor is needed for its workday kWh; it is not included in that subtotal.`);
+    if (runtimeMinutesPerDay > 1440 || Number(rating.longestRunMinutes) > runtimeMinutesPerDay && runtimeMinutesPerDay > 0) warnings.push(`${String(rating.name ?? rating.baseType ?? "Load")}: reconcile the total daily runtime and longest run before relying on its energy estimate.`);
+    const entryContinuousKw = runningKw * quantity;
+    const entryStartupKw = startingKw + runningKw * Math.max(0, quantity - 1);
+    const loadName = String(rating.name ?? rating.baseType ?? "largest motor").replaceAll("_", " ").trim();
+    if (rating.simultaneous === false) {
+      standaloneContinuousKw = Math.max(standaloneContinuousKw, entryContinuousKw);
+      if (entryStartupKw > standaloneStartupKw) {
+        standaloneStartupKw = entryStartupKw;
+        standaloneStartupLoadName = loadName;
+      }
+      continue;
+    }
+    overlappingContinuousKw += entryContinuousKw;
+    const startIncrementKw = Math.max(0, startingKw - runningKw);
+    if (startIncrementKw > overlappingLargestStartIncrementKw) {
+      overlappingLargestStartIncrementKw = startIncrementKw;
+      overlappingStartupLoadName = loadName;
+    }
   }
+  const continuousKw = Math.max(overlappingContinuousKw, standaloneContinuousKw);
   if (!continuousKw) return undefined;
-  return { continuousKw, startupPeakKw: continuousKw + largestStartIncrementKw };
+  const overlappingStartupKw = overlappingContinuousKw + overlappingLargestStartIncrementKw;
+  const standaloneSetsPeak = standaloneStartupKw > overlappingStartupKw;
+  return {
+    continuousKw,
+    startupPeakKw: Math.max(overlappingStartupKw, standaloneStartupKw),
+    startupLoadName: standaloneSetsPeak ? standaloneStartupLoadName : overlappingStartupLoadName,
+    scheduledDailyEnergyKwh: rounded(scheduledDailyEnergyKwh),
+    warnings,
+  };
 }
 
 function normalizedMode(mode: string) {
@@ -174,7 +217,7 @@ function batteryOnlyDays(input: ProposalSizingInput, discovery: Record<string, u
     : duration.includes("multiple_days") ? 3
     : undefined;
   if (!outageDays) return undefined;
-  const generatorRoles = String(discoveryValue(discovery, "generator_outage_role") ?? "").toLowerCase();
+  const generatorRoles = generatorFromDiscovery(discovery).outageRole.toLowerCase();
   const generatorRechargesBattery = /battery_recharge|automatic_low_reserve|recharge.{0,20}batter|charge.{0,20}batter/.test(generatorRoles);
   if (generatorRechargesBattery) return Math.min(outageDays, .6);
   // A multi-day goal is a complete source-balance requirement, not a request
@@ -184,11 +227,79 @@ function batteryOnlyDays(input: ProposalSizingInput, discovery: Record<string, u
   return outageDays <= 1 ? outageDays : 1;
 }
 
-const roundedUpHalfKw = (value: number) => Math.ceil(value * 2 - 1e-9) / 2;
+const commonInverterRatingsKw = [
+  .5, .8, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 75, 100,
+];
+
+/** Select a searchable, commonly marketed equipment class at or above the
+ * calculated minimum. Final availability remains market and region specific. */
+export function nextCommonInverterRatingKw(minimumKw: number) {
+  return commonInverterRatingsKw.find((rating) => rating >= minimumKw - 1e-9)
+    ?? Math.ceil(minimumKw / 25) * 25;
+}
+
+export function solarFirstPowerAlternative(input: {
+  panelCount?: number;
+  panelWatts?: number;
+  inverterKw?: number;
+  startupPeakKw?: number;
+}) {
+  const panelCount = finitePositive(input.panelCount);
+  const panelWatts = finitePositive(input.panelWatts);
+  const inverterKw = finitePositive(input.inverterKw);
+  const startupPeakKw = finitePositive(input.startupPeakKw);
+  if (!panelCount || !panelWatts || !inverterKw || !startupPeakKw || startupPeakKw <= inverterKw) return undefined;
+  const proposedInverterKw = nextCommonInverterRatingKw(startupPeakKw);
+  // Reuse the 1.2 DC-to-AC planning ratio instead of presenting an array
+  // whose nameplate capacity only just equals the intended AC output.
+  const targetPvKw = proposedInverterKw * 1.2;
+  const totalPanelCount = Math.ceil(targetPvKw * 1000 / panelWatts);
+  return {
+    inverterKw: proposedInverterKw,
+    targetPvKw: rounded(totalPanelCount * panelWatts / 1000),
+    totalPanelCount,
+    additionalPanelCount: Math.max(0, totalPanelCount - panelCount),
+  };
+}
+
+/**
+ * Split an existing array from any extra capacity the design requires.
+ * Capacity is the rule; module wattage is only a replaceable planning option.
+ * This avoids treating the user's existing module as the universal module for
+ * a second MPPT/string, while still allowing a buildable example to be shown.
+ */
+export function supplementaryArrayPlan(input: {
+  targetPvKw: number;
+  existingPanelCount: number;
+  existingPanelWatts: number;
+  planningModuleWatts?: number;
+}) {
+  const targetPvKw = finitePositive(input.targetPvKw) ?? 0;
+  const existingPanelCount = Math.max(0, Math.floor(finitePositive(input.existingPanelCount) ?? 0));
+  const existingPanelWatts = finitePositive(input.existingPanelWatts) ?? 0;
+  const existingPvKw = rounded(existingPanelCount * existingPanelWatts / 1000);
+  const requiredCapacityKw = rounded(Math.max(0, targetPvKw - existingPvKw));
+  const planningModuleWatts = finitePositive(input.planningModuleWatts);
+  const planningCount = requiredCapacityKw > 0 && planningModuleWatts
+    ? Math.ceil(requiredCapacityKw * 1000 / planningModuleWatts - 1e-9)
+    : undefined;
+  const plannedCapacityKw = planningCount && planningModuleWatts
+    ? rounded(planningCount * planningModuleWatts / 1000)
+    : requiredCapacityKw;
+  return {
+    existingPvKw,
+    requiredCapacityKw,
+    planningModuleWatts,
+    planningCount,
+    plannedCapacityKw,
+    totalPlannedPvKw: rounded(existingPvKw + plannedCapacityKw),
+  };
+}
 const rounded = (value: number, places = 2) => Number(value.toFixed(places));
 
 export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizingResult {
   const discovery = input.discovery ?? {};
+  const includesSolar = proposalIncludesSolar(discovery);
   const mode = normalizedMode(input.mode);
   const energy = normalizedDailyEnergy(discovery);
   const peakSunHours = finitePositive(input.peakSunHours);
@@ -203,13 +314,27 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
   let panelCount: number | undefined;
   let energyTargetPvKw: number | undefined;
   let energyTargetPanelCount: number | undefined;
-  const panelCapacity = planningPanelCapacity(input, discovery);
+  const surfaceAssessment = assessPanelSurfaces(discovery, {
+    panelLengthMm: input.representativePanelLengthMm,
+    panelWidthMm: input.representativePanelWidthMm,
+  }, input.solarResource?.latitude);
+  const panelCapacity = surfaceAssessment.capacity;
+  warnings.push(...surfaceAssessment.warnings);
   let fitLimited = false;
 
   if (!energy) warnings.push("PV and battery size withheld: representative daily energy is not recorded.");
-  if (!peakSunHours) warnings.push("PV size withheld: peak sun hours are not available.");
+  if (includesSolar && !peakSunHours) warnings.push("PV size withheld: peak sun hours are not available.");
   if (peakSunHours && !input.solarResource?.source) warnings.push("Solar-resource provenance is missing; refresh discovery to replace the legacy planning value with Site climatology.");
-  if (energy && peakSunHours) {
+  const shading = String(discoveryValue(discovery, "shading") ?? "").toLowerCase();
+  if (shading === "some" || shading === "significant") {
+    const shadeDetail = [
+      discoveryValue(discovery, "shade_time_windows"),
+      discoveryValue(discovery, "shade_seasonality"),
+      discoveryValue(discovery, "shade_extent"),
+    ].map((value) => String(value ?? "").replaceAll("_", " ").trim()).filter(Boolean).join("; ");
+    warnings.push(`${shading === "significant" ? "Significant" : "Some"} local shade is recorded${shadeDetail ? ` (${shadeDetail})` : ""}. No numerical shade loss has been applied; production remains unverified until the affected mounting areas are assessed by time of day and season.`);
+  }
+  if (includesSolar && energy && peakSunHours) {
     const offGridRecoveryMargin = mode === "off_grid" ? 1.2 : 1;
     const requiredPvKw = energy.dailyKwh * offGridRecoveryMargin / (peakSunHours * systemEfficiency);
     energyTargetPvKw = rounded(requiredPvKw);
@@ -239,14 +364,32 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     }
   }
 
+  const selectedPanelCount = finitePositive(input.selectedPanelCount);
+  if (includesSolar && selectedPanelCount && panelWatts) {
+    panelCount = Math.max(1, Math.round(selectedPanelCount));
+    pvKw = rounded(panelCount * panelWatts / 1000);
+    fitLimited = panelCapacity !== undefined ? panelCount > panelCapacity : false;
+    assumptions.push(`Current editable proposal uses ${panelCount} × ${panelWatts} W modules (${pvKw} kW); this may differ from the calculated annual-energy baseline.`);
+    if (panelCapacity !== undefined && panelCount > panelCapacity) {
+      warnings.push(`The current ${panelCount}-module proposal exceeds the recorded planning capacity of about ${panelCapacity} modules.`);
+    }
+  }
+
   const scope = backupScope(discovery);
   const wholePropertyBackup = /most_home|most of (?:the )?home|whole|entire|all/.test(scope);
   const standaloneBackup = Boolean(scope && !/^(?:none|no outage backup)$/.test(scope));
   const batteryRequirement = String(discoveryValue(discovery, "battery_requirement") ?? "").toLowerCase();
-  const includeBattery = mode === "off_grid" || /include|battery storage/.test(batteryRequirement) || standaloneBackup;
+  const batteryExplicitlyExcluded = /^(?:none|no battery storage)$/.test(batteryRequirement);
+  const includeBattery = !batteryExplicitlyExcluded && (mode === "off_grid" || /include|battery storage/.test(batteryRequirement) || standaloneBackup);
+  const generatorRequirement = String(discoveryValue(discovery, "generator_requirement") ?? "").toLowerCase();
+  if (mode === "off_grid" && batteryExplicitlyExcluded) {
+    warnings.push(/include|existing|planned/.test(generatorRequirement)
+      ? "Battery-free off-grid PV and generator operation is topology-dependent: confirm which source forms the AC supply, how PV output is controlled, when the generator must run, and whether the selected equipment permits the two sources to operate together."
+      : "Battery-free off-grid operation has no stored-energy reserve; confirm whether loads may stop when solar is insufficient or record another compatible supply source.");
+  }
   const days = batteryOnlyDays(input, discovery);
   const backupDuration = String(discoveryValue(discovery, "backup_duration") ?? "").toLowerCase();
-  const generatorRoles = String(discoveryValue(discovery, "generator_outage_role") ?? "").toLowerCase();
+  const generatorRoles = generatorFromDiscovery(discovery).outageRole.toLowerCase();
   const multiDayWithoutRechargeModel = backupDuration.includes("multiple_days")
     && !/battery_recharge|automatic_low_reserve/.test(generatorRoles);
   let batteryUsableKwh: number | undefined;
@@ -285,22 +428,33 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
   }
 
   const loads = loadEnvelope(discovery);
+  warnings.push(...(loads?.warnings ?? []));
+  if (loads?.scheduledDailyEnergyKwh) {
+    assumptions.push(`Entered intermittent-load ratings and runtimes imply about ${loads.scheduledDailyEnergyKwh} kWh per workday. This is an unverified consumption subtotal, not a storage or generator-energy requirement; loads still add in kWh when they run at different times.`);
+    if (energy && loads.scheduledDailyEnergyKwh > energy.dailyKwh) warnings.push(/high_power_loads|large_appliances/.test(generatorRoles)
+      ? `The entered high-power tool runtimes imply about ${loads.scheduledDailyEnergyKwh} kWh/workday. Because the generator is explicitly assigned those loads, that subtotal informs generator operation and fuel planning rather than automatically increasing PV or storage; direct solar contribution is not relied upon.`
+      : `The entered tool runtimes imply about ${loads.scheduledDailyEnergyKwh} kWh/workday, above the ${rounded(energy.dailyKwh)} kWh/day whole-system answer currently used for PV sizing. Reconcile the estimates and record operating times before assigning the demand between direct solar and generator or storage.`);
+  }
   const needsStandaloneLoadSupport = mode === "off_grid" || standaloneBackup;
   let inverterKw: number | undefined;
   if (mode === "grid_tied" && pvKw && !standaloneBackup) {
-    inverterKw = roundedUpHalfKw(pvKw / 1.2);
-    assumptions.push("1.2 DC-to-AC planning ratio for a grid-tied PV inverter.");
+    const minimumInverterKw = pvKw / 1.2;
+    inverterKw = nextCommonInverterRatingKw(minimumInverterKw);
+    assumptions.push(`1.2 DC-to-AC planning ratio gives ${rounded(minimumInverterKw, 2)} kW minimum; rounded up to the common ${inverterKw} kW inverter class.`);
   } else if (needsStandaloneLoadSupport && loads && (mode === "off_grid" || wholePropertyBackup)) {
     const continuousWithMargin = loads.continuousKw * 1.15;
-    inverterKw = roundedUpHalfKw(Math.max(continuousWithMargin, pvKw ? pvKw / 1.2 : 0));
-    assumptions.push("15% continuous-power margin over the recorded simultaneous load envelope.");
+    const minimumInverterKw = Math.max(continuousWithMargin, pvKw ? pvKw / 1.2 : 0);
+    inverterKw = nextCommonInverterRatingKw(minimumInverterKw);
+    assumptions.push(`15% continuous-power margin gives ${rounded(minimumInverterKw, 2)} kW minimum; rounded up to the common ${inverterKw} kW inverter class.`);
   } else if (pvKw && !needsStandaloneLoadSupport) {
-    inverterKw = roundedUpHalfKw(pvKw / 1.2);
-    assumptions.push("1.2 DC-to-AC planning ratio; public supply carries demand above PV output.");
+    const minimumInverterKw = pvKw / 1.2;
+    inverterKw = nextCommonInverterRatingKw(minimumInverterKw);
+    assumptions.push(`1.2 DC-to-AC planning ratio gives ${rounded(minimumInverterKw, 2)} kW minimum; rounded up to the common ${inverterKw} kW inverter class while public supply carries demand above PV output.`);
   } else {
     if (pvKw) {
-      inverterKw = roundedUpHalfKw(pvKw / 1.2);
-      assumptions.push("PV-based inverter rating is used as the provisional minimum because the standalone simultaneous-load envelope is incomplete.");
+      const minimumInverterKw = pvKw / 1.2;
+      inverterKw = nextCommonInverterRatingKw(minimumInverterKw);
+      assumptions.push(`PV gives a provisional ${rounded(minimumInverterKw, 2)} kW inverter minimum; rounded up to the common ${inverterKw} kW class because the standalone simultaneous-load envelope is incomplete.`);
       warnings.push("Verify inverter continuous and surge capacity against the complete standalone load schedule before equipment selection.");
     } else warnings.push("Inverter size withheld: the relevant simultaneous-load evidence is incomplete.");
   }
@@ -308,6 +462,7 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     ? "PV capacity is a planning baseline; validate it against the worst design month and consecutive poor-solar periods."
     : "PV capacity is an annual-energy baseline; validate monthly yield, orientation, shading and export limits.");
   if (loads) warnings.push(`Selected inverter surge capability must be checked against the ${rounded(loads.startupPeakKw, 1)} kW recorded startup envelope.`);
+  if (loads && /high_power_loads|large_appliances/.test(generatorRoles)) warnings.push(`The generator is assigned high-power loads and must provide at least ${rounded(loads.continuousKw, 1)} kW while running and demonstrate motor-start performance for the ${rounded(loads.startupPeakKw, 1)} kW startup envelope; do not assume PV and generator ratings add together.`);
 
   return {
     method: "deterministic-v1",
@@ -330,6 +485,8 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     inverterKw,
     simultaneousLoadKw: loads?.continuousKw,
     startupPeakKw: loads?.startupPeakKw,
+    startupLoadName: loads?.startupLoadName || undefined,
+    scheduledLoadEnergyKwh: loads?.scheduledDailyEnergyKwh,
     batteryUsableKwh,
     batteryOnlyDays: days,
     batterySizingBasis,

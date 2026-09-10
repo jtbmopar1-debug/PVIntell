@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { newSystemQuestions } from "@/discovery/new-system";
 import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
 import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
+import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -253,12 +254,14 @@ export async function POST(request: Request) {
   const recent = await supabase.from("user_chat_messages").select("role,content").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(12);
   const history = (recent.data ?? []).reverse();
   const prior = history.at(-1)?.content === userContent ? history.slice(0, -1) : history;
+  const dailyMonitorLog = await loadDailyLogContext(supabase, userId, { systemId: parsed.data.projectId, siteId: conversationSiteId ?? undefined });
   try {
     const result = await askGemini({
       message: parsed.data.message,
       project: dashboardProject(profile.data.home_location ?? ""),
       recentConversation: prior,
       questionnaireContext: {
+        dailyMonitorLog,
         userAssessment: profile.data.onboarding_assessment ?? {},
         userTimezone: profile.data.timezone,
         selectedSiteDiscovery: selectedSiteBrief ?? undefined,
@@ -429,6 +432,7 @@ export async function POST(request: Request) {
           sites: sites.data ?? [],
           selectedSiteDiscovery: selectedSiteBrief ?? undefined,
           connectedSiteSystems: connectedSystems.map((system) => system.id === activeSystem.id ? { ...system, settings: refreshed.data.settings } : system),
+          dailyMonitorLog,
           scope: "Lead the user from completed discovery into a practical preliminary design. Use record_preliminary_design only for proposed sizing. The Design Calculator is separate from the user-managed installed overview and schematic.",
         },
         allowActions: true,

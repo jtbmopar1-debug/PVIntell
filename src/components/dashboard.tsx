@@ -106,17 +106,17 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
       const name = typeof draft.answers?.system_name === "string" ? draft.answers.system_name.trim() : "";
       return { title: name ? `Continue System Build — ${name}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: `/discovery/new-system?draft=${draft.id}` };
     });
-    const resumable = siteSystems.find((system) => resumeHrefs[system.id]);
     if (hasGuidedDraft) {
       const legacyName = typeof guidedDraft?.answers?.system_name === "string" ? guidedDraft.answers.system_name.trim() : "";
       steps.unshift({ title: legacyName ? `Continue System Build — ${legacyName}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: "/discovery/new-system" });
-    } else if (resumable) {
-      steps.unshift({ title: `${resumable.name} System`, detail: "Open its schematic, System Overview, Build It tasks and commissioning records.", href: resumeHrefs[resumable.id] });
     }
+    systems.filter((system) => resumeHrefs[system.id]).reverse().forEach((system) => {
+      steps.unshift({ title: `Continue System Build — ${system.name}`, detail: "Return to this proposal's saved discovery, design or build stage.", href: resumeHrefs[system.id] });
+    });
     steps.push({ title: steps.length ? "Start another system" : "Start a new system", detail: "Build and design a separate system with Wattson’s help.", href: "/discovery/new-system?new=1" });
     steps.push({ title: "Record installed equipment", detail: "Create an as-built system, then add the equipment and connections that are already there.", href: installedHref });
     return steps;
-  }, [discoveryDrafts, profile.assessment.guidedNewSystem, selectedSite, siteSystems, resumeHrefs]);
+  }, [discoveryDrafts, profile.assessment.guidedNewSystem, selectedSite, systems, resumeHrefs]);
 
   async function send(messageOverride?: string) {
     const message = messageOverride?.trim() || input.trim() || (attachment ? "Please use this image as evidence for the current discovery question." : "");
@@ -232,6 +232,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             <Link href={`/dashboard${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link>
             <Link href={`/systems${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link>
             <Link href={`/how-to${siteId ? `?site=${siteId}` : ""}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link>
+            <Link href={`/monitor${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Monitor</Link>
             <Link href={`/settings${siteId ? `?site=${siteId}` : ""}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link>
           </nav>
           <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="ml-auto grid size-9 shrink-0 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>
@@ -245,6 +246,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
               <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Dashboard</Link>
               <Link href={`/systems${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Systems</Link>
               <Link href={`/how-to${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">How to</Link>
+              <Link href={`/monitor${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Monitor</Link>
               <Link href={`/settings${siteId ? `?site=${siteId}` : ""}`} onClick={() => setMobileMenuOpen(false)} className="rounded-lg bg-[#f6c945] px-3 py-2.5 text-xs font-extrabold text-brand">Settings</Link>
             </div>
           </nav>
@@ -298,7 +300,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
                   <p className="mt-3 max-w-xl text-xs leading-5 text-[#3f5870]">{step.detail}</p>
                 </Link>
               ))}
-              {connectedSiteSystems.length ? <button type="button" onClick={openMonitor} className="min-h-36 rounded-2xl border border-[#e5b92e] bg-[#f6c945] p-5 text-left transition hover:-translate-y-0.5 hover:bg-[#f9d65b] hover:shadow-md md:p-6"><div className="flex items-center justify-between gap-3"><strong className="text-base text-brand">Monitor live systems</strong><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 text-brand"><Zap size={17}/></span></div><p className="mt-3 max-w-xl text-xs leading-5 text-[#3f5870]">Open live readings for {connectedSiteSystems.length === 1 ? connectedSiteSystems[0].name : `${connectedSiteSystems.length} connected systems at ${selectedSite?.name}`}.</p></button> : null}
+              {connectedSiteSystems.length ? <button type="button" onClick={openMonitor} className="min-h-36 rounded-2xl border border-[#e5b92e] bg-[#f6c945] p-5 text-left transition hover:-translate-y-0.5 hover:bg-[#f9d65b] hover:shadow-md md:p-6"><div className="flex items-center justify-between gap-3"><strong className="text-base text-brand">Connect live systems</strong><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 text-brand"><Zap size={17}/></span></div><p className="mt-3 max-w-xl text-xs leading-5 text-[#3f5870]">Open live readings for {connectedSiteSystems.length === 1 ? connectedSiteSystems[0].name : `${connectedSiteSystems.length} connected systems at ${selectedSite?.name}`}.</p></button> : null}
             </div>
           </section>
         </div>
