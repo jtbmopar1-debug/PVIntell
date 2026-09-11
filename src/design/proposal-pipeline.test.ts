@@ -7,7 +7,7 @@ import { deterministicProposalActions } from "./proposal-action";
 import { siteDiscoveryActions } from "@/discovery/site-actions";
 import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { PUT } from "@/app/api/design-calculator/route";
-import { createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
+import { createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, ensureSupplementaryMicroinverterRouting, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, repairCustomEquipmentDraft, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
 import type { DesignCalculatorState, Project } from "@/domain/models";
 
 const auth = vi.hoisted(() => ({ client: undefined as unknown }));
@@ -243,6 +243,67 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(third.detail).toBe("4 kW continuous rating proposed; Converts the PV strings to AC");
   });
 
+  it("describes a proposed microinverter rating as one combined fleet capacity", () => {
+    const first = planningNodeDetail(
+      { id: "pv-inverter", label: "Microinverters", detail: "Module-level DC-to-AC conversion", image: "/micro.jpg", x: 0, y: 0 },
+      { inverterKw: 15, inverterArrangement: "microinverters" } as DesignCalculatorState,
+    );
+    const detail = planningNodeDetail(planningNodeDetail(first, { inverterKw: 15, inverterArrangement: "microinverters" } as DesignCalculatorState), { inverterKw: 15, inverterArrangement: "microinverters" } as DesignCalculatorState);
+    const batteryDetail = planningNodeDetail(
+      { id: "battery-inverter", label: "Deye 8k Inverter", detail: "Added to the working system", image: "/hybrid.jpg", x: 0, y: 0 },
+      { inverterKw: 15, inverterArrangement: "microinverters" } as DesignCalculatorState,
+    );
+
+    expect(detail.detail).toBe("15 kW combined AC capacity proposed across all microinverters; exact unit count, model and branch ratings to confirm");
+    expect(batteryDetail.detail).toBe("Added to the working system");
+  });
+
+  it("does not assign the mixed proposal total to an existing microinverter fleet", () => {
+    const design = {
+      inverterKw: 15,
+      inverterArrangement: "microinverters",
+      batteryVoltage: 51.2,
+      batteryUsableKwh: 5.3,
+      existingPanelGroup: { name: "Home", availableCount: 25, proposedUseCount: 25, wattsEach: 280, supplementaryTargetPvKw: 8.4, assessmentStatus: "provisional_pending_datasheet_and_condition" },
+    } as DesignCalculatorState;
+    const inflated = { id: "pv-inverter", label: "Microinverters", detail: "15 kW combined AC capacity proposed across all microinverters; 15 kW combined AC capacity proposed across all microinverters", image: "/micro.jpg", x: 0, y: 0 };
+
+    expect(planningNodeDetail(inflated, design).detail).toBe("Existing microinverter fleet serving 25 panels; combined AC nameplate and branch ratings to confirm");
+  });
+
+  it("describes existing microinverters and a supplementary hybrid MPPT as separate scope paths", () => {
+    const design = {
+      architecture: "ac_coupled",
+      inverterArrangement: "microinverters",
+      inverterKw: 15,
+      batteryVoltage: 51.2,
+      batteryUsableKwh: 5.3,
+      panelWatts: 280,
+      existingPanelGroup: { name: "Home", availableCount: 25, proposedUseCount: 25, wattsEach: 280, supplementaryTargetPvKw: 8.4, assessmentStatus: "provisional_pending_datasheet_and_condition" },
+      proposedAsBuiltDraft: {
+        createdAt: "2026-09-11T00:00:00.000Z",
+        architecture: "ac_coupled",
+        flow: [],
+        nodes: [{ id: "battery-inverter", label: "Deye 8k Inverter", detail: "Added to the working system", image: "/hybrid.jpg", x: 0, y: 0 }],
+        connections: [],
+      },
+    } as DesignCalculatorState;
+    const project = { projectType: "grid-tied", designDiscovery: { battery_requirement: { value: "include" } } } as unknown as Project;
+    const html = renderToStaticMarkup(createElement(ProposalScopeOverview, { project, design }));
+
+    expect(html).toContain("existing 25-panel array retaining its microinverters");
+    expect(html).toContain("additional array feeding Deye 8k Inverter through a DC-isolated MPPT input");
+    expect(html).toContain("15 kW sizing value is not treated as the confirmed nameplate rating");
+    expect(html).not.toContain("15 kW microinverter arrangement");
+  });
+
+  it("does not apply the PV inverter rating to a separate AC-coupled battery inverter", () => {
+    const batteryInverter = planningNodeDetail({ id: "battery-inverter", label: "Deye 8k Inverter", detail: "Added to the working system", image: "/inverter.jpg", x: 0, y: 0 }, { architecture: "ac_coupled", inverterKw: 15 } as DesignCalculatorState);
+
+    expect(batteryInverter.detail).toBe("Added to the working system");
+    expect(batteryInverter.detail).not.toContain("15 kW");
+  });
+
   it("adds one explicit protective-earth path from every inverter to the main earthing terminal", () => {
     const design = {
       architecture: "ac_coupled",
@@ -261,6 +322,71 @@ describe("discovery → stored proposal → calculator save", () => {
       expect.objectContaining({ to: "switchboard", label: "PV inverter protective earth" }),
     ]);
     expect(second.connections).toContainEqual(expect.objectContaining({ from: "switchboard", to: "earth", kind: "earth" }));
+  });
+
+  it("turns a legacy custom inverter into the connected AC-coupled battery inverter", () => {
+    const design = {
+      architecture: "ac_coupled",
+      inverterArrangement: "microinverters",
+      inverterKw: 8,
+      panelCount: 25,
+      panelWatts: 280,
+      pvStrings: 1,
+      panelsPerString: 25,
+      batteryVoltage: 51.2,
+      batteryAh: 130,
+    } as DesignCalculatorState;
+    const draft = createProposedAsBuiltDraft(design, true);
+    draft.nodes = [
+      ...(draft.nodes ?? []).filter((node) => node.id !== "battery-inverter"),
+      { id: "custom-1", label: "Deye 8k Inverter", detail: "Added to the working system", image: "/schematic-components/ac-circuit-breaker-mcb.jpg", x: 445, y: 345 },
+    ];
+    const repaired = ensureInverterProtectiveEarth(repairCustomEquipmentDraft(draft));
+
+    expect(repaired.nodes?.find((node) => node.id === "battery-inverter")).toMatchObject({
+      label: "Deye 8k Inverter",
+      image: "/schematic-components/hybrid-inverter.jpg",
+    });
+    expect(repaired.nodes?.some((node) => node.id === "custom-1")).toBe(false);
+    expect(repaired.connections).toContainEqual(expect.objectContaining({ from: "battery-safety", to: "battery-inverter", kind: "battery-dc" }));
+    expect(repaired.connections).toContainEqual(expect.objectContaining({ from: "battery-inverter", to: "ac-safety", kind: "ac" }));
+    expect(repaired.connections).toContainEqual(expect.objectContaining({ from: "battery-inverter", to: "switchboard", kind: "earth" }));
+  });
+
+  it("routes a supplementary array to the hybrid MPPT instead of the existing microinverters", () => {
+    const design = {
+      architecture: "ac_coupled",
+      inverterArrangement: "microinverters",
+      inverterKw: 15,
+      panelCount: 25,
+      panelWatts: 280,
+      pvStrings: 1,
+      panelsPerString: 25,
+      batteryVoltage: 51.2,
+      batteryAh: 130,
+      existingPanelGroup: {
+        name: "Existing array",
+        availableCount: 25,
+        proposedUseCount: 25,
+        wattsEach: 280,
+        supplementaryCount: 18,
+        supplementaryWattsEach: 470,
+        supplementaryTargetPvKw: 8.4,
+        assessmentStatus: "provisional_pending_datasheet_and_condition",
+      },
+    } as DesignCalculatorState;
+    const draft = createProposedAsBuiltDraft(design, true);
+    draft.nodes = draft.nodes?.filter((node) => node.id !== "supplementary-solar-safety");
+    draft.connections = [
+      ...(draft.connections ?? []).filter((connection) => connection.from !== "solar-pv-2" && connection.from !== "supplementary-solar-safety"),
+      { from: "solar-pv-2", to: "pv-inverter", label: "Module DC inputs; compatibility to confirm", kind: "solar-dc" },
+    ];
+    const repaired = ensureSupplementaryMicroinverterRouting(draft, design);
+
+    expect(repaired.connections).toContainEqual(expect.objectContaining({ from: "solar-pv-1", to: "pv-inverter" }));
+    expect(repaired.connections).toContainEqual(expect.objectContaining({ from: "solar-pv-2", to: "supplementary-solar-safety" }));
+    expect(repaired.connections).toContainEqual(expect.objectContaining({ from: "supplementary-solar-safety", to: "battery-inverter", kind: "solar-dc" }));
+    expect(repaired.connections?.some((connection) => connection.from === "solar-pv-2" && connection.to === "pv-inverter")).toBe(false);
   });
 
   it("bonds the PV frames independently of the removable inverter", () => {

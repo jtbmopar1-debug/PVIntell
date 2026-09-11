@@ -96,11 +96,19 @@ function systemScopeSummary(project: Project, design?: DesignCalculatorState) {
   const supplementaryCount = n(existingGroup?.supplementaryCount);
   const supplementaryTargetPvKw = n(existingGroup?.supplementaryTargetPvKw);
   const supplementaryWatts = n(existingGroup?.supplementaryWattsEach);
+  const recordedBatteryInverter = config.proposedAsBuiltDraft?.nodes?.find((node) => node.id === "battery-inverter");
+  const batteryInverterName = recordedBatteryInverter?.label && recordedBatteryInverter.label !== "Battery power box"
+    ? recordedBatteryInverter.label
+    : "separate hybrid inverter";
+  const hasSeparateHybridPath = Boolean(config.batteryVoltage || config.batteryUsableKwh || (recordedBatteryInverter && recordedBatteryInverter.label !== "Battery power box"));
+  const mixedMicroinverterRetrofit = config.inverterArrangement === "microinverters" && existingUseCount > 0 && supplementaryTargetPvKw > 0 && hasSeparateHybridPath;
   const arrayText = existingGroup && existingUseCount
     ? `a calculated requirement using ${existingUseCount} of the ${existingGroup.availableCount} available ${panelWatts ? `${panelWatts} W ` : ""}${existingGroup.name} panels${supplementaryTargetPvKw ? ` plus a separate ${supplementaryTargetPvKw} kW minimum additional array${supplementaryCount && supplementaryWatts ? `, provisionally shown as ${supplementaryCount} × ${supplementaryWatts} W modules` : ""}` : ""}`
     : panelCount ? `${panelCount}${panelWatts ? ` × ${panelWatts} W` : ""} solar panels${pvStrings ? ` in ${pvStrings} string${pvStrings === 1 ? "" : "s"}${panelsPerString ? ` of ${panelsPerString} panels` : ""}` : ""}` : "the proposed solar array";
   const inverterArticle = n(config.inverterKw) >= 8 && n(config.inverterKw) < 9 ? "an" : "a";
-  const inverterText = n(config.inverterKw) ? `feeding ${inverterArticle} ${config.inverterKw} kW ${architecture}` : `feeding a ${architecture || "suitable inverter arrangement"} (continuous rating still to be confirmed)`;
+  const inverterText = mixedMicroinverterRetrofit
+    ? `with the existing ${existingUseCount}-panel array retaining its microinverters and the additional array feeding ${batteryInverterName} through a DC-isolated MPPT input`
+    : n(config.inverterKw) ? `feeding ${inverterArticle} ${config.inverterKw} kW ${architecture}` : `feeding a ${architecture || "suitable inverter arrangement"} (continuous rating still to be confirmed)`;
   const batteryText = proposalIncludesBattery(project)
     ? config.batteryUsableKwh ? `${round(config.batteryUsableKwh, 1)} kWh of usable battery storage is proposed.` : "Battery storage is included as a separate planning item."
     : "No battery storage is included in this proposal.";
@@ -177,6 +185,15 @@ export function ProposalScopeOverview({ project, design }: { project: Project; d
   const startupLoadName = loadSizing.startupLoadName || "largest motor";
   const generatorSurgeAdequate = Boolean(startupEnvelopeKw && design.generatorSurgeKw && design.generatorSurgeKw >= startupEnvelopeKw);
   const retainedExistingPanels = Boolean(design.existingPanelGroup?.proposedUseCount);
+  const recordedBatteryInverter = design.proposedAsBuiltDraft?.nodes?.find((node) => node.id === "battery-inverter");
+  const hasSeparateHybridPath = Boolean(design.batteryVoltage || design.batteryUsableKwh || (recordedBatteryInverter && recordedBatteryInverter.label !== "Battery power box"));
+  const mixedMicroinverterRetrofit = design.inverterArrangement === "microinverters" && existingPanelCount > 0 && Boolean(supplementary) && hasSeparateHybridPath;
+  const batteryInverterName = recordedBatteryInverter?.label && recordedBatteryInverter.label !== "Battery power box"
+    ? recordedBatteryInverter.label
+    : "the separate hybrid inverter";
+  const powerConversionText = mixedMicroinverterRetrofit
+    ? `Power conversion follows two paths: the existing ${existingPanelCount}-panel array retains its microinverters, while the separate ${round(supplementary?.targetPvKw ?? 0, 2)} kW minimum additional array feeds ${batteryInverterName} through a DC-isolated MPPT input. The saved ${design.inverterKw ?? "unconfirmed"} kW sizing value is not treated as the confirmed nameplate rating of either inverter path.`
+    : `Power conversion is through ${design.inverterKw ? `${inverterArticle} ${design.inverterKw} kW ` : "a "}${architecture}.`;
   const solarFirstAlternative = !proposalUsesPublicGrid(project) && !proposalIncludesBattery(project)
     ? solarFirstPowerAlternative({ panelCount, panelWatts: n(design.panelWatts), inverterKw: n(design.inverterKw), startupPeakKw: startupEnvelopeKw })
     : undefined;
@@ -233,7 +250,7 @@ export function ProposalScopeOverview({ project, design }: { project: Project; d
     <p className="text-sm font-semibold leading-6">{systemScopeSummary(project, design)}</p>
     <p className="mt-3 text-xs leading-5 text-[#31465c]">{moduleAreaM2 ? `${round(moduleAreaM2, 1)} m² of known panel face area` : "Panel dimensions still need confirming"}{recordedAreaM2 ? `; ${round(recordedAreaM2, 1)} m² of recorded ${areaType} before the listed exclusions.` : "; usable mounting area still needs confirming."} The location-based starting recommendation is {azimuthText(design.azimuthDegrees)} azimuth and {design.tiltDegrees !== undefined ? `${round(design.tiltDegrees, 0)}° tilt` : "tilt to confirm"}. Roof-mounted panels normally follow the recorded roof face and pitch; these target angles do not describe an unmeasured roof. Mounting basis: {mountingApproach}.{shadePlanningText}</p>
     {surfaces.faces.length ? <div className="mt-3 space-y-2 text-xs leading-5 text-[#31465c]">{surfaces.faces.map((face) => <p key={face.id}><strong>{face.name}:</strong> {face.direction ? face.direction.replaceAll("_", " ") : "Direction unconfirmed"}{face.pitch ? `, ${face.pitch} surface pitch` : ", pitch unconfirmed"}. {face.capacity !== undefined ? `About ${face.capacity} modules in the preliminary rectangular layout. ` : "Module fit awaits dimensions. "}{face.mountingDescription} {face.aspect}</p>)}{surfaces.warnings.map((warning) => <p key={warning} className="rounded-lg border border-[#e2c765] bg-[#fff8d8] p-3">{warning}</p>)}</div> : null}
-    <p className="mt-3 text-xs leading-5 text-[#31465c]">Power conversion is through {design.inverterKw ? `${inverterArticle} ${design.inverterKw} kW ` : "a "}{architecture}. {gridRelationship} {proposalIncludesBattery(project) ? `The proposed ${[batteryVoltageText, design.batteryUsableKwh ? `${round(design.batteryUsableKwh, 1)} kWh usable` : "", chemistry].filter(Boolean).join(", ")} battery supports the recorded backup or energy-shifting goal.` : "No battery is included."}{generatorText}</p>
+    <p className="mt-3 text-xs leading-5 text-[#31465c]">{powerConversionText} {gridRelationship} {proposalIncludesBattery(project) ? `The proposed ${[batteryVoltageText, design.batteryUsableKwh ? `${round(design.batteryUsableKwh, 1)} kWh usable` : "", chemistry].filter(Boolean).join(", ")} battery supports the recorded backup or energy-shifting goal.` : "No battery is included."}{generatorText}</p>
     {bifacialModulesIncluded ? <p className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 text-xs leading-5 text-[#31465c]"><strong>Bifacial design check:</strong> Panel wattage is treated as front-side nameplate capacity. Rear-side gain varies with mounting height, ground reflectance, spacing, shade and season, so it is not assumed as guaranteed output. The selected inverter and MPPT inputs must be checked against the module datasheet&apos;s bifacial current allowance, maximum voltage and the chosen DC oversizing or clipping strategy.</p> : null}
     {topologyNote ? <p className="mt-3 rounded-xl border border-[#e2c765] bg-[#fff8d8] p-3 text-xs leading-5 text-[#6a5110]"><strong>Inverter arrangement check:</strong> {topologyNote}</p> : null}
     {proposalUsesPublicGrid(project) && directSolarLoadKw ? <p className="mt-3 rounded-xl border border-[#9bcdb2] bg-[#effaf4] p-3 text-xs font-semibold leading-5 text-[#245c3e]"><strong>Solar-first daylight sizing:</strong> The array and inverter are sized to serve about {round(directSolarLoadKw, 2)} kW of overlapping loads explicitly scheduled for daylight in adequate sun. The public grid remains the fallback for motor starts, cloud and production shortfalls.</p> : null}
@@ -378,8 +395,19 @@ export function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculato
   if (supplementary && node.id === "solar-pv-1") return { ...node, detail: `${design.existingPanelGroup?.proposedUseCount ?? "?"} x ${design.existingPanelGroup?.wattsEach ?? design.panelWatts ?? "?"} W user-owned panels; suitability to verify` };
   if (supplementary && node.id === "solar-pv-2") return { ...node, detail: `${round(supplementary.targetPvKw, 2)} kW minimum separate array; module type and quantity to select` };
   if (node.id === "solar" || node.id.startsWith("solar-pv-")) return { ...node, detail: `${node.id.startsWith("solar-pv-") ? design.panelsPerString ?? "?" : design.panelCount ?? "?"} x ${design.panelWatts ?? "?"} W; ${node.id.startsWith("solar-pv-") ? "one independent PV string" : pvLayoutLabel(design)}` };
-  if (node.id.includes("inverter") && design.inverterKw) {
-    const baseDetail = node.detail.replace(/^(?:\s*\d+(?:\.\d+)?\s*kW continuous rating proposed;\s*)+/i, "");
+  if ((node.id === "inverter" || node.id === "pv-inverter") && design.inverterKw) {
+    if (node.id === "pv-inverter" && design.inverterArrangement === "microinverters") {
+      const recordedBatteryInverter = design.proposedAsBuiltDraft?.nodes?.find((candidate) => candidate.id === "battery-inverter");
+      const hasSeparateHybridPath = Boolean(design.batteryVoltage || design.batteryUsableKwh || (recordedBatteryInverter && recordedBatteryInverter.label !== "Battery power box"));
+      const existingPanelCount = supplementary && hasSeparateHybridPath ? design.existingPanelGroup?.proposedUseCount : undefined;
+      return {
+        ...node,
+        detail: existingPanelCount
+          ? `Existing microinverter fleet serving ${existingPanelCount} panels; combined AC nameplate and branch ratings to confirm`
+          : `${design.inverterKw} kW combined AC capacity proposed across all microinverters; exact unit count, model and branch ratings to confirm`,
+      };
+    }
+    const baseDetail = node.detail.replace(/^(?:\s*\d+(?:\.\d+)?\s*kW continuous rating proposed(?:\s*;\s*|\s*$))+/i, "");
     return { ...node, detail: `${design.inverterKw} kW continuous rating proposed${node.id === "pv-inverter" && baseDetail ? `; ${baseDetail}` : ""}` };
   }
   if (node.id === "battery") {
@@ -590,6 +618,92 @@ function upgradePvStringIsolationDraft(draft: NonNullable<DesignCalculatorState[
       { from: `solar-pv-${index + 1}`, to: id, label: `PV${index + 1} string`, kind: "solar-dc" },
       { from: id, to: outbound.to, label: `PV${index + 1} string to MPPT${index + 1}`, kind: "solar-dc" },
     );
+  }
+  return { ...draft, nodes, connections };
+}
+
+function customEquipmentImage(label: string) {
+  const name = label.toLowerCase();
+  if (name.includes("microinverter")) return "/schematic-components/microinverter.jpg";
+  if (name.includes("inverter")) return /string|solar|pv/.test(name) ? "/schematic-components/string-inverter.jpg" : "/schematic-components/hybrid-inverter.jpg";
+  if (/battery|storage/.test(name)) return "/schematic-components/lifepo4-battery-bank.jpg";
+  if (/fuse/.test(name)) return "/schematic-components/dc-fuse.jpg";
+  if (/isolator|disconnect/.test(name)) return "/schematic-components/dc-disconnect-isolator.jpg";
+  if (/panel|module|array/.test(name)) return "/schematic-components/solar-panel-pv-module.jpg";
+  if (/board|switchboard|distribution/.test(name)) return "/schematic-components/ac-distribution-board.jpg";
+  if (/earth|ground/.test(name)) return "/schematic-components/earth-electrode.svg";
+  return "/schematic-components/ac-circuit-breaker-mcb.jpg";
+}
+
+/** Repairs legacy items created by the old generic Add item action and reconnects recognised inverter roles. */
+export function repairCustomEquipmentDraft(draft: ProposedDraft): ProposedDraft {
+  const originalNodes = draft.nodes ?? [];
+  const legacyCustom = originalNodes.find((node) => node.id.startsWith("custom-") && node.detail === "Added to the working system" && /inverter/i.test(node.label));
+  let nodes = originalNodes.map((node) => node.id.startsWith("custom-") && node.detail === "Added to the working system"
+    ? { ...node, image: customEquipmentImage(node.label) }
+    : node);
+  let connections = [...(draft.connections ?? [])];
+  if (!legacyCustom) return { ...draft, nodes, connections };
+
+  const roleId = /microinverter|\bpv\b|solar|string/i.test(legacyCustom.label)
+    ? "pv-inverter"
+    : draft.architecture === "ac_coupled"
+      ? "battery-inverter"
+      : "inverter";
+  const customNode = nodes.find((node) => node.id === legacyCustom.id);
+  if (!customNode) return { ...draft, nodes, connections };
+  const roleNode = nodes.find((node) => node.id === roleId);
+  const replacement = {
+    ...(roleNode ?? customNode),
+    id: roleId,
+    label: customNode.label,
+    detail: customNode.detail,
+    image: customEquipmentImage(customNode.label),
+    reviewed: customNode.reviewed ?? roleNode?.reviewed,
+  };
+  nodes = nodes.filter((node) => node.id !== customNode.id && node.id !== roleId).concat(replacement);
+  connections = connections.map((connection) => ({
+    ...connection,
+    from: connection.from === customNode.id ? roleId : connection.from,
+    to: connection.to === customNode.id ? roleId : connection.to,
+  }));
+
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const addConnection = (from: string, to: string, label: string, kind: "solar-dc" | "battery-dc" | "ac") => {
+    if (!nodeIds.has(from) || !nodeIds.has(to) || connections.some((connection) => connection.from === from && connection.to === to && connection.kind === kind)) return;
+    connections.push({ from, to, label, kind });
+  };
+  if (roleId === "battery-inverter") {
+    addConnection("battery-safety", roleId, "Safe battery feed", "battery-dc");
+    addConnection(roleId, "ac-safety", "Battery power for building", "ac");
+  } else if (roleId === "pv-inverter") {
+    addConnection(roleId, "ac-safety", "Solar power for building", "ac");
+  } else {
+    addConnection("battery-safety", roleId, "Safe battery feed", "battery-dc");
+    addConnection(roleId, "ac-safety", "Building power", "ac");
+  }
+  return { ...draft, nodes, connections };
+}
+
+/** Keeps an existing microinverter array AC-coupled while routing a new DC array into the hybrid MPPT. */
+export function ensureSupplementaryMicroinverterRouting(draft: ProposedDraft, design: DesignCalculatorState): ProposedDraft {
+  if (draft.architecture !== "ac_coupled" || design.inverterArrangement !== "microinverters" || !supplementaryArray(design)) return draft;
+  const nodes = [...(draft.nodes ?? [])];
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const batteryInverter = nodes.find((node) => node.id === "battery-inverter");
+  const hasSeparateHybridPath = Boolean(design.batteryVoltage || design.batteryUsableKwh || (batteryInverter && batteryInverter.label !== "Battery power box"));
+  if (!hasSeparateHybridPath) return draft;
+  if (!nodeIds.has("solar-pv-2") || !nodeIds.has("battery-inverter")) return draft;
+  if (!nodeIds.has("supplementary-solar-safety")) {
+    const additionalArray = nodes.find((node) => node.id === "solar-pv-2");
+    nodes.push({ id: "supplementary-solar-safety", label: "Additional array DC isolation", detail: "Disconnects the new DC-coupled array before the hybrid inverter MPPT input", image: "/schematic-components/dc-disconnect-isolator.jpg", x: 250, y: additionalArray?.y ?? 145 });
+  }
+  const connections = (draft.connections ?? []).filter((connection) => !(connection.from === "solar-pv-2" && connection.to === "pv-inverter"));
+  if (!connections.some((connection) => connection.from === "solar-pv-2" && connection.to === "supplementary-solar-safety")) {
+    connections.push({ from: "solar-pv-2", to: "supplementary-solar-safety", label: "Additional array DC string", kind: "solar-dc" });
+  }
+  if (!connections.some((connection) => connection.from === "supplementary-solar-safety" && connection.to === "battery-inverter")) {
+    connections.push({ from: "supplementary-solar-safety", to: "battery-inverter", label: "Additional array to hybrid inverter MPPT", kind: "solar-dc" });
   }
   return { ...draft, nodes, connections };
 }
@@ -1170,7 +1284,9 @@ export function ProposedBuildSchematic({ project, site, showIntro = false }: { p
 function ProposedSchematic({ project, projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref }: { project: Project; projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string }) {
   const rawDraft = ensureGeneratorSupply(ensureGridSupply(proposalDraftForCurrentDesign(design, gridConnected), gridConnected), design, gridConnected);
   const upgradedDraft = upgradePvStringIsolationDraft(rawDraft, design);
-  const earthedDraft = ensureInverterProtectiveEarth(ensurePvArrayEarth(upgradedDraft));
+  const repairedDraft = repairCustomEquipmentDraft(upgradedDraft);
+  const routedDraft = ensureSupplementaryMicroinverterRouting(repairedDraft, design);
+  const earthedDraft = ensureInverterProtectiveEarth(ensurePvArrayEarth(routedDraft));
   const sourceDraft = batteryAdjustedDraft(earthedDraft, includeBattery);
   const upgradeSignature = JSON.stringify(earthedDraft);
   const savedDraftSignature = JSON.stringify(design.proposedAsBuiltDraft);
@@ -1431,7 +1547,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     const label = window.prompt("Name the component or item to add");
     if (!label?.trim()) return;
     const id = `custom-${Date.now()}`;
-    onChange({ ...draft, nodes: [...nodes, { id, label: label.trim(), detail: "Added to the working system", image: "/schematic-components/ac-circuit-breaker-mcb.jpg", x: 35 + (nodes.length % 4) * 260, y: 30 + Math.floor(nodes.length / 4) * 190 }] });
+    onChange(repairCustomEquipmentDraft({ ...draft, nodes: [...nodes, { id, label: label.trim(), detail: "Added to the working system", image: customEquipmentImage(label), x: 35 + (nodes.length % 4) * 260, y: 30 + Math.floor(nodes.length / 4) * 190 }] }));
   };
   const removeSelectedNode = () => {
     if (!selectedNode || !window.confirm(`Delete ${selectedNode.label} from this system schematic? Its attached connections will also be removed.`)) return;
@@ -1644,7 +1760,20 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
       const safetyIds = new Set(nodes.filter((node) => node.id.startsWith("solar-safety")).map((node) => node.id));
       for (let i = nodes.length - 1; i >= 0; i--) if (safetyIds.has(nodes[i].id)) nodes.splice(i, 1);
       for (let i = connections.length - 1; i >= 0; i--) if (safetyIds.has(connections[i].from) || safetyIds.has(connections[i].to)) connections.splice(i, 1);
-      for (const node of solarNodes) connections.push({ from: node.id, to: "pv-inverter", label: "Module DC inputs; compatibility to confirm", kind: "solar-dc" });
+      if (supplementary && (design.batteryVoltage || design.batteryUsableKwh)) {
+        const existingArray = solarNodes.find((node) => node.id === "solar-pv-1");
+        const additionalArray = solarNodes.find((node) => node.id === "solar-pv-2");
+        if (existingArray) connections.push({ from: existingArray.id, to: "pv-inverter", label: "Existing module DC inputs; microinverter compatibility to confirm", kind: "solar-dc" });
+        if (additionalArray) {
+          nodes.push({ id: "supplementary-solar-safety", label: "Additional array DC isolation", detail: "Disconnects the new DC-coupled array before the hybrid inverter MPPT input", image: "/schematic-components/dc-disconnect-isolator.jpg", x: 250, y: additionalArray.y });
+          connections.push(
+            { from: additionalArray.id, to: "supplementary-solar-safety", label: "Additional array DC string", kind: "solar-dc" },
+            { from: "supplementary-solar-safety", to: "battery-inverter", label: "Additional array to hybrid inverter MPPT", kind: "solar-dc" },
+          );
+        }
+      } else {
+        for (const node of solarNodes) connections.push({ from: node.id, to: "pv-inverter", label: "Module DC inputs; compatibility to confirm", kind: "solar-dc" });
+      }
     } else if (design.inverterArrangement === "optimiser_string") {
       // Optimisers are module-level equipment, before each string's isolation.
       for (const solar of solarNodes) {
