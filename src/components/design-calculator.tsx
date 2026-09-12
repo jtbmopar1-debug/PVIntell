@@ -401,11 +401,68 @@ function proposedGeneratorKw(generator: DiscoveredGenerator, inverterKw?: number
   return Math.max(1, Math.ceil(inverterKw * 0.85 * 2) / 2);
 }
 
+function plannedArrayForNode(nodeId: string, design: DesignCalculatorState) {
+  const index = Number(nodeId.match(/^solar-pv-(\d+)$/)?.[1]) - 1;
+  return Number.isInteger(index) && index >= 0 ? design.pvArrayPlan?.arrays[index] : undefined;
+}
+
+function plannedArrayDetail(nodeId: string, design: DesignCalculatorState) {
+  const array = plannedArrayForNode(nodeId, design);
+  if (!array) return undefined;
+  const strings = array.topology.strings;
+  const allocation = array.allocatedPanelCount
+    ? `${array.allocatedPanelCount} x ${design.panelWatts ?? "?"} W`
+    : "Panel quantity to confirm";
+  if (!strings.length) return `${allocation}; series/parallel string, MPPT input and combiner arrangement pending selected-equipment limits`;
+  const lengths = [...new Set(strings.map((string) => string.panelsInSeries))];
+  return `${allocation}; ${strings.length} recorded string${strings.length === 1 ? "" : "s"}${lengths.length === 1 ? ` with ${lengths[0]} panels in series` : " with recorded series lengths"}; parallel grouping, MPPT inputs and combiner requirement still to confirm`;
+}
+
+function inverterUnitIndex(nodeId: string) {
+  const match = nodeId.match(/^(?:pv-)?inverter-(\d+)$/);
+  return match ? Number(match[1]) - 1 : undefined;
+}
+
+function isPhysicalInverterNode(nodeId: string) {
+  return nodeId === "inverter" || nodeId === "pv-inverter" || nodeId === "battery-inverter" || inverterUnitIndex(nodeId) !== undefined;
+}
+
+function inverterRatingForNode(nodeId: string, design: DesignCalculatorState) {
+  const index = inverterUnitIndex(nodeId);
+  return index === undefined ? design.inverterKw : design.inverterPlan?.unitRatingsKw[index];
+}
+
+function inverterRatingForConnection(connection: { from: string; to: string }, design: DesignCalculatorState) {
+  for (const nodeId of [connection.from, connection.to]) {
+    const unitIndex = inverterUnitIndex(nodeId) ?? (() => {
+      const match = nodeId.match(/^(?:pv-)?inverter-(?:ac|battery)-protection-(\d+)$/);
+      return match ? Number(match[1]) - 1 : undefined;
+    })();
+    if (unitIndex !== undefined) return design.inverterPlan?.unitRatingsKw[unitIndex] ?? design.inverterKw;
+  }
+  return design.inverterKw;
+}
+
+function acCurrentForRating(ratingKw: number | undefined, design: DesignCalculatorState) {
+  return n(ratingKw) * 1000 / (design.connectionType === "ac_three" ? Math.sqrt(3) * 400 : 230);
+}
+
 export function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number], design: DesignCalculatorState) {
   const supplementary = supplementaryArray(design);
   if (supplementary && node.id === "solar-pv-1") return { ...node, detail: `${design.existingPanelGroup?.proposedUseCount ?? "?"} x ${design.existingPanelGroup?.wattsEach ?? design.panelWatts ?? "?"} W user-owned panels; suitability to verify` };
   if (supplementary && node.id === "solar-pv-2") return { ...node, detail: `${round(supplementary.targetPvKw, 2)} kW minimum separate array; module type and quantity to select` };
-  if (node.id === "solar" || node.id.startsWith("solar-pv-")) return { ...node, detail: `${node.id.startsWith("solar-pv-") ? design.panelsPerString ?? "?" : design.panelCount ?? "?"} x ${design.panelWatts ?? "?"} W; ${node.id.startsWith("solar-pv-") ? "one independent PV string" : pvLayoutLabel(design)}` };
+  const arrayDetail = plannedArrayDetail(node.id, design);
+  if (arrayDetail) return { ...node, detail: arrayDetail };
+  if (node.id === "solar" || node.id.startsWith("solar-pv-")) return { ...node, detail: `${node.id.startsWith("solar-pv-") ? design.panelsPerString ?? "?" : design.panelCount ?? "?"} x ${design.panelWatts ?? "?"} W; ${node.id.startsWith("solar-pv-") ? "one user-recorded PV string" : pvLayoutLabel(design)}` };
+  const unitIndex = inverterUnitIndex(node.id);
+  if (unitIndex !== undefined) {
+    const rating = design.inverterPlan?.unitRatingsKw[unitIndex];
+    return rating ? {
+      ...node,
+      label: `Inverter ${unitIndex + 1}`,
+      detail: `${rating} kW continuous planning unit ${unitIndex + 1} of ${design.inverterPlan?.unitRatingsKw.length}; its PV/battery input allocation, AC output circuit and protective earth are shown separately`,
+    } : node;
+  }
   if ((node.id === "inverter" || node.id === "pv-inverter") && design.inverterKw) {
     if (node.id === "pv-inverter" && design.inverterArrangement === "microinverters") {
       const recordedBatteryInverter = design.proposedAsBuiltDraft?.nodes?.find((candidate) => candidate.id === "battery-inverter");
@@ -420,8 +477,8 @@ export function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculato
     }
     if (design.inverterPlan && design.inverterPlan.unitRatingsKw.length > 1) return {
       ...node,
-      label: "Inverter arrangement to assess",
-      detail: `${design.inverterKw} kW total requirement; proposal options: ${design.inverterPlan.unitRatingsKw.join(" + ")} kW units or ${design.inverterPlan.preferredPhase === "three" ? "a three-phase arrangement" : "the confirmed site phase"}`,
+      label: `${design.inverterPlan.unitRatingsKw.length} x ${design.inverterPlan.unitRatingsKw[0]} kW inverter arrangement`,
+      detail: `${design.inverterPlan.unitRatingsKw.reduce((total, rating) => total + rating, 0)} kW installed AC capacity selected for the ${design.inverterKw} kW calculated requirement across ${design.inverterPlan.unitRatingsKw.length} inverter units; ${design.inverterPlan.preferredPhase === "three" ? "three-phase connection preferred" : "connect to the confirmed site phase"}; confirm local connection and equipment rules`,
     };
     const baseDetail = node.detail.replace(/^(?:\s*\d+(?:\.\d+)?\s*kW continuous rating proposed(?:\s*;\s*|\s*$))+/i, "");
     return { ...node, detail: `${design.inverterKw} kW continuous rating proposed${node.id === "pv-inverter" && baseDetail ? `; ${baseDetail}` : ""}` };
@@ -484,6 +541,10 @@ function componentPlanningDetail(node: NonNullable<NonNullable<DesignCalculatorS
   const dc = touching.find((connection) => connection.kind === "solar-dc");
   const ac = touching.find((connection) => connection.kind === "ac" && !connection.authorityCheck);
   if (node.id.includes("solar-safety")) {
+    if (design.pvArrayPlan?.status !== "resolved") return {
+      ...basic,
+      detail: "Voltage, current, poles, isolation and any combiner requirement remain unselected until the array series/parallel hierarchy and inverter MPPT limits are resolved.",
+    };
     const stringVoc = n(design.panelVocV) * n(design.panelsPerString, 1);
     const ratedVoltage = stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500;
     const ratedCurrent = [16, 20, 25, 32, 40, 50, 63].find((amps) => amps >= Math.max(32, n(dc?.protectionAmps))) ?? Math.ceil(n(dc?.protectionAmps));
@@ -497,6 +558,57 @@ type ProposedNode = NonNullable<NonNullable<DesignCalculatorState["proposedAsBui
 type ProposedDraft = NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>;
 type ComponentSpec = { label: string; value: string; note?: string };
 
+export function schematicCanvasSize(nodes: ProposedNode[], nodeWidth = 105, nodeHeight = 128) {
+  return {
+    width: Math.max(1120, ...nodes.map((node) => node.x + nodeWidth + 80)),
+    height: Math.max(610, ...nodes.map((node) => node.y + nodeHeight + 80)),
+  };
+}
+
+export function tidySchematicNodes(nodes: ProposedNode[]) {
+  return nodes.map((node, index) => ({
+    ...node,
+    x: 35 + (index % 4) * 260,
+    y: 30 + Math.floor(index / 4) * 190,
+  }));
+}
+
+export function schematicCardDetail(node: ProposedNode, draft: ProposedDraft, design: DesignCalculatorState) {
+  if (node.id === "solar" || node.id.startsWith("solar-pv-")) {
+    const supplementary = supplementaryArray(design);
+    const count = plannedArrayForNode(node.id, design)?.allocatedPanelCount
+      ?? (supplementary && node.id === "solar-pv-1" ? design.existingPanelGroup?.proposedUseCount : undefined)
+      ?? (supplementary && node.id === "solar-pv-2" ? supplementary.count : undefined)
+      ?? (node.id === "solar" ? design.panelCount : undefined);
+    return count ? `${count} panels` : "TBC";
+  }
+  if (node.id === "battery") return `${design.batteryVoltage ?? "TBC"} V · ${design.batteryAh ?? "TBC"} Ah`;
+  if (isPhysicalInverterNode(node.id)) {
+    const recordedRating = node.id === "battery-inverter" ? Number(`${node.label} ${node.detail}`.match(/\b(\d+(?:\.\d+)?)\s*kW\b/i)?.[1]) || undefined : undefined;
+    const rating = recordedRating ?? (node.id === "battery-inverter" ? undefined : inverterRatingForNode(node.id, design));
+    return rating ? `${rating} kW` : "TBC";
+  }
+
+  const touching = (draft.connections ?? []).filter((connection) => connection.from === node.id || connection.to === node.id);
+  const recordedAmps = touching.reduce((largest, connection) => Math.max(largest, n(connection.protectionAmps)), 0);
+  const batteryFuse = /fuse/i.test(node.label) || /-battery-protection-\d+$/.test(node.id);
+  if (batteryFuse) {
+    const rating = inverterRatingForConnection({ from: node.id, to: node.id }, design);
+    const calculatedAmps = design.batteryVoltage && rating ? Math.ceil(rating * 1000 / design.batteryVoltage * 1.25) : 0;
+    return `${recordedAmps || calculatedAmps ? `${recordedAmps || calculatedAmps} A` : "TBC"} · DC`;
+  }
+  const breaker = /breaker/i.test(node.label) || node.id === "ac-safety" || /-ac-protection-\d+$/.test(node.id);
+  if (breaker) {
+    const calculatedAmps = Math.ceil(acCurrentForRating(inverterRatingForConnection({ from: node.id, to: node.id }, design), design) * 1.25);
+    return `${recordedAmps || calculatedAmps ? `${recordedAmps || calculatedAmps} A` : "TBC"} · AC`;
+  }
+  if (/isolat/i.test(node.label) || node.id.includes("solar-safety")) {
+    const kind = touching.some((connection) => connection.kind === "ac") ? "AC" : "DC";
+    return `${recordedAmps ? `${recordedAmps} A` : "TBC"} · ${kind}`;
+  }
+  return undefined;
+}
+
 function componentSpecifications(node: ProposedNode, draft: ProposedDraft, design: DesignCalculatorState): ComponentSpec[] {
   const touching = (draft.connections ?? []).filter((connection) => connection.from === node.id || connection.to === node.id);
   const dc = touching.find((connection) => connection.kind === "solar-dc");
@@ -508,10 +620,14 @@ function componentSpecifications(node: ProposedNode, draft: ProposedDraft, desig
   if (node.id === "solar" || node.id.startsWith("solar-pv-")) {
     const supplementary = supplementaryArray(design);
     const isSupplementary = Boolean(supplementary && node.id === "solar-pv-2");
-    const quantity = supplementary && node.id === "solar-pv-1" ? n(design.existingPanelGroup?.proposedUseCount) : isSupplementary ? supplementary?.count ?? 0 : node.id.startsWith("solar-pv-") ? n(design.panelsPerString) : n(design.panelCount);
+    const plannedArray = supplementary ? undefined : plannedArrayForNode(node.id, design);
+    const plannedSeriesLengths = [...new Set(plannedArray?.topology.strings.map((string) => string.panelsInSeries) ?? [])];
+    const quantity = plannedArray?.allocatedPanelCount ?? (supplementary && node.id === "solar-pv-1" ? n(design.existingPanelGroup?.proposedUseCount) : isSupplementary ? supplementary?.count ?? 0 : node.id.startsWith("solar-pv-") ? n(design.panelsPerString) : n(design.panelCount));
     const panelWatts = isSupplementary ? supplementary?.watts ?? 0 : n(design.existingPanelGroup?.wattsEach, n(design.panelWatts));
     const panelWeight = isSupplementary ? 0 : n(design.panelWeightKg);
-    const stringPanels = node.id.startsWith("solar-pv-") ? quantity : n(design.panelsPerString);
+    const stringPanels = plannedArray
+      ? (plannedSeriesLengths.length === 1 ? plannedSeriesLengths[0] : 0)
+      : node.id.startsWith("solar-pv-") ? quantity : n(design.panelsPerString);
     return [
       { label: "Quantity", value: quantity ? `${quantity} panels` : "To be confirmed" },
       { label: "Module rating", value: panelWatts ? `${panelWatts} W each` : "Select modules to meet the capacity target" },
@@ -521,15 +637,21 @@ function componentSpecifications(node: ProposedNode, draft: ProposedDraft, desig
       { label: "Module Vmp / Voc", value: !isSupplementary && design.panelVmpV && design.panelVocV ? `${design.panelVmpV} / ${design.panelVocV} V` : "To be confirmed" },
       { label: "String Vmp / Voc", value: !isSupplementary && stringPanels && design.panelVmpV && design.panelVocV ? `${round(stringPanels * design.panelVmpV, 1)} / ${round(stringPanels * design.panelVocV, 1)} V` : "To be confirmed", note: "Nameplate values; final maximum voltage needs the cold-temperature correction." },
       { label: "Module Imp / Isc", value: !isSupplementary && design.panelImpA && design.panelIscA ? `${design.panelImpA} / ${design.panelIscA} A` : "To be confirmed" },
+      ...(plannedArray ? [{ label: "String hierarchy", value: plannedArray.topology.strings.length ? plannedArrayDetail(node.id, design) ?? "To be confirmed" : "Series length, parallel grouping, MPPT allocation and combiner requirement pending" }] : []),
       { label: "Maximum system voltage", value: isSupplementary ? "To be confirmed" : value(design.panelMaximumSystemVoltageV, "V DC") },
       { label: "Maximum series fuse", value: isSupplementary ? "To be confirmed" : value(design.panelMaximumSeriesFuseA, "A") },
-      { label: "Mounting location", value: mountingLocationText(design.mountingLocations) },
+      { label: "Mounting location", value: plannedArray ? [plannedArray.name, plannedArray.mounting, plannedArray.direction, plannedArray.pitch].filter(Boolean).join("; ") : mountingLocationText(design.mountingLocations) },
       { label: "Planning azimuth", value: azimuthText(design.azimuthDegrees), note: "Equator-facing Site recommendation until the actual mounting surface is confirmed." },
       { label: "Planning tilt", value: design.tiltDegrees !== undefined ? `${round(design.tiltDegrees, 0)}°` : "To be confirmed", note: "Latitude-based planning recommendation until the actual surface pitch is entered." },
     ];
   }
 
   if (node.id.includes("solar-safety")) {
+    if (design.pvArrayPlan?.status !== "resolved") return [
+      { label: "Device", value: "Isolation / combining arrangement to select" },
+      { label: "Electrical basis", value: "Resolve series length, parallel groups, MPPT allocation and the selected inverter input limits first" },
+      { label: "Final checks", value: "Voltage, current, poles, enclosure, location and whether an external combiner is required" },
+    ];
     const stringVoc = n(design.panelVocV) * n(design.panelsPerString, 1);
     const ratedVoltage = stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500;
     const requiredCurrent = Math.max(32, n(dc?.protectionAmps));
@@ -543,8 +665,8 @@ function componentSpecifications(node: ProposedNode, draft: ProposedDraft, desig
     ];
   }
 
-  if (node.id.includes("inverter")) return [
-    { label: "Continuous output", value: value(design.inverterKw, "kW") },
+  if (isPhysicalInverterNode(node.id)) return [
+    { label: "Continuous output", value: inverterRatingForNode(node.id, design) ? `${inverterRatingForNode(node.id, design)} kW` : value(design.inverterKw, "kW") },
     { label: "Arrangement", value: design.architecture?.replaceAll("_", " ") ?? "To be confirmed" },
     { label: "AC system", value: `${design.connectionType === "ac_three" ? 400 : 230} V AC` },
     { label: "PV inputs", value: design.pvStrings ? `${design.pvStrings} independent MPPT input${design.pvStrings === 1 ? "" : "s"} required` : "To be confirmed" },
@@ -608,15 +730,17 @@ function componentSpecifications(node: ProposedNode, draft: ProposedDraft, desig
 function batteryAdjustedDraft(draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>, includeBattery: boolean) {
   if (includeBattery) return draft;
   const batteryNodeIds = new Set(["battery", "battery-safety", "battery-inverter"]);
+  const isBatteryNode = (nodeId: string) => batteryNodeIds.has(nodeId) || /-battery-protection-\d+$/.test(nodeId);
   return {
     ...draft,
     flow: draft.flow?.filter((item) => !item.toLowerCase().includes("battery")),
-    nodes: draft.nodes?.filter((node) => !batteryNodeIds.has(node.id)),
-    connections: draft.connections?.filter((connection) => !batteryNodeIds.has(connection.from) && !batteryNodeIds.has(connection.to)),
+    nodes: draft.nodes?.filter((node) => !isBatteryNode(node.id)),
+    connections: draft.connections?.filter((connection) => !isBatteryNode(connection.from) && !isBatteryNode(connection.to)),
   };
 }
 
 function upgradePvStringIsolationDraft(draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>, design: DesignCalculatorState) {
+  if (design.pvArrayPlan) return draft;
   const stringCount = Math.max(1, Math.round(n(design.pvStrings, 1)));
   if (stringCount <= 1 || !draft.nodes?.some((node) => node.id === "solar-safety") || draft.nodes.some((node) => node.id === "solar-safety-1") || draft.nodes.some((node) => node.id === "solar-pv-1")) return draft;
   const inbound = draft.connections?.find((connection) => connection.from === "solar" && connection.to === "solar-safety");
@@ -757,7 +881,7 @@ export function ensureInverterProtectiveEarth(draft: NonNullable<DesignCalculato
   if (!target) return draft;
 
   const connections = draft.connections ?? [];
-  const inverterNodes = nodes.filter((node) => node.id === "inverter" || node.id.includes("inverter"));
+  const inverterNodes = nodes.filter((node) => isPhysicalInverterNode(node.id));
   const additions = inverterNodes
     .filter((node) => !connections.some((connection) => connection.kind === "earth" && connection.from === node.id && connection.to === target))
     .map((node) => ({
@@ -786,7 +910,7 @@ function preliminaryConnectionValues(connection: NonNullable<NonNullable<DesignC
       const earthCableMm2 = planningProtectiveEarth(pvCableMm2, Math.ceil(n(design.panelIscA) * 1.25), design.electricalStandard, true);
       return { ...connection, cableSizeMm2: connection.cableSizeMm2 ?? earthCableMm2, protectionAmps: undefined, notes: connection.notes ?? (earthCableMm2 ? `Preliminary PV bonding size calculated using the ${design.electricalStandard} regional profile.` : "Protective bonding size requires the Site's applicable electrical standard.") };
     }
-    const acCurrent = n(design.inverterKw) * 1000 / 230;
+    const acCurrent = acCurrentForRating(inverterRatingForConnection(connection, design), design);
     const activeCableMm2 = planningAcCableForCurrent(acCurrent);
     const earthCableMm2 = planningProtectiveEarth(activeCableMm2, Math.ceil(acCurrent * 1.25), design.electricalStandard);
     return { ...connection, cableSizeMm2: connection.cableSizeMm2 ?? earthCableMm2, protectionAmps: undefined, notes: connection.notes ?? (earthCableMm2 ? `Preliminary protective-earth size calculated using the ${design.electricalStandard} regional profile.` : "Protective-earth size requires the Site's applicable electrical standard.") };
@@ -797,8 +921,8 @@ function preliminaryConnectionValues(connection: NonNullable<NonNullable<DesignC
     if (!suggestion.cableSizeMm2) return { ...connection, cableSizeMm2: undefined, protectionAmps: undefined, notes: suggestion.notes };
     return { ...connection, cableSizeMm2: suggestion.cableSizeMm2, protectionAmps: undefined, notes: suggestion.notes };
   }
-  const voltage = connection.kind === "battery-dc" ? n(design.batteryVoltage) : 230;
-  const current = n(design.inverterKw) * 1000 / Math.max(voltage, 1);
+  const voltage = connection.kind === "battery-dc" ? n(design.batteryVoltage) : design.connectionType === "ac_three" ? 400 : 230;
+  const current = connection.kind === "ac" ? acCurrentForRating(inverterRatingForConnection(connection, design), design) : n(inverterRatingForConnection(connection, design)) * 1000 / Math.max(voltage, 1);
   if (!voltage || !current) return connection;
   const currentCapacityCable = connection.kind === "ac" ? planningAcCableForCurrent(current) : planningCableForCurrent(current);
   return { ...connection, cableSizeMm2: Math.max(connection.cableSizeMm2 ?? 0, 1.5, currentCapacityCable), protectionAmps: connection.protectionAmps ?? Math.ceil(current * 1.25), notes: connection.notes ?? "Preliminary current-capacity sizing; confirm route, derating, equipment limits and protection coordination." };
@@ -1427,22 +1551,30 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
       window.removeEventListener("orientationchange", fit);
     };
   }, []);
-  const nodeWidth = 140;
-  const nodeCentre = 70;
+  const nodeWidth = 105;
+  const nodeCentre = 52.5;
   const nodes = draft.nodes ?? [];
   const connections = draft.connections ?? [];
   const byId = new Map(nodes.map((node) => [node.id, node]));
+  const canvasSize = schematicCanvasSize(nodes, nodeWidth, 128);
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
   const selectedConnection = connections.find((connection) => `${connection.from}:${connection.to}` === selectedConnectionKey);
   const selectedNodeIsSolar = selectedNode?.id === "solar" || selectedNode?.id.startsWith("solar-pv-");
   const selectedSupplementaryArray = selectedNode?.id === "solar-pv-2" ? supplementaryArray(design) : undefined;
+  const selectedPlannedArray = selectedNode ? plannedArrayForNode(selectedNode.id, design) : undefined;
   const selectedNodeSpecs = selectedSupplementaryArray ? [
     ["Mounting", "Suitable mounting area to confirm"], ["Array", `At least ${round(selectedSupplementaryArray.targetPvKw, 2)} kW`], ["Connection", "Separate compatible string / MPPT input"], ["Planning azimuth", azimuthText(design.azimuthDegrees)], ["Planning tilt", design.tiltDegrees === undefined ? "not established" : `${round(design.tiltDegrees, 0)}°; actual surface to confirm`], ["Panel type / quantity", "Select a compatible option"], ["Electrical limits", "Confirm from selected module and inverter datasheets"],
+  ] : selectedPlannedArray ? [
+    ["Mounting array", selectedPlannedArray.name],
+    ["Panel allocation", selectedPlannedArray.allocatedPanelCount ? `${selectedPlannedArray.allocatedPanelCount} panels` : selectedPlannedArray.capacity ? `Capacity about ${selectedPlannedArray.capacity} panels; allocation pending` : "Pending"],
+    ["String hierarchy", selectedPlannedArray.topology.strings.length ? plannedArrayDetail(selectedNode?.id ?? "", design) ?? "Pending" : "Series length, parallel grouping and MPPT allocation pending"],
+    ["Combiner", selectedPlannedArray.topology.combinerRequirement === "required" ? "Required" : selectedPlannedArray.topology.combinerRequirement === "not_required" ? "Not required" : "Pending selected inverter input limits"],
+    ["Surface", [selectedPlannedArray.mounting, selectedPlannedArray.direction, selectedPlannedArray.pitch].filter(Boolean).join("; ") || "Recorded mounting-area details apply"],
   ] : selectedNodeIsSolar ? [
     ["Mounting", mountingLocationText(design.mountingLocations)], ["Array", `${design.panelCount ?? "—"} × ${design.panelWatts ?? "—"} W`], ["Strings", pvLayoutLabel(design)], ["Azimuth", azimuthText(design.azimuthDegrees)], ["Tilt", design.tiltDegrees === undefined ? "not established" : `${round(design.tiltDegrees, 0)}°`], ["Panel Vmp / Voc", `${design.panelVmpV ?? "—"} / ${design.panelVocV ?? "—"} V`], ["Panel Imp / Isc", `${design.panelImpA ?? "—"} / ${design.panelIscA ?? "—"} A`],
   ] : selectedNode?.id === "battery" ? [
     ["Battery bank", `${design.batteryQuantity ?? "—"} × ${design.batteryVoltage ?? "—"} V`], ["Capacity", `${design.batteryAh ?? "—"} Ah each`], ["Planning usable", `${design.usableBatteryPercent ?? "—"}%`], ["Chemistry", design.batteryChemistry ?? "Not confirmed"],
-  ] : selectedNode?.id.includes("inverter") ? [["Continuous rating", `${design.inverterKw ?? "—"} kW`], ["Arrangement", design.architecture?.replaceAll("_", " ") ?? "Not confirmed"]] : selectedNode ? [["Current proposal", selectedNode.detail], ["Technical notes", selectedNode.notes || "No notes recorded"]] : [];
+  ] : selectedNode && isPhysicalInverterNode(selectedNode.id) ? [["Continuous rating", `${inverterRatingForNode(selectedNode.id, design) ?? "—"} kW`], ["Arrangement", design.architecture?.replaceAll("_", " ") ?? "Not confirmed"]] : selectedNode ? [["Current proposal", selectedNode.detail], ["Technical notes", selectedNode.notes || "No notes recorded"]] : [];
   useEffect(() => {
     setComponentModalTarget(null);
     if (!selectedNode) return;
@@ -1455,7 +1587,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   }, [design.panelCount, selectedNode]);
   const overviewHref = `${wattsonHref.split("?")[0]}/design`;
   const pvNames = Array.from({ length: Math.max(1, n(design.pvStrings, 1)) }, (_, index) => `PV${index + 1}`);
-  const connectionDisplayLabel = (connection: (typeof connections)[number]) => connection.authorityCheck && connection.from === "grid-supply" ? "Public grid AC supply to isolation" : connection.authorityCheck && connection.to === "switchboard" ? "Grid AC feed to power board" : connection.kind === "solar-dc" && connection.from === "solar" ? `${pvNames.join(" / ")} · ${n(design.panelsPerString, 1)} panels per string` : connection.kind === "solar-dc" && connection.from === "solar-safety" ? `${pvNames.join(" / ")} to inverter/MPPT inputs` : connection.label;
+  const connectionDisplayLabel = (connection: (typeof connections)[number]) => connection.authorityCheck && connection.from === "grid-supply" ? "Public grid AC supply to isolation" : connection.authorityCheck && connection.to === "switchboard" ? "Grid AC feed to power board" : !design.pvArrayPlan && connection.kind === "solar-dc" && connection.from === "solar" ? `${pvNames.join(" / ")} · ${n(design.panelsPerString, 1)} panels per string` : !design.pvArrayPlan && connection.kind === "solar-dc" && connection.from === "solar-safety" ? `${pvNames.join(" / ")} to inverter/MPPT inputs` : connection.label;
   const pvCircuitId = (connection: (typeof connections)[number]) => connection.kind === "solar-dc" ? connection.label.match(/\bPV\d+\b/i)?.[0].toUpperCase() : undefined;
   const standardCable = (minimum: number) => [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120].find((size) => size >= minimum) ?? Math.ceil(minimum);
   const routeElectricals = (connection: (typeof connections)[number], lengthM: number) => {
@@ -1465,14 +1597,15 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         const pvCableMm2 = connections.filter((item) => item.kind === "solar-dc" && (!pvCircuit || pvCircuitId(item) === pvCircuit)).reduce((largest, item) => Math.max(largest, n(item.cableSizeMm2)), planningCableForCurrent(n(design.panelIscA) * 1.25));
         return { cableSizeMm2: planningProtectiveEarth(pvCableMm2, Math.ceil(n(design.panelIscA) * 1.25), design.electricalStandard, true), protectionAmps: undefined };
       }
-      const calculatedAcCable = planningAcCableForCurrent(n(design.inverterKw) * 1000 / 230);
+      const circuitKw = inverterRatingForConnection(connection, design);
+      const calculatedAcCable = planningAcCableForCurrent(acCurrentForRating(circuitKw, design));
       const recordedAcCable = connections.filter((item) => item.kind === "ac").reduce((largest, item) => Math.max(largest, n(item.cableSizeMm2)), 0);
-      const acProtection = Math.ceil(n(design.inverterKw) * 1000 / 230 * 1.25);
+      const acProtection = Math.ceil(acCurrentForRating(circuitKw, design) * 1.25);
       return { cableSizeMm2: planningProtectiveEarth(Math.max(calculatedAcCable, recordedAcCable), acProtection, design.electricalStandard), protectionAmps: undefined };
     }
     if (connection.kind === "solar-dc") return suggestPvDcStringCable({ panelsPerString: design.panelsPerString, panelVmpV: design.panelVmpV, panelImpA: design.panelImpA, panelIscA: design.panelIscA, lengthM });
-    const voltage = connection.kind === "battery-dc" ? n(design.batteryVoltage, 48) : 230;
-    const current = n(design.inverterKw) * 1000 / Math.max(voltage, 1);
+    const voltage = connection.kind === "battery-dc" ? n(design.batteryVoltage, 48) : design.connectionType === "ac_three" ? 400 : 230;
+    const current = connection.kind === "ac" ? acCurrentForRating(inverterRatingForConnection(connection, design), design) : n(inverterRatingForConnection(connection, design)) * 1000 / Math.max(voltage, 1);
     if (!voltage || !current) return { cableSizeMm2: undefined, protectionAmps: undefined };
     const minimumByDrop = voltage && current ? 2 * .0175 * lengthM * current / (voltage * .02) : 0;
     const circuitFloor = connection.kind === "ac" ? planningAcCableForCurrent(current) : planningCableForCurrent(current);
@@ -1493,12 +1626,22 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     try {
       const subjectId = selectedNode ? `component_${selectedNode.id}` : `connection_${selectedConnection?.from}_${selectedConnection?.to}`;
       const subjectTitle = selectedNode?.label ?? (selectedConnection ? connectionDisplayLabel(selectedConnection) : "System item");
-      const requestedKw = chatIntent === "redesign" && selectedNode?.id.includes("inverter") ? userMessage.match(/\b(\d+(?:\.\d+)?)\s*kW\b/i) : null;
+      const requestedKw = chatIntent === "redesign" && selectedNode && isPhysicalInverterNode(selectedNode.id) ? userMessage.match(/\b(\d+(?:\.\d+)?)\s*kW\b/i) : null;
       if (requestedKw) {
         const inverterKw = Number(requestedKw[1]);
-        const nextDraft = { ...draft, inverterKw, nodes: nodes.map((node) => node.id === selectedNode?.id ? { ...node, detail: `Proposed hybrid inverter / charger: ${inverterKw} kW` } : node) };
-        onRedesign({ ...design, inverterKw }, nextDraft);
-        setChatMessages((current) => [...current, { role: "assistant", content: `Done — I’ve changed the proposed inverter to **${inverterKw} kW** and saved the redesign. The connected battery current, cable and protection figures now need recalculating against that larger continuous rating. Tiny inverter upgrade, potentially chunky copper consequences.` }]);
+        const nextDesign = {
+          ...design,
+          inverterKw,
+          inverterPlan: inverterArrangementAdvice({ requiredKw: inverterKw, siteLocation: project.location, connectionType: design.connectionType }),
+          pvStrings: undefined,
+          panelsPerString: undefined,
+          stringDesign: undefined,
+        };
+        const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected);
+        onRedesign(nextDesign, nextDraft);
+        const units = nextDesign.inverterPlan?.unitRatingsKw ?? [];
+        const arrangement = units.length > 1 ? `${units.length} x ${units[0]} kW inverter units` : `${units[0] ?? inverterKw} kW inverter`;
+        setChatMessages((current) => [...current, { role: "assistant", content: `Done — I’ve changed the calculated inverter requirement to **${inverterKw} kW** and selected **${arrangement}** as the planning arrangement. Connected battery current, AC aggregation, cable and protection values now require recalculation and local-rule review.` }]);
         return;
       }
       const response = await fetch("/api/wattson/discovery-help", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: userMessage, conversationId: chatConversationId, siteId: projectSiteIdFromHref(wattsonHref), projectId: projectIdFromHref(wattsonHref), discoveryAnswers: {}, question: { id: `build_${subjectId}_${chatIntent}`, title: `${subjectTitle} — ${chatIntent}`, stage: "Build It", help: `Use this selected schematic context: ${JSON.stringify({ intent: chatIntent, node: selectedNode, connection: selectedConnection, panelCount: design.panelCount, panelWatts: design.panelWatts, pvStrings: design.pvStrings, panelsPerString: design.panelsPerString, panelVmpV: design.panelVmpV, panelIscA: design.panelIscA, inverterKw: design.inverterKw, batteryVoltage: design.batteryVoltage })}` }, recentConversation: nextMessages.slice(-8) }) });
@@ -1600,12 +1743,12 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     if (!movingNodeId) return;
     event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(0, Math.min(980, (event.clientX - bounds.left) / zoom - nodeWidth / 2));
-    const y = Math.max(0, Math.min(470, (event.clientY - bounds.top) / zoom - 60));
+    const x = Math.max(0, Math.min(canvasSize.width - nodeWidth - 20, (event.clientX - bounds.left) / zoom - nodeWidth / 2));
+    const y = Math.max(0, Math.min(canvasSize.height - 128 - 20, (event.clientY - bounds.top) / zoom - 60));
     onChange({ ...draft, nodes: nodes.map((node) => node.id === movingNodeId ? { ...node, x: Math.round(x / 10) * 10, y: Math.round(y / 10) * 10 } : node) });
     setMovingNodeId(undefined);
   };
-  const tidyLayout = () => onChange({ ...draft, nodes: nodes.map((node, index) => ({ ...node, x: 35 + (index % 4) * 260, y: 30 + Math.floor(index / 4) * 190 })) });
+  const tidyLayout = () => onChange({ ...draft, nodes: tidySchematicNodes(nodes) });
   const addItem = () => {
     const label = window.prompt("Name the component or item to add");
     if (!label?.trim()) return;
@@ -1621,7 +1764,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     const from = byId.get(fromId);
     const to = byId.get(toId);
     if (!from || !to) return { path: "", labelX: 0, labelY: 0 };
-    const nodeHeight = 170;
+    const nodeHeight = 128;
     const fromCx = from.x + nodeCentre;
     const fromCy = from.y + nodeHeight / 2;
     const toCx = to.x + nodeCentre;
@@ -1632,7 +1775,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     if (kind === "earth") {
       if (horizontal) {
         const routeAbove = Math.min(from.y, to.y) - 16 - Math.max(0, offset);
-        const routeY = routeAbove >= 2 ? routeAbove : Math.min(602, Math.max(from.y + nodeHeight, to.y + nodeHeight) + 16 + Math.max(0, offset));
+        const routeY = routeAbove >= 2 ? routeAbove : Math.min(canvasSize.height - 8, Math.max(from.y + nodeHeight, to.y + nodeHeight) + 16 + Math.max(0, offset));
         const y1 = routeY < from.y ? from.y : from.y + nodeHeight;
         const y2 = routeY < to.y ? to.y : to.y + nodeHeight;
         const xDirection = Math.sign(toCx - fromCx) || 1;
@@ -1643,7 +1786,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         return { path, labelX: (fromCx + toCx) / 2, labelY: routeY };
       }
       const routeRight = Math.max(from.x + nodeWidth, to.x + nodeWidth) + 16;
-      const routeX = routeRight <= 1112 ? routeRight : Math.max(8, Math.min(from.x, to.x) - 16);
+      const routeX = routeRight <= canvasSize.width - 8 ? routeRight : Math.max(8, Math.min(from.x, to.x) - 16);
       const x1 = routeX > fromCx ? from.x + nodeWidth : from.x;
       const x2 = routeX > toCx ? to.x + nodeWidth : to.x;
       const fromXDirection = Math.sign(routeX - x1) || 1;
@@ -1669,10 +1812,10 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
 
   return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><button type="button" onClick={tidyLayout} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={addItem} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">+ Add item</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div><div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto overscroll-contain">
     {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5">{selectedNodeIsSolar && !supplementaryArray(design) ? <div className="rounded-2xl border border-[#9fc6e7] bg-[#eef6fd] p-4"><div className="eyebrow">Quick edit</div><label className="mt-3 block text-xs font-bold">Total panel quantity<div className="mt-1.5 flex gap-2"><input type="number" min="1" max="10000" step="1" inputMode="numeric" value={quickPanelCount} onChange={(event) => { setQuickPanelCount(event.target.value); setQuickEditMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={saveQuickPanelQuantity} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">Save quantity</button></div></label><p className="mt-2 text-[10px] leading-4 text-muted">This refreshes array capacity, string layout and the dependent inverter and storage planning figures.</p>{quickEditMessage ? <p className="mt-2 text-[10px] font-semibold text-brand" role="status">{quickEditMessage}</p> : null}</div> : null}<div className="mt-5 eyebrow">Full component specification</div><dl className="mt-3 grid gap-3 sm:grid-cols-2">{selectedNodeSpecs.map(([label, value]) => <div key={label} className="rounded-xl border border-line bg-[#f7fafc] p-3"><dt className="text-[9px] font-bold uppercase tracking-[.12em] text-muted">{label}</dt><dd className="mt-1 text-xs font-extrabold">{value}</dd></div>)}</dl><button type="button" onClick={removeSelectedNode} className="mt-4 h-9 w-full rounded-lg border border-[#e7b7af] text-[10px] font-bold text-[#a7442d]">Delete this item</button></div>, componentModalTarget) : null}
-    <div className="w-[1120px] origin-top-left" style={{ zoom }}>
-    <div className="flex min-w-[1120px] items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted"><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery DC</span><span><b className="text-[#d99500]">Gold</b> = inverter AC to the building</span><span><b className="text-[#9b3db5]">Purple</b> = controlled public-grid AC</span><span><b className="text-[#25875a]">Green</b> = protective earth / bonding</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
-    <div className="relative h-[610px] w-[1120px] bg-[radial-gradient(circle,#c8d7e4_1px,transparent_1px),radial-gradient(circle_at_50%_45%,rgba(246,201,69,.12),transparent_22rem)] bg-[size:20px_20px,auto]" role="img" aria-label="Draft proposed solar power system schematic" onDragOver={(event) => event.preventDefault()} onDrop={moveNode}>
-      <svg viewBox="0 0 1120 610" className="absolute inset-0 h-full w-full" aria-hidden>
+    <div className="origin-top-left" style={{ zoom, width: canvasSize.width }}>
+    <div className="flex items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted" style={{ minWidth: canvasSize.width }}><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery DC</span><span><b className="text-[#d99500]">Gold</b> = inverter AC to the building</span><span><b className="text-[#9b3db5]">Purple</b> = controlled public-grid AC</span><span><b className="text-[#25875a]">Green</b> = protective earth / bonding</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
+    <div className="relative bg-[radial-gradient(circle,#c8d7e4_1px,transparent_1px),radial-gradient(circle_at_50%_45%,rgba(246,201,69,.12),transparent_22rem)] bg-[size:20px_20px,auto]" style={{ width: canvasSize.width, height: canvasSize.height }} role="img" aria-label="Draft proposed solar power system schematic" onDragOver={(event) => event.preventDefault()} onDrop={moveNode}>
+      <svg viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`} className="absolute inset-0 h-full w-full" aria-hidden>
         {connections.map((connection) => {
           if (connection.kind === "solar-dc" || connection.kind === "battery-dc") {
             const circuitCount = connection.kind === "solar-dc" && connection.from === "solar" ? Math.max(1, n(design.pvStrings, 1)) : 1;
@@ -1690,11 +1833,11 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         const geometry = connectionGeometry(connection.from, connection.to, earthLaneOffset(connection), connection.kind);
         return <button type="button" onClick={() => { setSelectedConnectionKey(`${connection.from}:${connection.to}`); setRouteLength(connection.lengthM ?? 0); setRouteBasis(connection.lengthBasis ?? "estimated"); setChatOpen(false); }} key={`label:${connection.from}:${connection.to}`} title={complete ? `${connectionDisplayLabel(connection)} — ${connection.cableSizeMm2} mm²${connection.protectionAmps ? `, ${connection.protectionAmps} A protection` : ""}` : `Configure ${connectionDisplayLabel(connection)}`} className={`absolute z-30 -translate-x-1/2 -translate-y-1/2 rounded-full border px-2.5 py-1 text-[8px] font-bold shadow-sm ${complete ? "border-line bg-white/95 text-[#4d6176]" : "border-[#d94a3a] bg-[#fff1ee] text-[#a52f22]"}`} style={{ left: geometry.labelX, top: geometry.labelY }}>{complete ? connectionDisplayLabel(connection) : "Configure"}</button>;
       })}
-      {nodes.map((node) => <button type="button" draggable key={node.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; setMovingNodeId(node.id); }} onClick={() => setSelectedNodeId(node.id)} className="absolute z-20 w-[140px] cursor-grab text-center active:cursor-grabbing" style={{ left: node.x, top: node.y }} title={`Drag to move or select to open ${node.label}`}>
-        <span className="block min-h-[170px] overflow-hidden rounded-2xl border border-[#b8cce0] bg-white p-2 shadow-[0_8px_22px_rgba(20,60,99,.12)] transition hover:-translate-y-0.5 hover:border-brand">
-          <span className="relative block h-[72px] overflow-hidden rounded-xl bg-[#f4f7fa]"><Image src={node.image} alt="" fill sizes="124px" className="object-contain p-1.5"/></span>
+      {nodes.map((node) => <button type="button" draggable key={node.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; setMovingNodeId(node.id); }} onClick={() => setSelectedNodeId(node.id)} className="absolute z-20 w-[105px] cursor-grab text-center active:cursor-grabbing" style={{ left: node.x, top: node.y }} title={`Drag to move or select to open ${node.label}`}>
+        <span className="block min-h-[128px] overflow-hidden rounded-xl border border-[#b8cce0] bg-white p-1.5 shadow-[0_6px_17px_rgba(20,60,99,.12)] transition hover:-translate-y-0.5 hover:border-brand">
+          <span className="relative mx-auto block h-[54px] w-[93px] overflow-hidden rounded-xl bg-[#f4f7fa]"><Image src={node.image} alt="" fill sizes="93px" className="object-contain p-1.5"/></span>
           <span className="mt-1.5 block text-[10px] font-extrabold text-[#102d4d]">{node.label}</span>
-          <span className="mt-1 block text-[8px] leading-3 text-muted">{node.detail}</span>
+          {schematicCardDetail(node, draft, design) ? <span className="mt-1 block text-[8px] leading-3 text-muted">{schematicCardDetail(node, draft, design)}</span> : null}
           <span className={`mt-1.5 inline-flex rounded-full px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-[.08em] ${node.reviewed ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#fff1cc] text-[#805d00]"}`}>{node.reviewed ? "✓ Specification accepted" : "Proposed · review"}</span>
         </span>
       </button>)}
@@ -1723,15 +1866,101 @@ function proposalDraftForCurrentDesign(design: DesignCalculatorState, gridConnec
     : exactLegacyStrings ? Math.round(n(design.pvStrings))
       : Math.max(1, design.pvArrayPlan?.arrays.length ?? 0);
   const actualSolarSources = nodes.filter((node) => node.id.startsWith("solar-pv-")).length || (nodes.some((node) => node.id === "solar") ? 1 : 0);
+  const expectedInverterUnits = design.inverterArrangement === "microinverters" ? 1 : Math.max(1, design.inverterPlan?.unitRatingsKw.length ?? 1);
+  const actualInverterUnits = nodes.filter((node) => inverterUnitIndex(node.id) !== undefined).length || (nodes.some((node) => node.id === "inverter" || node.id === "pv-inverter") ? 1 : 0);
   const structureChanged =
     draft.architecture !== design.architecture
     || n(draft.panelCount) !== n(design.panelCount)
     || n(draft.panelWatts) !== n(design.panelWatts)
     || (!design.pvArrayPlan && (n(draft.pvStrings) !== n(design.pvStrings) || n(draft.panelsPerString) !== n(design.panelsPerString)))
     || actualSolarSources !== expectedSolarSources
+    || actualInverterUnits !== expectedInverterUnits
     || nodes.some((node) => node.id === "generator") !== Boolean(design.generatorIncluded)
     || nodes.some((node) => node.id === "grid-supply") !== gridConnected;
   return structureChanged ? createProposedAsBuiltDraft(design, gridConnected) : draft;
+}
+
+function expandSelectedInverterUnits(nodes: ProposedNode[], connections: NonNullable<ProposedDraft["connections"]>, design: DesignCalculatorState) {
+  const ratings = design.inverterPlan?.unitRatingsKw ?? [];
+  if (ratings.length <= 1 || design.inverterArrangement === "microinverters") return { nodes, connections };
+  const primaryId = nodes.some((node) => node.id === "inverter") ? "inverter" : nodes.some((node) => node.id === "pv-inverter") ? "pv-inverter" : undefined;
+  if (!primaryId) return { nodes, connections };
+  const primary = nodes.find((node) => node.id === primaryId);
+  if (!primary) return { nodes, connections };
+
+  const incoming = connections.filter((connection) => connection.to === primaryId);
+  const outgoing = connections.filter((connection) => connection.from === primaryId);
+  const acOutput = outgoing.find((connection) => connection.kind === "ac");
+  const acSafetyId = acOutput?.to;
+  const otherAcSafetyInputs = acSafetyId ? connections.filter((connection) => connection.to === acSafetyId && connection.from !== primaryId) : [];
+  const acSafetyOutputs = acSafetyId ? connections.filter((connection) => connection.from === acSafetyId) : [];
+  const removeSharedAcSafety = Boolean(acSafetyId && otherAcSafetyInputs.length === 0 && acSafetyOutputs.length > 0);
+  const acTarget = removeSharedAcSafety ? acSafetyOutputs[0].to : acSafetyId;
+  if (!acTarget) return { nodes, connections };
+
+  const removedNodeIds = new Set([primaryId, ...(removeSharedAcSafety && acSafetyId ? [acSafetyId] : [])]);
+  const nextNodes = nodes.filter((node) => !removedNodeIds.has(node.id));
+  const nextConnections = connections.filter((connection) =>
+    !removedNodeIds.has(connection.from)
+    && !removedNodeIds.has(connection.to)
+    && connection.from !== primaryId
+    && connection.to !== primaryId,
+  );
+  const solarInputs = incoming.filter((connection) => connection.kind === "solar-dc");
+  const batteryInputs = incoming.filter((connection) => connection.kind === "battery-dc");
+  const otherInputs = incoming.filter((connection) => connection.kind !== "solar-dc" && connection.kind !== "battery-dc");
+  const otherOutputs = outgoing.filter((connection) => connection !== acOutput);
+
+  ratings.forEach((rating, index) => {
+    const unitNumber = index + 1;
+    const unitId = `${primaryId}-${unitNumber}`;
+    const acProtectionId = `${primaryId}-ac-protection-${unitNumber}`;
+    const y = ratings.length === 2 ? 60 + index * 300 : 20 + index * 190;
+    nextNodes.push(
+      {
+        ...primary,
+        id: unitId,
+        label: `Inverter ${unitNumber}`,
+        detail: `${rating} kW continuous planning unit ${unitNumber} of ${ratings.length}; exact model, phase and parallel-operation compatibility to confirm`,
+        x: primary.x,
+        y,
+      },
+      {
+        id: acProtectionId,
+        label: `Inverter ${unitNumber} AC protection`,
+        detail: `Dedicated output isolation, protection and cable for inverter ${unitNumber}`,
+        image: "/schematic-components/ac-circuit-breaker-mcb.jpg",
+        x: primary.x + 170,
+        y,
+      },
+    );
+    nextConnections.push(
+      { from: unitId, to: acProtectionId, label: `Inverter ${unitNumber} AC output cable`, kind: "ac" },
+      { from: acProtectionId, to: acTarget, label: `Inverter ${unitNumber} protected AC feed`, kind: "ac" },
+    );
+    for (const connection of solarInputs.filter((_, solarIndex) => solarIndex % ratings.length === index)) {
+      nextConnections.push({ ...connection, to: unitId, label: `${connection.label}; candidate allocation to inverter ${unitNumber}` });
+    }
+    for (const connection of batteryInputs) {
+      const protectionId = `${primaryId}-battery-protection-${unitNumber}`;
+      if (!nextNodes.some((node) => node.id === protectionId)) nextNodes.push({
+        id: protectionId,
+        label: `Inverter ${unitNumber} battery protection`,
+        detail: `Dedicated battery fuse, isolation and cable for inverter ${unitNumber}`,
+        image: "/schematic-components/dc-fuse.jpg",
+        x: primary.x - 170,
+        y,
+      });
+      nextConnections.push(
+        { ...connection, to: protectionId, label: `Battery feed to inverter ${unitNumber} branch` },
+        { from: protectionId, to: unitId, label: `Protected battery cable to inverter ${unitNumber}`, kind: "battery-dc" },
+      );
+    }
+    for (const connection of otherInputs) nextConnections.push({ ...connection, to: unitId, label: `${connection.label}; inverter ${unitNumber} input` });
+    for (const connection of otherOutputs) nextConnections.push({ ...connection, from: unitId, label: `${connection.label}; inverter ${unitNumber}` });
+  });
+
+  return { nodes: nextNodes, connections: nextConnections };
 }
 
 export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridConnected = false): NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]> {
@@ -1779,7 +2008,7 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
     ? plannedArrays.map((array, index) => ({
       id: `solar-pv-${index + 1}`,
       label: array.name,
-      detail: `${array.allocatedPanelCount ? `${array.allocatedPanelCount} panels; ` : array.capacity ? `space for about ${array.capacity} panels; ` : "panel allocation pending; "}series/parallel string and MPPT allocation pending equipment selection`,
+      detail: `${array.allocatedPanelCount ? `${array.allocatedPanelCount} panels; ` : "panel quantity to confirm; "}series/parallel string and MPPT allocation pending equipment selection`,
       image: "/schematic-components/solar-panel-pv-module.jpg",
       x: 35,
       y: 20 + index * 125,
@@ -1921,12 +2150,13 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
     for (let i = connections.length - 1; i >= 0; i--) if (excluded.has(connections[i].from) || excluded.has(connections[i].to)) connections.splice(i, 1);
     for (let i = flow.length - 1; i >= 0; i--) if (/solar panel|solar charge/i.test(flow[i])) flow.splice(i, 1);
   }
+  const expanded = expandSelectedInverterUnits(nodes, connections, design);
   return {
     createdAt: new Date().toISOString(),
     architecture: design.architecture,
     flow,
-    nodes,
-    connections: connections.map((connection) => preliminaryConnectionValues(connection, design)),
+    nodes: tidySchematicNodes(expanded.nodes),
+    connections: expanded.connections.map((connection) => preliminaryConnectionValues(connection, design)),
     panelCount: design.panelCount,
     panelWatts: design.panelWatts,
     pvStrings: design.pvStrings,

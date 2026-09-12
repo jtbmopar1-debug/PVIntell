@@ -7,7 +7,7 @@ import { deterministicProposalActions } from "./proposal-action";
 import { siteDiscoveryActions } from "@/discovery/site-actions";
 import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { PUT } from "@/app/api/design-calculator/route";
-import { createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, ensureSupplementaryMicroinverterRouting, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, repairCustomEquipmentDraft, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
+import { createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, ensureSupplementaryMicroinverterRouting, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, repairCustomEquipmentDraft, schematicCanvasSize, schematicCardDetail, tidySchematicNodes, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
 import type { DesignCalculatorState, Project } from "@/domain/models";
 
 const auth = vi.hoisted(() => ({ client: undefined as unknown }));
@@ -353,6 +353,12 @@ describe("discovery → stored proposal → calculator save", () => {
       expect(nodeIds.has(connection.from)).toBe(true);
       expect(nodeIds.has(connection.to)).toBe(true);
     }
+    const mainRoofNode = draft.nodes?.find((node) => node.label === "Main roof");
+    expect(mainRoofNode).toBeDefined();
+    const formatted = planningNodeDetail(mainRoofNode as NonNullable<typeof mainRoofNode>, design);
+    expect(formatted.detail).toContain("series/parallel string, MPPT input and combiner arrangement pending");
+    expect(formatted.detail).not.toContain("one independent PV string");
+    expect(formatted.detail).not.toContain("? x 460 W");
   });
 
   it("shows the multi-unit inverter plan instead of one oversized inverter", () => {
@@ -370,6 +376,45 @@ describe("discovery → stored proposal → calculator save", () => {
     const html = renderToStaticMarkup(createElement(ProposalScopeOverview, { project, design }));
     expect(html).toContain("2 x 8 kW inverter units");
     expect(html).not.toContain("a 14 kW inverter");
+    const formatted = planningNodeDetail({ id: "inverter", label: "Inverter arrangement to assess", detail: "14 kW continuous rating proposed", image: "/inverter.jpg", x: 0, y: 0 }, design);
+    expect(formatted).toMatchObject({
+      label: "2 x 8 kW inverter arrangement",
+      detail: expect.stringContaining("16 kW installed AC capacity selected for the 14 kW calculated requirement across 2 inverter units"),
+    });
+    expect(formatted.detail).not.toContain("proposal options");
+
+    const draft = createProposedAsBuiltDraft({ ...design, architecture: "combined_hybrid_inverter", batteryVoltage: 51.2 }, true);
+    expect(draft.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "inverter-1", label: "Inverter 1" }),
+      expect.objectContaining({ id: "inverter-2", label: "Inverter 2" }),
+      expect.objectContaining({ id: "inverter-ac-protection-1" }),
+      expect.objectContaining({ id: "inverter-ac-protection-2" }),
+      expect.objectContaining({ id: "inverter-battery-protection-1" }),
+      expect.objectContaining({ id: "inverter-battery-protection-2" }),
+    ]));
+    expect(draft.nodes?.some((node) => node.id === "inverter")).toBe(false);
+    expect(draft.connections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: "inverter-1", to: "inverter-ac-protection-1" }),
+      expect.objectContaining({ from: "inverter-2", to: "inverter-ac-protection-2" }),
+      expect.objectContaining({ from: "inverter-battery-protection-1", to: "inverter-1" }),
+      expect.objectContaining({ from: "inverter-battery-protection-2", to: "inverter-2" }),
+    ]));
+    const nodeIds = new Set(draft.nodes?.map((node) => node.id));
+    expect(draft.connections?.every((connection) => nodeIds.has(connection.from) && nodeIds.has(connection.to))).toBe(true);
+    const card = (id: string) => schematicCardDetail(draft.nodes?.find((node) => node.id === id) as NonNullable<NonNullable<typeof draft.nodes>[number]>, draft, { ...design, architecture: "combined_hybrid_inverter", batteryVoltage: 51.2, connectionType: "ac_single" });
+    expect(card("inverter-1")).toBe("8 kW");
+    expect(card("inverter-ac-protection-1")).toBe("44 A · AC");
+    expect(card("inverter-battery-protection-1")).toBe("196 A · DC");
+    expect(card("battery")).toBe("51.2 V · TBC Ah");
+  });
+
+  it("uses the tidy grid by default and grows the canvas around every row", () => {
+    const nodes = Array.from({ length: 13 }, (_, index) => ({ id: `node-${index}`, label: `Node ${index}`, detail: "", image: "/item.jpg", x: 0, y: 0 }));
+    const tidy = tidySchematicNodes(nodes);
+    const size = schematicCanvasSize(tidy);
+    expect(tidy[12]).toMatchObject({ x: 35, y: 600 });
+    expect(size.height).toBeGreaterThanOrEqual(tidy[12].y + 128 + 80);
+    expect(size.width).toBeGreaterThanOrEqual(1120);
   });
 
   it("does not repeatedly prepend the inverter rating while reconciling a draft", () => {

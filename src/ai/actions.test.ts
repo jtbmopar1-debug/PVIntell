@@ -165,6 +165,26 @@ describe("preliminary proposal sizing boundary", () => {
     expect(reconcileStoredProposal(current, "hybrid", { location: "Auckland", timezone: "Pacific/Auckland" })).toBe(false);
   });
 
+  it("reconciles a proposal already stamped by the incomplete version 2 repair", () => {
+    const versionThree = structuredClone(settings) as Record<string, unknown>;
+    versionThree.designCalculator = {
+      updatedBy: "user",
+      proposalEngineVersion: 3,
+      panelCount: 35,
+      panelWatts: 460,
+      inverterKw: 15,
+      proposedAsBuiltDraft: { flow: ["stale-v2-draft"] },
+    };
+
+    expect(reconcileStoredProposal(versionThree, "hybrid", { location: "Auckland, New Zealand", timezone: "Pacific/Auckland" })).toBe(true);
+    expect(versionThree.designCalculator).toMatchObject({
+      proposalEngineVersion: PROPOSAL_ENGINE_VERSION,
+      inverterPlan: { unitRatingsKw: [8, 8] },
+      pvArrayPlan: { status: "surface_allocation_required" },
+    });
+    expect(versionThree.designCalculator).not.toHaveProperty("proposedAsBuiltDraft");
+  });
+
   it("versions but preserves a stale user-adjusted topology", () => {
     const adjusted = structuredClone(settings) as Record<string, unknown>;
     adjusted.designCalculator = { updatedBy: "user", panelCount: 16, panelWatts: 460, inverterKw: 14, pvStrings: 2, panelsPerString: 8 };

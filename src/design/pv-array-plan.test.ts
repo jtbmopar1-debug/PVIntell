@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildPvArrayPlan } from "./pv-array-plan";
 
 describe("PV array proposal hierarchy", () => {
-  it("keeps multiple mounting surfaces as separate arrays pending allocation", () => {
+  it("allocates the exact proposed panel count across multiple mounting surfaces", () => {
     const plan = buildPvArrayPlan({
       panelCount: 35,
       surfaces: [
@@ -10,8 +10,10 @@ describe("PV array proposal hierarchy", () => {
         { id: "west-roof", name: "Panel area 2", capacity: 22, direction: "west" },
       ],
     });
-    expect(plan.status).toBe("surface_allocation_required");
+    expect(plan.status).toBe("topology_unresolved");
     expect(plan.arrays).toHaveLength(2);
+    expect(plan.arrays.map((array) => array.allocatedPanelCount)).toEqual([18, 17]);
+    expect(plan.arrays.reduce((total, array) => total + (array.allocatedPanelCount ?? 0), 0)).toBe(35);
     expect(plan.arrays.every((array) => array.topology.kind === "series_parallel")).toBe(true);
     expect(plan.arrays.every((array) => array.topology.strings.length === 0)).toBe(true);
     expect(plan.arrays.every((array) => array.topology.combinerRequirement === "pending")).toBe(true);

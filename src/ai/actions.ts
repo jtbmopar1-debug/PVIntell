@@ -9,7 +9,10 @@ import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
 import { buildPvArrayPlan } from "@/design/pv-array-plan";
 import type { DesignCalculatorState } from "@/domain/models";
 
-export const PROPOSAL_ENGINE_VERSION = 2;
+// Bump whenever persisted proposal semantics or downstream rendering contracts
+// change. Version 3 forces records already stamped by the incomplete v2 repair
+// back through canonical array/inverter reconciliation.
+export const PROPOSAL_ENGINE_VERSION = 4;
 
 const componentType = z.enum([
   "panel",
@@ -310,10 +313,12 @@ export function reconcileStoredProposal(
       }));
       arrayPlan.arrays[0].topology.reason = "The user-recorded series length and string count are preserved; parallel grouping, MPPT allocation and combiner requirement still await the selected inverter limits.";
     }
-    if (hasFlatTopology && !preservableFlatTopology) {
-      delete current.pvStrings;
-      delete current.panelsPerString;
-      delete current.stringDesign;
+    if (!preservableFlatTopology) {
+      if (hasFlatTopology) {
+        delete current.pvStrings;
+        delete current.panelsPerString;
+        delete current.stringDesign;
+      }
       delete current.proposedAsBuiltDraft;
       delete current.proposedChecklist;
     }
