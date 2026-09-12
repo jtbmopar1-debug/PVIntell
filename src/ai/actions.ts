@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
-import { defaultProposalPanel, defaultProposalPanelStringLayout, defaultProposalPanelWarnings, proposalPanelProfile } from "@/design/candidate-panel";
+import { defaultProposalPanel, defaultProposalPanelWarnings, proposalPanelProfile } from "@/design/candidate-panel";
 import { deriveProposalSizing, solarFirstPowerAlternative, supplementaryArrayPlan, type ProposalSizingInput } from "@/design/proposal-sizing";
 import { recommendedPanelOrientation } from "@/design/panel-orientation";
 import { generatorFromDiscovery, proposalIncludesSolar } from "@/design/proposal-inputs";
@@ -8,6 +8,8 @@ import { assessPanelSurfaces } from "@/design/panel-surfaces";
 import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
 import { buildPvArrayPlan } from "@/design/pv-array-plan";
 import type { DesignCalculatorState } from "@/domain/models";
+
+export const PROPOSAL_ENGINE_VERSION = 2;
 
 const componentType = z.enum([
   "panel",
@@ -251,6 +253,121 @@ export function refreshProposalAfterSizingInput(settings: Record<string, unknown
     if (refreshed[key] === undefined) delete refreshed[key];
   }
   settings.designCalculator = refreshed;
+}
+
+/** Upgrade an existing Wattson proposal through the canonical engine. This is
+ * called at the server loading boundary so old persisted proposals receive the
+ * same rules as newly generated proposals without schematic-side repair code. */
+export function reconcileStoredProposal(
+  settings: Record<string, unknown>,
+  mode: string,
+  site: { location?: string; timezone?: string },
+) {
+  if (!settings.designCalculator || typeof settings.designCalculator !== "object") return false;
+  const current = settings.designCalculator as Record<string, unknown>;
+  if (Number(current.proposalEngineVersion) >= PROPOSAL_ENGINE_VERSION) return false;
+  if (current.updatedBy === "user") {
+    const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
+      ? settings.designDiscovery as Record<string, { value?: unknown }>
+      : {};
+    const recordedPhase = String(discovery.ac_phase_arrangement?.value ?? "").toLowerCase();
+    const connectionType = /three|3[ -]?phase/.test(recordedPhase) ? "ac_three" as const
+      : /single|split/.test(recordedPhase) ? "ac_single" as const
+      : current.connectionType as DesignCalculatorState["connectionType"];
+    current.connectionType = connectionType;
+    current.inverterPlan = inverterArrangementAdvice({
+      requiredKw: Number(current.inverterKw) || undefined,
+      siteLocation: site.location,
+      timezone: site.timezone,
+      connectionType,
+    });
+    const surfaceAssessment = assessPanelSurfaces(
+      discovery,
+      current as DesignCalculatorState,
+      (settings.solarResource as { latitude?: number } | undefined)?.latitude,
+    );
+    if (proposalIncludesSolar(discovery)) current.pvArrayPlan = buildPvArrayPlan({
+        panelCount: Number(current.panelCount) || undefined,
+        surfaces: surfaceAssessment.faces,
+        existingPanelGroup: current.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
+      });
+    else delete current.pvArrayPlan;
+    const panelCount = Number(current.panelCount);
+    const pvStrings = Number(current.pvStrings);
+    const panelsPerString = Number(current.panelsPerString);
+    const hasFlatTopology = Number.isFinite(pvStrings) || Number.isFinite(panelsPerString);
+    const validFlatTopology = Number.isInteger(panelCount) && panelCount > 0
+      && Number.isInteger(pvStrings) && pvStrings > 0
+      && Number.isInteger(panelsPerString) && panelsPerString > 0
+      && pvStrings * panelsPerString === panelCount;
+    const arrayPlan = current.pvArrayPlan as DesignCalculatorState["pvArrayPlan"];
+    const preservableFlatTopology = validFlatTopology && arrayPlan?.arrays.length === 1;
+    if (preservableFlatTopology && arrayPlan) {
+      arrayPlan.arrays[0].allocatedPanelCount = panelCount;
+      arrayPlan.arrays[0].topology.strings = Array.from({ length: pvStrings }, (_, index) => ({
+        id: `string-${index + 1}`,
+        panelsInSeries: panelsPerString,
+      }));
+      arrayPlan.arrays[0].topology.reason = "The user-recorded series length and string count are preserved; parallel grouping, MPPT allocation and combiner requirement still await the selected inverter limits.";
+    }
+    if (hasFlatTopology && !preservableFlatTopology) {
+      delete current.pvStrings;
+      delete current.panelsPerString;
+      delete current.stringDesign;
+      delete current.proposedAsBuiltDraft;
+      delete current.proposedChecklist;
+    }
+    current.proposalEngineVersion = PROPOSAL_ENGINE_VERSION;
+    current.sizingWarnings = [...new Set([
+      ...(Array.isArray(current.sizingWarnings) ? current.sizingWarnings.map(String) : []),
+      preservableFlatTopology
+        ? "The proposal engine changed after this user-adjusted design. Its internally consistent string topology has been preserved but still requires equipment and local-rule review."
+        : hasFlatTopology
+          ? "The proposal engine changed after this user-adjusted design. Its inconsistent or surface-ambiguous legacy string topology was removed; array allocation and selected inverter MPPT/input limits must establish the replacement."
+          : "The proposal engine changed after this user-adjusted design. No string topology was inferred; array allocation and selected inverter MPPT/input limits must establish it.",
+      ...((current.inverterPlan as { message?: string } | undefined)?.message ? [(current.inverterPlan as { message: string }).message] : []),
+    ])];
+    settings.designCalculator = current;
+    return true;
+  }
+
+  refreshProposalAfterSizingInput(settings, mode);
+  const calculator = settings.designCalculator as Record<string, unknown>;
+  const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
+    ? settings.designDiscovery as Record<string, { value?: unknown }>
+    : {};
+  const recordedPhase = String(discovery.ac_phase_arrangement?.value ?? "").toLowerCase();
+  const connectionType = /three|3[ -]?phase/.test(recordedPhase) ? "ac_three" as const
+    : /single|split/.test(recordedPhase) ? "ac_single" as const
+    : undefined;
+  calculator.connectionType = connectionType;
+  calculator.inverterPlan = inverterArrangementAdvice({
+    requiredKw: Number(calculator.inverterKw) || undefined,
+    siteLocation: site.location,
+    timezone: site.timezone,
+    connectionType,
+  });
+  const surfaceAssessment = assessPanelSurfaces(
+    discovery,
+    calculator as DesignCalculatorState,
+    (settings.solarResource as { latitude?: number } | undefined)?.latitude,
+  );
+  if (proposalIncludesSolar(discovery)) calculator.pvArrayPlan = buildPvArrayPlan({
+      panelCount: Number(calculator.panelCount) || undefined,
+      surfaces: surfaceAssessment.faces,
+      existingPanelGroup: calculator.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
+    });
+  else delete calculator.pvArrayPlan;
+  calculator.sizingWarnings = [...new Set([
+    ...(Array.isArray(calculator.sizingWarnings) ? calculator.sizingWarnings.map(String) : []),
+    "PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.",
+    ...((calculator.inverterPlan as { message?: string } | undefined)?.message ? [(calculator.inverterPlan as { message: string }).message] : []),
+  ])];
+  delete calculator.proposedAsBuiltDraft;
+  delete calculator.proposedChecklist;
+  calculator.proposalEngineVersion = PROPOSAL_ENGINE_VERSION;
+  settings.designCalculator = calculator;
+  return true;
 }
 
 const proposalSizingDiscoveryKeys = new Set([
@@ -1001,10 +1118,6 @@ export async function applyWattsonActions(
       let proposedPvKw = solarFirstUpgrade?.targetPvKw ?? sizing.pvKw;
       const proposedInverterKw = solarFirstUpgrade?.inverterKw ?? sizing.inverterKw;
       const retainUserModule = previous.updatedBy === "user" && Number(previous.panelWatts) === representativePanelWatts;
-      // A panel count alone cannot define strings. Preliminary proposals do
-      // not assign a string topology until mounting-surface allocation and a
-      // selected inverter's MPPT voltage/current/input limits are recorded.
-      let candidateStringLayout: ReturnType<typeof defaultProposalPanelStringLayout> | undefined;
       const recordedChemistry = String(discovery.battery_chemistry?.value ?? "").toLowerCase();
       const isLeadAcid = /lead|agm|gel/.test(recordedChemistry);
       const batteryChemistry = recordedChemistry === "lifepo4"
@@ -1068,7 +1181,6 @@ export async function applyWattsonActions(
         proposedPvKw = supplementary?.totalPlannedPvKw ?? Number((existingPanelsUsed * representativePanelWatts / 1000).toFixed(2));
         // Electrically different modules are represented as independent arrays;
         // final series counts wait for both module and MPPT datasheets.
-        candidateStringLayout = undefined;
       }
       const existingPanelsSurplus = existingPanelAvailable && existingPanelsUsed !== undefined ? existingPanelAvailable - existingPanelsUsed : undefined;
       const existingPanelWarnings = existingPanelAvailable ? [
@@ -1113,9 +1225,6 @@ export async function applyWattsonActions(
         energyTargetPanelCount: sizing.sizing.energyTargetPanelCount,
         planningPanelCapacity: sizing.sizing.planningPanelCapacity,
         fitLimited: sizing.sizing.fitLimited,
-        pvStrings: supplementaryCapacityRequiredKw ? 2 : candidateStringLayout?.strings,
-        panelsPerString: candidateStringLayout?.panelsPerString,
-        stringDesign: candidateStringLayout,
         panelManufacturer: candidate?.manufacturer ?? (retainUserModule ? previous.panelManufacturer : undefined),
         panelModel: candidate?.model ?? (retainUserModule ? previous.panelModel : undefined),
         panelSupplier: candidate?.supplier ?? (retainUserModule ? previous.panelSupplier : undefined),
@@ -1176,6 +1285,7 @@ export async function applyWattsonActions(
         sizingWarnings: [...sizing.sizing.warnings, "PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.", ...(inverterPlan ? [inverterPlan.message] : []), ...solarFirstWarnings, ...generatorSizingWarnings, ...generatorDetails.warnings, ...existingPanelWarnings, ...(candidate ? defaultProposalPanelWarnings : [])],
         updatedAt: new Date().toISOString(),
         updatedBy: "wattson",
+        proposalEngineVersion: PROPOSAL_ENGINE_VERSION,
       };
       // A rebuild is a new proposal even if its four headline sizes match.
       // Generator route, panel grouping, orientation and architecture may change.
@@ -1186,12 +1296,19 @@ export async function applyWattsonActions(
         nextDesign.targetPvKw = 0;
         for (const key of ["existingPanelGroup", "pvStrings", "panelsPerString", "stringDesign", "panelLengthMm", "panelWidthMm", "panelWeightKg", "panelVmpV", "panelVocV", "panelImpA", "panelIscA"]) delete nextDesign[key];
       }
+      const includesSolar = proposalIncludesSolar(discovery);
       const finalSurfaceAssessment = assessPanelSurfaces(discovery, nextDesign as DesignCalculatorState, (settings.solarResource as { latitude?: number } | undefined)?.latitude);
-      nextDesign.pvArrayPlan = buildPvArrayPlan({
-        panelCount: Number(nextDesign.panelCount) || undefined,
-        surfaces: finalSurfaceAssessment.faces,
-        existingPanelGroup: nextDesign.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
-      });
+      if (includesSolar) nextDesign.pvArrayPlan = buildPvArrayPlan({
+          panelCount: Number(nextDesign.panelCount) || undefined,
+          surfaces: finalSurfaceAssessment.faces,
+          existingPanelGroup: nextDesign.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
+        });
+      else delete nextDesign.pvArrayPlan;
+      // These legacy flat fields cannot represent multiple arrays or MPPT
+      // parallel groups. Only an explicit user topology may persist them.
+      delete nextDesign.pvStrings;
+      delete nextDesign.panelsPerString;
+      delete nextDesign.stringDesign;
       nextDesign.sizingWarnings = [...new Set([...(nextDesign.sizingWarnings as string[]), ...finalSurfaceAssessment.warnings])];
       if (finalSurfaceAssessment.status === "exceeds_space") {
         nextDesign.fitLimited = true;
@@ -1239,6 +1356,25 @@ export async function applyWattsonActions(
       calculator.sizingInputs = dependentSizing.sizingInputs;
       calculator.sizingAssumptions = dependentSizing.sizingAssumptions;
       calculator.inverterKw = dependentSizing.inverterKw;
+      const priorInverterPlan = calculator.inverterPlan as { jurisdiction?: string } | undefined;
+      calculator.inverterPlan = inverterArrangementAdvice({
+        requiredKw: dependentSizing.inverterKw,
+        siteLocation: priorInverterPlan?.jurisdiction === "nz" ? "New Zealand" : undefined,
+        connectionType: calculator.connectionType as DesignCalculatorState["connectionType"],
+      });
+      const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
+        ? settings.designDiscovery as Record<string, { value?: unknown }>
+        : {};
+      const surfaceAssessment = assessPanelSurfaces(
+        discovery,
+        calculator as DesignCalculatorState,
+        (settings.solarResource as { latitude?: number } | undefined)?.latitude,
+      );
+      calculator.pvArrayPlan = buildPvArrayPlan({
+        panelCount,
+        surfaces: surfaceAssessment.faces,
+        existingPanelGroup: calculator.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
+      });
       if (dependentSizing.batteryUsableKwh) {
         const batteryVoltage = Number(calculator.batteryVoltage) || 51.2;
         const usableBatteryPercent = Number(calculator.usableBatteryPercent) || 80;
@@ -1250,10 +1386,12 @@ export async function applyWattsonActions(
       calculator.sizingMethod = "user-adjusted";
       calculator.updatedBy = "user";
       calculator.updatedAt = new Date().toISOString();
+      calculator.proposalEngineVersion = PROPOSAL_ENGINE_VERSION;
       calculator.sizingWarnings = [
         ...dependentSizing.sizingWarnings
           .filter((warning) => !warning.startsWith("Panel count adjusted to ")),
         `Panel count adjusted to ${panelCount} at the user's request; verify the final string layout against the selected inverter MPPT limits and cold-weather module voltage.`,
+        ...((calculator.inverterPlan as { message?: string } | undefined)?.message ? [(calculator.inverterPlan as { message: string }).message] : []),
       ];
       delete calculator.proposedAsBuiltDraft;
       delete calculator.proposedChecklist;

@@ -106,6 +106,9 @@ describe("discovery → stored proposal → calculator save", () => {
     const { design } = await build(workshop);
     expect(design).toMatchObject({ panelCount: 8, panelWatts: 580, targetPvKw: 7.2, inverterKw: 6, generatorContinuousKw: 5, generatorSurgeKw: 5.4, azimuthDegrees: 0, tiltDegrees: 36.9 });
     expect(design.existingPanelGroup).toMatchObject({ proposedUseCount: 8, supplementaryTargetPvKw: 2.56 });
+    expect(design.pvArrayPlan).toMatchObject({ status: "topology_unresolved", arrays: [{ id: "existing-array" }, { id: "supplementary-array" }] });
+    expect(design).not.toHaveProperty("pvStrings");
+    expect(design).not.toHaveProperty("panelsPerString");
   });
 
   it.each([["bifacial", 450], ["flexible_lightweight", 400], ["standard", 460]])("uses the chosen %s panel profile consistently", async (type, watts) => {
@@ -122,6 +125,20 @@ describe("discovery → stored proposal → calculator save", () => {
     const response = await PUT(new Request("http://localhost/api/design-calculator", { method: "PUT", body: JSON.stringify({ projectId: "e3b1409d-9aa1-4ce5-858e-bf3e2c8797ea", design: { ...built.design, proposedAsBuiltDraft } }) }));
     expect(response.status).toBe(200);
     expect((built.project.settings.designCalculator as { sizingInputs: unknown }).sizingInputs).toMatchObject({ scheduledLoadEnergyKwh: 1.8 });
+  });
+
+  it("rejects a legacy string count that cannot account for the panel total", async () => {
+    const built = await build(workshop);
+    auth.client = built.client;
+    const response = await PUT(new Request("http://localhost/api/design-calculator", {
+      method: "PUT",
+      body: JSON.stringify({
+        projectId: "e3b1409d-9aa1-4ce5-858e-bf3e2c8797ea",
+        design: { ...built.design, panelCount: 16, pvStrings: 3, panelsPerString: 8 },
+      }),
+    }));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: "PV string topology must account for the exact panel total." });
   });
 
   it("persists selected pool equipment and sizes a proposal from its timer schedule", async () => {
@@ -175,6 +192,7 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(design.panelCount ?? 0).toBe(0);
     expect(design.targetPvKw ?? 0).toBe(0);
     expect(design.existingPanelGroup).toBeUndefined();
+    expect(design.pvArrayPlan).toBeUndefined();
     expect(createProposedAsBuiltDraft(design).nodes?.some((node) => node.id.startsWith("solar"))).toBe(false);
   });
 
@@ -192,6 +210,20 @@ describe("discovery → stored proposal → calculator save", () => {
     const design = built.project.settings.designCalculator as Record<string, unknown>;
     expect(design.sizingInputs).toMatchObject({ dailyEnergyKwh: 20, startupPeakKw: 5.4 });
     expect(Number(design.targetPvKw)).toBeGreaterThan(7.2);
+  });
+
+  it("reruns the canonical array and inverter plans after a Wattson quantity edit", async () => {
+    const built = await build(workshop);
+    await applyWattsonActions(built.client, "audit-project", [{ name: "update_proposed_design", arguments: { panel_count: 7 } }]);
+    const design = built.project.settings.designCalculator as Record<string, unknown>;
+    expect(design).toMatchObject({
+      panelCount: 7,
+      sizingMethod: "user-adjusted",
+      pvArrayPlan: { status: "topology_unresolved" },
+      inverterPlan: { jurisdiction: "local_review" },
+    });
+    expect(design).not.toHaveProperty("pvStrings");
+    expect(design).not.toHaveProperty("panelsPerString");
   });
 
   it("invalidates string topology when proposal sizing changes", () => {
@@ -236,6 +268,47 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(layout).toMatchObject({ strings: 1, panelsPerString: 10, stringVmpV: 330, stringVocV: 395 });
   });
 
+  it("preserves a mathematically consistent legacy topology instead of refactoring it", () => {
+    const layout = recoverRecordedStringLayout({
+      panelCount: 16,
+      pvStrings: 2,
+      panelsPerString: 8,
+      panelVmpV: 33,
+      panelVocV: 39.5,
+      panelImpA: 13.64,
+      panelIscA: 14.4,
+      panelVocTemperatureCoefficientPercentPerC: -0.25,
+    }, 16);
+
+    expect(layout).toMatchObject({ strings: 2, panelsPerString: 8, stringVmpV: 264, stringVocV: 316 });
+  });
+
+  it("does not invent strings when the engine has an unresolved array plan", () => {
+    const layout = recoverRecordedStringLayout({
+      panelCount: 35,
+      panelVmpV: 34.5,
+      panelVocV: 41.8,
+      panelImpA: 13.34,
+      panelIscA: 14.12,
+      panelVocTemperatureCoefficientPercentPerC: -0.25,
+      pvArrayPlan: {
+        status: "surface_allocation_required",
+        arrays: [{
+          id: "array-1",
+          name: "Main roof",
+          topology: {
+            kind: "series_parallel",
+            status: "pending_surface_allocation_and_equipment",
+            strings: [],
+            combinerRequirement: "pending",
+          },
+        }],
+      },
+    }, 35);
+
+    expect(layout).toBeUndefined();
+  });
+
   it("does not invent strings in a preliminary proposal from panel count alone", async () => {
     const built = await build({
       ...workshop,
@@ -248,6 +321,55 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(built.design).not.toHaveProperty("panelsPerString");
     expect(built.design.sizingWarnings).toContain("PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.");
     expect(built.design.pvArrayPlan).toMatchObject({ status: "surface_allocation_required" });
+  });
+
+  it("renders mounting arrays without relabelling them as invented PV strings", () => {
+    const design = {
+      architecture: "combined_hybrid_inverter",
+      panelCount: 35,
+      panelWatts: 460,
+      pvArrayPlan: {
+        status: "surface_allocation_required",
+        arrays: ["Main roof", "Ground mount"].map((name, index) => ({
+          id: `array-${index + 1}`,
+          name,
+          topology: {
+            kind: "series_parallel" as const,
+            status: "pending_surface_allocation_and_equipment" as const,
+            strings: [],
+            combinerRequirement: "pending" as const,
+          },
+        })),
+      },
+    } as DesignCalculatorState;
+    const draft = createProposedAsBuiltDraft(design);
+    expect(draft.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: "Main roof", detail: expect.stringContaining("series/parallel") }),
+      expect.objectContaining({ label: "Ground mount", detail: expect.stringContaining("MPPT allocation pending") }),
+    ]));
+    expect(draft.nodes?.some((node) => /PV\d+.*panels/.test(node.label))).toBe(false);
+    const nodeIds = new Set(draft.nodes?.map((node) => node.id));
+    for (const connection of draft.connections ?? []) {
+      expect(nodeIds.has(connection.from)).toBe(true);
+      expect(nodeIds.has(connection.to)).toBe(true);
+    }
+  });
+
+  it("shows the multi-unit inverter plan instead of one oversized inverter", () => {
+    const design = {
+      inverterKw: 14,
+      inverterPlan: {
+        jurisdiction: "nz",
+        selectionStatus: "candidate_selected",
+        unitRatingsKw: [8, 8],
+        preferredPhase: "three",
+        message: "Local checks required.",
+      },
+    } as DesignCalculatorState;
+    const project = { projectType: "grid-tied", designDiscovery: {} } as unknown as Project;
+    const html = renderToStaticMarkup(createElement(ProposalScopeOverview, { project, design }));
+    expect(html).toContain("2 x 8 kW inverter units");
+    expect(html).not.toContain("a 14 kW inverter");
   });
 
   it("does not repeatedly prepend the inverter rating while reconciling a draft", () => {

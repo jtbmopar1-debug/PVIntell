@@ -19,6 +19,11 @@ describe("inverter arrangement advice", () => {
       .toMatchObject({ jurisdiction: "nz", unitRatingsKw: [8, 8], preferredPhase: "three" });
   });
 
+  it("selects three capped 10 kW units for a 25 kW requirement", () => {
+    expect(inverterArrangementAdvice({ requiredKw: 25, siteLocation: "Unknown", connectionType: "ac_three" }))
+      .toMatchObject({ jurisdiction: "local_review", unitRatingsKw: [10, 10, 10], preferredPhase: "three" });
+  });
+
   it("does not apply New Zealand limits to an unknown market", () => {
     const advice = inverterArrangementAdvice({ requiredKw: 14, siteLocation: "Unknown", connectionType: "ac_single" });
     expect(advice).toMatchObject({ jurisdiction: "local_review", selectionStatus: "candidate_selected_pending_local_approval", unitRatingsKw: [8, 8], preferredPhase: "three" });

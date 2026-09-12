@@ -5,6 +5,7 @@ const finite = z.number().finite().min(0).max(1_000_000);
 const calculatorSchema = z.object({
   projectId: z.uuid(),
   design: z.object({
+    proposalEngineVersion: finite.optional(),
     proposedChecklist: z.record(z.string(), z.boolean()).optional(),
     proposedAsBuiltDraft: z.object({
       createdAt: z.string().datetime(),
@@ -102,6 +103,13 @@ export async function PUT(request: Request) {
   }
   const parsed = calculatorSchema.safeParse(payload);
   if (!parsed.success) return Response.json({ error: "Invalid calculator values." }, { status: 400 });
+  const { panelCount, pvStrings, panelsPerString } = parsed.data.design;
+  const hasLegacyTopology = pvStrings !== undefined || panelsPerString !== undefined;
+  if (hasLegacyTopology && (
+    !Number.isInteger(panelCount) || !Number.isInteger(pvStrings) || !Number.isInteger(panelsPerString)
+    || !panelCount || !pvStrings || !panelsPerString
+    || pvStrings * panelsPerString !== panelCount
+  )) return Response.json({ error: "PV string topology must account for the exact panel total." }, { status: 400 });
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;

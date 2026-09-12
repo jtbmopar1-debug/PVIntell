@@ -9,6 +9,7 @@ import type {
   SiteEquipment,
   SystemSummary,
 } from "@/domain/models";
+import { reconcileStoredProposal } from "@/ai/actions";
 
 const defaultSteps: Omit<InstallationStep, "id">[] = [
   [
@@ -387,6 +388,11 @@ export async function loadWorkspace(
   }
 
   const settings = (row.settings ?? {}) as Record<string, unknown>;
+  const commissioned = ["monitor", "diagnose", "maintain", "explain"].includes(String(row.phase));
+  if (!commissioned && reconcileStoredProposal(settings, String(row.mode), { location: site.location, timezone: site.timezone })) {
+    const reconciled = await supabase.from("projects").update({ settings }).eq("id", row.id).eq("owner_id", row.owner_id).eq("updated_at", row.updated_at);
+    if (reconciled.error) throw reconciled.error;
+  }
   const project: Project = {
     id: row.id,
     siteId: row.site_id,

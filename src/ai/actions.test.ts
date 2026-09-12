@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generatorPlanningTargets, refreshProposalAfterSizingInput, validatePreliminarySizing } from "./actions";
+import { PROPOSAL_ENGINE_VERSION, generatorPlanningTargets, reconcileStoredProposal, refreshProposalAfterSizingInput, validatePreliminarySizing } from "./actions";
 
 const settings = {
   peakSunHours: 4.2,
@@ -137,5 +137,58 @@ describe("preliminary proposal sizing boundary", () => {
     expect(changed.designCalculator).toMatchObject({ updatedBy: "user", panelCount: 16, batteryUsableKwh: 12, sizingMethod: "user-adjusted" });
     expect(changed.designCalculator).not.toHaveProperty("proposedAsBuiltDraft");
     expect((changed.designCalculator as { sizingWarnings: string[] }).sizingWarnings[0]).toMatch(/Discovery changed/);
+  });
+
+  it("automatically upgrades a stale Wattson proposal through the current engine", () => {
+    const stale = structuredClone(settings) as Record<string, unknown>;
+    stale.designCalculator = {
+      updatedBy: "wattson", panelWatts: 440, panelCount: 48, inverterKw: 18.5,
+      pvStrings: 3, panelsPerString: 8, proposedAsBuiltDraft: { flow: ["old", "draft"] },
+    };
+
+    expect(reconcileStoredProposal(stale, "hybrid", { location: "Auckland, New Zealand", timezone: "Pacific/Auckland" })).toBe(true);
+    expect(stale.designCalculator).toMatchObject({
+      proposalEngineVersion: PROPOSAL_ENGINE_VERSION,
+      updatedBy: "wattson",
+      panelCount: 21,
+      inverterPlan: { jurisdiction: "nz", selectionStatus: "candidate_selected", unitRatingsKw: [8] },
+      pvArrayPlan: { status: "surface_allocation_required" },
+    });
+    expect(stale.designCalculator).not.toHaveProperty("pvStrings");
+    expect(stale.designCalculator).not.toHaveProperty("panelsPerString");
+    expect(stale.designCalculator).not.toHaveProperty("proposedAsBuiltDraft");
+  });
+
+  it("does not repeatedly rewrite a current proposal", () => {
+    const current = structuredClone(settings) as Record<string, unknown>;
+    current.designCalculator = { updatedBy: "wattson", proposalEngineVersion: PROPOSAL_ENGINE_VERSION };
+    expect(reconcileStoredProposal(current, "hybrid", { location: "Auckland", timezone: "Pacific/Auckland" })).toBe(false);
+  });
+
+  it("versions but preserves a stale user-adjusted topology", () => {
+    const adjusted = structuredClone(settings) as Record<string, unknown>;
+    adjusted.designCalculator = { updatedBy: "user", panelCount: 16, panelWatts: 460, inverterKw: 14, pvStrings: 2, panelsPerString: 8 };
+    expect(reconcileStoredProposal(adjusted, "hybrid", { location: "Auckland", timezone: "Pacific/Auckland" })).toBe(true);
+    expect(adjusted.designCalculator).toMatchObject({
+      proposalEngineVersion: PROPOSAL_ENGINE_VERSION,
+      panelCount: 16,
+      pvStrings: 2,
+      panelsPerString: 8,
+      inverterPlan: { unitRatingsKw: [8, 8] },
+      pvArrayPlan: { status: "surface_allocation_required", arrays: [{ topology: { strings: [{ panelsInSeries: 8 }, { panelsInSeries: 8 }] } }] },
+    });
+  });
+
+  it("removes an inconsistent user-saved legacy topology", () => {
+    const adjusted = structuredClone(settings) as Record<string, unknown>;
+    adjusted.designCalculator = {
+      updatedBy: "user", panelCount: 16, panelWatts: 460, inverterKw: 14,
+      pvStrings: 3, panelsPerString: 8, proposedAsBuiltDraft: { flow: ["bad"] },
+    };
+    expect(reconcileStoredProposal(adjusted, "hybrid", { location: "Auckland", timezone: "Pacific/Auckland" })).toBe(true);
+    expect(adjusted.designCalculator).not.toHaveProperty("pvStrings");
+    expect(adjusted.designCalculator).not.toHaveProperty("panelsPerString");
+    expect(adjusted.designCalculator).not.toHaveProperty("proposedAsBuiltDraft");
+    expect(adjusted.designCalculator).toMatchObject({ inverterPlan: { unitRatingsKw: [8, 8] } });
   });
 });

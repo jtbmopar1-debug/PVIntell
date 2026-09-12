@@ -134,6 +134,7 @@ export interface OverviewCardOrder {
 }
 
 export interface DesignCalculatorState {
+  proposalEngineVersion?: number;
   /** Planning readiness only; never indicates that an item is installed. */
   proposedChecklist?: Record<string, boolean>;
   /**

@@ -12,6 +12,8 @@ import { deriveProposalSizing, normalizedDailyEnergy, solarFirstPowerAlternative
 import { recommendedPanelOrientation } from "@/design/panel-orientation";
 import { generatorFromDiscovery, proposalIncludesSolar } from "@/design/proposal-inputs";
 import { assessPanelSurfaces } from "@/design/panel-surfaces";
+import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
+import { buildPvArrayPlan } from "@/design/pv-array-plan";
 import { suggestPvDcStringCable } from "@/design/pv-dc-cable-sizing";
 import type { DesignCalculatorState, Project, Site } from "@/domain/models";
 
@@ -106,9 +108,14 @@ function systemScopeSummary(project: Project, design?: DesignCalculatorState) {
     ? `a calculated requirement using ${existingUseCount} of the ${existingGroup.availableCount} available ${panelWatts ? `${panelWatts} W ` : ""}${existingGroup.name} panels${supplementaryTargetPvKw ? ` plus a separate ${supplementaryTargetPvKw} kW minimum additional array${supplementaryCount && supplementaryWatts ? `, provisionally shown as ${supplementaryCount} × ${supplementaryWatts} W modules` : ""}` : ""}`
     : panelCount ? `${panelCount}${panelWatts ? ` × ${panelWatts} W` : ""} solar panels${pvStrings ? ` in ${pvStrings} string${pvStrings === 1 ? "" : "s"}${panelsPerString ? ` of ${panelsPerString} panels` : ""}` : ""}` : "the proposed solar array";
   const inverterArticle = n(config.inverterKw) >= 8 && n(config.inverterKw) < 9 ? "an" : "a";
+  const plannedInverterUnits = config.inverterPlan?.unitRatingsKw ?? [];
+  const inverterUnitText = plannedInverterUnits.length > 1
+    ? `${plannedInverterUnits.length} x ${plannedInverterUnits[0]} kW inverter units (${plannedInverterUnits.reduce((total, rating) => total + rating, 0)} kW installed capacity for the ${config.inverterKw} kW requirement)`
+    : plannedInverterUnits.length === 1 ? `a ${plannedInverterUnits[0]} kW ${architecture}` : undefined;
   const inverterText = mixedMicroinverterRetrofit
     ? `with the existing ${existingUseCount}-panel array retaining its microinverters and the additional array feeding ${batteryInverterName} through a DC-isolated MPPT input`
-    : n(config.inverterKw) ? `feeding ${inverterArticle} ${config.inverterKw} kW ${architecture}` : `feeding a ${architecture || "suitable inverter arrangement"} (continuous rating still to be confirmed)`;
+    : inverterUnitText ? `feeding ${inverterUnitText}`
+      : n(config.inverterKw) ? `feeding ${inverterArticle} ${config.inverterKw} kW ${architecture}` : `feeding a ${architecture || "suitable inverter arrangement"} (continuous rating still to be confirmed)`;
   const batteryText = proposalIncludesBattery(project)
     ? config.batteryUsableKwh ? `${round(config.batteryUsableKwh, 1)} kWh of usable battery storage is proposed.` : "Battery storage is included as a separate planning item."
     : "No battery storage is included in this proposal.";
@@ -191,9 +198,12 @@ export function ProposalScopeOverview({ project, design }: { project: Project; d
   const batteryInverterName = recordedBatteryInverter?.label && recordedBatteryInverter.label !== "Battery power box"
     ? recordedBatteryInverter.label
     : "the separate hybrid inverter";
+  const plannedInverterUnits = design.inverterPlan?.unitRatingsKw ?? [];
   const powerConversionText = mixedMicroinverterRetrofit
     ? `Power conversion follows two paths: the existing ${existingPanelCount}-panel array retains its microinverters, while the separate ${round(supplementary?.targetPvKw ?? 0, 2)} kW minimum additional array feeds ${batteryInverterName} through a DC-isolated MPPT input. The saved ${design.inverterKw ?? "unconfirmed"} kW sizing value is not treated as the confirmed nameplate rating of either inverter path.`
-    : `Power conversion is through ${design.inverterKw ? `${inverterArticle} ${design.inverterKw} kW ` : "a "}${architecture}.`;
+    : plannedInverterUnits.length > 1
+      ? `Power conversion is provisionally arranged as ${plannedInverterUnits.length} x ${plannedInverterUnits[0]} kW inverter units (${plannedInverterUnits.reduce((total, rating) => total + rating, 0)} kW installed capacity for the ${design.inverterKw} kW calculated requirement).`
+      : `Power conversion is through ${design.inverterKw ? `${inverterArticle} ${design.inverterKw} kW ` : "a "}${architecture}.`;
   const solarFirstAlternative = !proposalUsesPublicGrid(project) && !proposalIncludesBattery(project)
     ? solarFirstPowerAlternative({ panelCount, panelWatts: n(design.panelWatts), inverterKw: n(design.inverterKw), startupPeakKw: startupEnvelopeKw })
     : undefined;
@@ -816,6 +826,10 @@ function pvLayoutCountMismatch(design: Pick<DesignCalculatorState, "pvStrings" |
 }
 
 export function recoverRecordedStringLayout(design: DesignCalculatorState, panelCount: number | undefined) {
+  // The proposal engine owns string topology. Once it has emitted the canonical
+  // array hierarchy, the UI must not factor the panel count into invented
+  // strings while the MPPT/input allocation is deliberately unresolved.
+  if (design.pvArrayPlan) return undefined;
   if (!panelCount || design.existingPanelGroup?.supplementaryTargetPvKw) return undefined;
   const vmpV = n(design.panelVmpV);
   const vocV = n(design.panelVocV);
@@ -823,14 +837,36 @@ export function recoverRecordedStringLayout(design: DesignCalculatorState, panel
   const iscA = n(design.panelIscA);
   const coefficient = Number(design.panelVocTemperatureCoefficientPercentPerC);
   if (!vmpV || !vocV || !impA || !iscA || !Number.isFinite(coefficient)) return undefined;
-  return defaultProposalPanelStringLayout(panelCount, {
+  const profile = {
     ...proposalPanelProfile(design.panelType),
     vmpV,
     vocV,
     impA,
     iscA,
     vocTemperatureCoefficientPercentPerC: coefficient,
-  });
+  };
+  const strings = Math.round(n(design.pvStrings));
+  const panelsPerString = Math.round(n(design.panelsPerString));
+  const layout = strings > 0 && panelsPerString > 0 && strings * panelsPerString === panelCount
+    ? { strings, panelsPerString }
+    : defaultProposalPanelStringLayout(panelCount, profile);
+  if (!layout) return undefined;
+  const coldVocPerPanel = vocV * (1 + Math.abs(coefficient) / 100 * 35);
+  return {
+    ...layout,
+    stringVmpV: Number((layout.panelsPerString * vmpV).toFixed(1)),
+    stringVocV: Number((layout.panelsPerString * vocV).toFixed(1)),
+    coldStringVocV: Number((layout.panelsPerString * coldVocPerPanel).toFixed(1)),
+    minimumMpptCurrentA: impA,
+    minimumInputShortCircuitCurrentA: iscA,
+    planningMinimumTemperatureC: -10,
+  };
+}
+
+function pendingPvArrayPlan(project: Project, design: DesignCalculatorState, panelCount: number | undefined) {
+  if (!proposalIncludesSolar(project.designDiscovery ?? {})) return undefined;
+  const surfaces = assessPanelSurfaces(project.designDiscovery ?? {}, { ...design, panelCount }, project.solarResource?.latitude);
+  return buildPvArrayPlan({ panelCount, surfaces: surfaces.faces, existingPanelGroup: design.existingPanelGroup });
 }
 
 function discoveredAcSupply(project: Project) {
@@ -956,18 +992,31 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     }
     if (key === "panelCount") {
       const panelCount = Math.max(0, Math.round(n(value)));
-      const knownProfile = ["monofacial", "bifacial", "flexible"].includes(String(current.panelType));
-      const layout = panelCount > 0 && knownProfile
-        ? defaultProposalPanelStringLayout(panelCount, proposalPanelProfile(current.panelType))
-        : undefined;
       return {
         ...current,
         panelCount: panelCount || undefined,
         targetPvKw: panelCount && current.panelWatts ? Number((panelCount * current.panelWatts / 1000).toFixed(2)) : undefined,
-        pvStrings: layout?.strings,
-        panelsPerString: layout?.panelsPerString,
-        stringDesign: layout,
+        pvArrayPlan: pendingPvArrayPlan(project, current, panelCount || undefined),
+        pvStrings: undefined,
+        panelsPerString: undefined,
+        stringDesign: undefined,
         fitStatus: "unverified",
+      };
+    }
+    if (key === "inverterKw") {
+      const inverterKw = n(value) || undefined;
+      return {
+        ...current,
+        inverterKw,
+        inverterPlan: inverterArrangementAdvice({
+          requiredKw: inverterKw,
+          siteLocation: site.location,
+          timezone: site.timezone,
+          connectionType: current.connectionType,
+        }),
+        pvStrings: undefined,
+        panelsPerString: undefined,
+        stringDesign: undefined,
       };
     }
     const next = { ...current, [key]: value };
@@ -1492,7 +1541,6 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     }
     const panelWatts = n(design.panelWatts, defaultProposalPanel.watts);
     const sizing = deterministicSizing(project, panelWatts, panelCount);
-    const stringDesign = defaultProposalPanelStringLayout(panelCount, proposalPanelProfile(design.panelType));
     const usableBatteryPercent = n(design.usableBatteryPercent, 80);
     const batteryVoltage = n(design.batteryVoltage, 51.2);
     const includePlannedBattery = proposalIncludesBattery(project);
@@ -1509,10 +1557,16 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
       fitLimited: sizing.fitLimited,
       requiredPanelAreaM2: design.panelLengthMm && design.panelWidthMm ? Number((panelCount * design.panelLengthMm * design.panelWidthMm / 1_000_000).toFixed(1)) : undefined,
       fitStatus: sizing.fitLimited ? "does_not_fit" : "unverified",
-      pvStrings: stringDesign?.strings,
-      panelsPerString: stringDesign?.panelsPerString,
-      stringDesign,
+      pvArrayPlan: pendingPvArrayPlan(project, design, panelCount),
+      pvStrings: undefined,
+      panelsPerString: undefined,
+      stringDesign: undefined,
       inverterKw: sizing.inverterKw ?? design.inverterKw,
+      inverterPlan: inverterArrangementAdvice({
+        requiredKw: sizing.inverterKw ?? design.inverterKw,
+        siteLocation: project.location,
+        connectionType: design.connectionType,
+      }),
       batteryUsableKwh: includePlannedBattery ? sizing.batteryUsableKwh : undefined,
       batteryAh,
       sizingMethod: "user-adjusted",
@@ -1530,7 +1584,10 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         assumedNonSolarLoadKwh: sizing.assumedNonSolarLoadKwh,
       },
       sizingAssumptions: sizing.assumptions,
-      sizingWarnings: sizing.warnings,
+      sizingWarnings: [...new Set([
+        ...sizing.warnings,
+        "PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.",
+      ])],
       proposedChecklist: { ...(design.proposedChecklist ?? {}), "solar-array": false, "proposed-schematic": false },
       updatedAt: new Date().toISOString(),
       updatedBy: "user",
@@ -1660,15 +1717,18 @@ function proposalDraftForCurrentDesign(design: DesignCalculatorState, gridConnec
   const draft = design.proposedAsBuiltDraft;
   if (!draft) return createProposedAsBuiltDraft(design, gridConnected);
   const nodes = draft.nodes ?? [];
-  const expectedStrings = design.mountingLocations?.includes("none") ? 0 : Math.max(1, Math.round(n(design.pvStrings, 1)));
-  const actualStrings = nodes.filter((node) => node.id.startsWith("solar-pv-")).length || (nodes.some((node) => node.id === "solar") ? 1 : 0);
+  const exactLegacyStrings = n(design.pvStrings) > 0 && n(design.panelsPerString) > 0
+    && n(design.pvStrings) * n(design.panelsPerString) === n(design.panelCount);
+  const expectedSolarSources = design.mountingLocations?.includes("none") ? 0
+    : exactLegacyStrings ? Math.round(n(design.pvStrings))
+      : Math.max(1, design.pvArrayPlan?.arrays.length ?? 0);
+  const actualSolarSources = nodes.filter((node) => node.id.startsWith("solar-pv-")).length || (nodes.some((node) => node.id === "solar") ? 1 : 0);
   const structureChanged =
     draft.architecture !== design.architecture
     || n(draft.panelCount) !== n(design.panelCount)
     || n(draft.panelWatts) !== n(design.panelWatts)
-    || (expectedStrings ? n(draft.pvStrings, 1) : n(draft.pvStrings)) !== expectedStrings
-    || n(draft.panelsPerString) !== n(design.panelsPerString)
-    || actualStrings !== expectedStrings
+    || (!design.pvArrayPlan && (n(draft.pvStrings) !== n(design.pvStrings) || n(draft.panelsPerString) !== n(design.panelsPerString)))
+    || actualSolarSources !== expectedSolarSources
     || nodes.some((node) => node.id === "generator") !== Boolean(design.generatorIncluded)
     || nodes.some((node) => node.id === "grid-supply") !== gridConnected;
   return structureChanged ? createProposedAsBuiltDraft(design, gridConnected) : draft;
@@ -1685,19 +1745,29 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
         : ["Solar panels", "Inverter / charger to be selected", "Your lights, outlets and tools"];
   const flow = design.generatorIncluded ? [...baseFlow.slice(0, -1), "Generator backup", baseFlow.at(-1) ?? "Your lights, outlets and tools"] : baseFlow;
   const pvLayout = pvLayoutLabel(design);
-  const pvStringCount = Math.max(1, n(design.pvStrings, 1));
+  const plannedArrays = design.pvArrayPlan?.arrays ?? [];
+  const pvStringCount = Math.max(1, design.pvStrings ? n(design.pvStrings) : plannedArrays.length);
   const supplementary = supplementaryArray(design);
-  const solarIsolationLabel = pvStringCount > 1 ? `PV isolation for ${pvStringCount} strings` : "Solar safety switch";
-  const solarIsolationDetail = pvStringCount > 1
+  const solarIsolationLabel = design.pvStrings && pvStringCount > 1 ? `PV isolation for ${pvStringCount} strings` : "Solar isolation arrangement";
+  const solarIsolationDetail = design.pvStrings && pvStringCount > 1
     ? "Use one correctly rated isolator per string, or a rated common multi-pole isolator that disconnects all strings together."
-    : "Lets the PV string be safely disconnected";
+    : "Isolation and any combining arrangement remain pending the resolved series/parallel and MPPT topology.";
   const pvFeedLabel = design.pvStrings && design.panelsPerString
     ? `${design.pvStrings} string${design.pvStrings === 1 ? "" : "s"} x ${design.panelsPerString} panels`
     : "PV string layout to confirm";
   const solarDetail = design.panelCount
     ? `${design.panelCount} x ${design.panelWatts ?? "?"} W; ${mountingLocationText(design.mountingLocations)}; ${pvLayout}`
     : `${mountingLocationText(design.mountingLocations)}; ${pvLayout}`;
-  const solarSafetyNodes = (x: number): NonNullable<Draft["nodes"]> => pvStringCount > 1
+  const solarSafetyNodes = (x: number): NonNullable<Draft["nodes"]> => plannedArrays.length
+    ? plannedArrays.map((array, index) => ({
+      id: plannedArrays.length > 1 ? `solar-safety-${index + 1}` : "solar-safety",
+      label: `${array.name} isolation`,
+      detail: "Isolation and any combining arrangement remain pending the resolved series/parallel and MPPT topology.",
+      image: "/schematic-components/dc-disconnect-isolator.jpg",
+      x,
+      y: 20 + index * 125,
+    }))
+    : pvStringCount > 1
     ? Array.from({ length: pvStringCount }, (_, index) => ({ id: `solar-safety-${index + 1}`, label: `PV${index + 1} isolator`, detail: `DC isolator for PV${index + 1}; disconnects that string independently`, image: "/schematic-components/dc-disconnect-isolator.jpg", x, y: 20 + index * 125 }))
     : [{ id: "solar-safety", label: solarIsolationLabel, detail: solarIsolationDetail, image: "/schematic-components/dc-disconnect-isolator.jpg", x, y: 30 }];
   const solarNodes: NonNullable<Draft["nodes"]> = supplementary
@@ -1705,10 +1775,27 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
       { id: "solar-pv-1", label: "Existing panel array", detail: `${design.existingPanelGroup?.proposedUseCount ?? "?"} × ${design.existingPanelGroup?.wattsEach ?? design.panelWatts ?? "?"} W user-owned panels; suitability to verify`, image: "/schematic-components/solar-panel-pv-module.jpg", x: 35, y: 20 },
       { id: "solar-pv-2", label: "Additional solar array", detail: `${round(supplementary.targetPvKw, 2)} kW minimum; module type and quantity to select`, image: "/schematic-components/solar-panel-pv-module.jpg", x: 35, y: 145 },
     ]
+    : plannedArrays.length
+    ? plannedArrays.map((array, index) => ({
+      id: `solar-pv-${index + 1}`,
+      label: array.name,
+      detail: `${array.allocatedPanelCount ? `${array.allocatedPanelCount} panels; ` : array.capacity ? `space for about ${array.capacity} panels; ` : "panel allocation pending; "}series/parallel string and MPPT allocation pending equipment selection`,
+      image: "/schematic-components/solar-panel-pv-module.jpg",
+      x: 35,
+      y: 20 + index * 125,
+    }))
     : pvStringCount > 1
     ? Array.from({ length: pvStringCount }, (_, index) => ({ id: `solar-pv-${index + 1}`, label: `PV${index + 1} · ${n(design.panelsPerString, 1)} panels`, detail: `${n(design.panelsPerString, 1)} × ${design.panelWatts ?? "?"} W; one independent PV string`, image: "/schematic-components/solar-panel-pv-module.jpg", x: 35, y: 20 + index * 125 }))
     : [{ id: "solar", label: "Solar panels", detail: solarDetail, image: "/schematic-components/solar-panel-pv-module.jpg", x: 35, y: 30 }];
-  const solarFeedConnections = (target: string): NonNullable<Draft["connections"]> => pvStringCount > 1
+  const solarFeedConnections = (target: string): NonNullable<Draft["connections"]> => plannedArrays.length
+    ? plannedArrays.flatMap((array, index) => {
+      const safetyId = plannedArrays.length > 1 ? `solar-safety-${index + 1}` : "solar-safety";
+      return [
+        { from: `solar-pv-${index + 1}`, to: safetyId, label: `${array.name} DC topology pending`, kind: "solar-dc" as const },
+        { from: safetyId, to: target, label: `${array.name} to inverter; series/parallel and MPPT allocation pending`, kind: "solar-dc" as const },
+      ];
+    })
+    : pvStringCount > 1
     ? Array.from({ length: pvStringCount }, (_, index) => [
       { from: `solar-pv-${index + 1}`, to: `solar-safety-${index + 1}`, label: `PV${index + 1} string`, kind: "solar-dc" as const },
       { from: `solar-safety-${index + 1}`, to: target, label: `PV${index + 1} string to MPPT${index + 1}`, kind: "solar-dc" as const },
