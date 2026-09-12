@@ -71,6 +71,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
 export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient(); const claims = await supabase.auth.getClaims(); if (claims.error || typeof claims.data?.claims?.sub !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const { id } = await params; const removed = await supabase.from("projects").delete().eq("id", id).eq("owner_id", claims.data.claims.sub).select("id").single();
-  if (removed.error) return Response.json({ error: removed.error.message }, { status: 400 }); return Response.json({ ok: true });
+  const { id } = await params;
+  const removed = await supabase.rpc("delete_system_workspace", { target_project_id: id });
+  if (removed.error) return Response.json({ error: removed.error.message }, { status: 400 });
+  const outcome = removed.data as { deleted?: boolean; siteDeleted?: boolean } | null;
+  if (!outcome?.deleted) return Response.json({ error: "Power system not found." }, { status: 404 });
+  return Response.json({ ok: true, siteDeleted: Boolean(outcome.siteDeleted) });
 }

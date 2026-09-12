@@ -4,7 +4,6 @@ import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { createClient } from "@/lib/supabase/server";
 import type { SolarArrayForecastInput } from "@/weather/forecast";
-import { conversationKind } from "@/ai/conversation-kind";
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ site?: string; conversation?: string; start?: string; wattson?: string; welcome?: string }> }) {
   const supabase = await createClient();
@@ -18,7 +17,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     supabase.from("projects").select("id,site_id,name,mode,phase").eq("owner_id", userId).order("created_at"),
     requestedConversationId
       ? supabase.from("user_conversations").select("id,site_id,project_id").eq("id", requestedConversationId).eq("owner_id", userId).maybeSingle()
-      : supabase.from("user_conversations").select("id,site_id,project_id,title").eq("owner_id", userId).order("created_at", { ascending: false }).limit(100),
+      : Promise.resolve({ data: null, error: null }),
     supabase.from("discovery_drafts").select("id,status,question_id,answers,updated_at").eq("owner_id", userId).order("updated_at", { ascending: false }),
   ]);
   if (profile.error) throw profile.error;
@@ -27,8 +26,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   if (systemRows.error) throw systemRows.error;
   if (discoveryDraftRows.error) throw discoveryDraftRows.error;
   const activeConversation = requestedConversationId
-    ? conversation.data && !Array.isArray(conversation.data) ? conversation.data : undefined
-    : Array.isArray(conversation.data) ? conversation.data.find((item) => conversationKind(item.title) === "dashboard") : undefined;
+    ? conversation.data ?? undefined
+    : undefined;
   const sites: Site[] = (siteRows.data ?? []).map((site) => ({
     id: site.id, name: site.name, location: site.location || "Location not set",
     latitude: site.latitude == null ? undefined : Number(site.latitude), longitude: site.longitude == null ? undefined : Number(site.longitude),

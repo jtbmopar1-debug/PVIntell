@@ -126,6 +126,26 @@ export const discoveryStages: Array<{ id: DiscoveryStage; label: string; descrip
   { id: "design", label: "Design", description: "Preferences, limits and future plans" },
 ];
 
+export function hasReliableMeasuredEnergyUse(answers: DiscoveryAnswers) {
+  const monthly = Number(answers.current_energy_use);
+  const daily = Number(answers.off_grid_daily_energy_use);
+  return (Number.isFinite(monthly) && monthly > 0) || (Number.isFinite(daily) && daily > 0);
+}
+
+export function sequentialDiscoveryStageProgress(questions: DiscoveryQuestion[], completedQuestionIds: ReadonlySet<string>) {
+  let precedingStagesComplete = true;
+
+  return discoveryStages.map((stage) => {
+    const stageQuestions = questions.filter((question) => question.stage === stage.id);
+    const available = stageQuestions.length > 0;
+    const complete = available && stageQuestions.every((question) => completedQuestionIds.has(question.id));
+    const unlocked = available && precedingStagesComplete;
+
+    if (available) precedingStagesComplete = precedingStagesComplete && complete;
+    return { ...stage, available, complete, unlocked };
+  });
+}
+
 export const newSystemQuestions: DiscoveryQuestion[] = [
   {
     id: "existing_system_status", stage: "discovery", title: "Do you already have an installed solar or battery system at this site?",
@@ -360,8 +380,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
   },
   {
     id: "served_floor_area", stage: "needs", title: "How much indoor floor area will this system serve?",
-    noviceHelp: "Enter the approximate occupied or conditioned floor area that will use power. This helps estimate a new home or a property without reliable bills; actual measured electricity use remains stronger evidence when it is available.",
-    technicalHelp: "Record the approximate served floor area, not the total land, garage or unconditioned outbuilding area. Floor area is contextual evidence and must not be used as a standalone load calculation.", type: "number", unit: "m²", showWhen: hasResidentialUse,
+    noviceHelp: "Enter the approximate occupied or conditioned floor area that will use power. Wattson uses this only as a fallback when reliable measured electricity use is not available.",
+    technicalHelp: "Record the approximate served floor area, not the total land, garage or unconditioned outbuilding area. Floor area is contextual evidence and must not be used as a standalone load calculation.", type: "number", unit: "m²", showWhen: (answers) => hasResidentialUse(answers) && !hasReliableMeasuredEnergyUse(answers),
   },
   {
     id: "garage_conditioning", stage: "needs", title: "Is there a garage area to include?",

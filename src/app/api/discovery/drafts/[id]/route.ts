@@ -6,8 +6,9 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
-  const removed = await supabase.from("discovery_drafts").delete().eq("id", id).eq("owner_id", userId).select("id").maybeSingle();
+  const removed = await supabase.rpc("delete_discovery_draft_workspace", { target_draft_id: id });
   if (removed.error) return Response.json({ error: removed.error.message }, { status: 400 });
-  if (!removed.data) return Response.json({ error: "Discovery draft not found." }, { status: 404 });
+  const outcome = removed.data as { deleted?: boolean } | null;
+  if (!outcome?.deleted) return Response.json({ error: "Discovery draft not found." }, { status: 404 });
   return Response.json({ ok: true });
 }

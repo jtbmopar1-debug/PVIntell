@@ -1,13 +1,13 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Bot, Calculator, Check, ChevronDown, CircleHelp, ImagePlus, LoaderCircle, LocateFixed, MapPin, Plus, Ruler, Save, Search, Send, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bot, Calculator, Check, ChevronDown, CircleHelp, ImagePlus, LoaderCircle, LocateFixed, LockKeyhole, MapPin, Plus, Ruler, Save, Search, Send, Sparkles, Trash2, X } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
 import { PoolHeatingCalculator } from "@/components/pool-heating-calculator";
-import { discoveryStages, helpForExperience, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers, type DiscoveryQuestion } from "@/discovery/new-system";
+import { discoveryStages, helpForExperience, sequentialDiscoveryStageProgress, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers, type DiscoveryQuestion } from "@/discovery/new-system";
 import { reconcileDiscoveryDependencies } from "@/discovery/dependencies";
 import { timerRuntimeMinutes } from "@/discovery/load-schedule";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
@@ -36,9 +36,15 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const [index, setIndex] = useState(() => {
     const gateIndex = initialQuestions.findIndex((question) => question.id === "existing_system_status" && !discoveryAnswerComplete(question.id, normalizedInitialAnswers[question.id], normalizedInitialAnswers));
     if (gateIndex >= 0) return gateIndex;
+    const completionContext = { combinedInitialSetup, hasSavedSites: sites.length > 0 };
+    const firstIncompleteIndex = initialQuestions.findIndex((question) => !guidedQuestionComplete(question, normalizedInitialAnswers, completionContext));
     const requestedIndex = initialQuestions.findIndex((question) => question.id === initialQuestionId);
-    if (requestedIndex >= 0) return requestedIndex;
-    const firstIncompleteIndex = initialQuestions.findIndex((question) => !discoveryAnswerComplete(question.id, normalizedInitialAnswers[question.id], normalizedInitialAnswers));
+    if (requestedIndex >= 0) {
+      if (firstIncompleteIndex < 0) return requestedIndex;
+      const firstIncompleteStage = discoveryStages.findIndex((stage) => stage.id === initialQuestions[firstIncompleteIndex].stage);
+      const requestedStage = discoveryStages.findIndex((stage) => stage.id === initialQuestions[requestedIndex].stage);
+      if (requestedStage <= firstIncompleteStage) return requestedIndex;
+    }
     return Math.max(0, firstIncompleteIndex);
   });
   const [saving, setSaving] = useState(false);
@@ -47,22 +53,18 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const [discoveryConversationId, setDiscoveryConversationId] = useState<string | undefined>(initialDiscoveryConversationId);
   const [returningToReview, setReturningToReview] = useState(false);
   const [buildingProposal, setBuildingProposal] = useState(false);
+  const [mobileGuideOpen, setMobileGuideOpen] = useState(false);
   const questions = useMemo(() => questionsFor(answers), [answers, stageFilter, siteDiscoveryId]);
   const reviewing = index >= questions.length;
   const question = reviewing ? undefined : questions[Math.min(index, questions.length - 1)];
   const stageIndex = question ? discoveryStages.findIndex((stage) => stage.id === question.stage) : discoveryStages.length;
-  const answered = questions.filter((item) => {
-    const value = answers[item.id];
-    return value !== undefined && value !== "" && (!Array.isArray(value) || value.length > 0);
-  }).length;
-  const newSiteLocationComplete = typeof answers.site_latitude === "number" && typeof answers.site_longitude === "number";
-  const selectedHighPowerLoads = Array.isArray(answers.heavy_loads) ? answers.heavy_loads.filter((item) => item !== "none") : [];
-  const highPowerRatingsComplete = highPowerLoadRatingsComplete(answers.household_motor_ratings, selectedHighPowerLoads);
-  const currentAnswerComplete = question ? discoveryAnswerComplete(question.id, answers[question.id], answers) && (question.id !== "heavy_loads" || highPowerRatingsComplete) && !(question.id === "system_name" && combinedInitialSetup && (answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete) : true;
-  const incompleteQuestions = questions.filter((item) => !discoveryAnswerComplete(item.id, answers[item.id], answers)
-    || (item.id === "heavy_loads" && !highPowerRatingsComplete)
-    || (item.id === "site_name" && sites.length > 0 && !answers.site_id)
-    || (item.id === "system_name" && combinedInitialSetup && (!answers.site_name || (sites.length > 0 && !answers.site_id) || ((answers.site_id === "__new__" || !sites.length) && !newSiteLocationComplete))));
+  const completionContext = { combinedInitialSetup, hasSavedSites: sites.length > 0 };
+  const incompleteQuestions = questions.filter((item) => !guidedQuestionComplete(item, answers, completionContext));
+  const incompleteQuestionIds = new Set(incompleteQuestions.map((item) => item.id));
+  const answered = questions.length - incompleteQuestions.length;
+  const currentAnswerComplete = question ? !incompleteQuestionIds.has(question.id) : true;
+  const completedQuestionIds = new Set(questions.filter((item) => !incompleteQuestionIds.has(item.id)).map((item) => item.id));
+  const stageProgress = sequentialDiscoveryStageProgress(questions, completedQuestionIds);
 
   function returnToQuestion(questionId: string) {
     const targetIndex = questions.findIndex((item) => item.id === questionId);
@@ -204,6 +206,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   }
 
   function goToStage(stageId: string) {
+    if (!stageProgress.find((stage) => stage.id === stageId)?.unlocked) return;
     const targetIndex = questions.findIndex((item) => item.stage === stageId);
     if (targetIndex >= 0) setIndex(targetIndex);
   }
@@ -211,10 +214,14 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   return <div className="min-h-screen bg-[#f3f6fa] p-4 md:p-8">
     <div className="mx-auto max-w-6xl">
       <header className="flex items-center justify-between gap-4"><Link href="/dashboard" className="inline-flex items-center gap-2 text-xs font-bold text-brand"><ArrowLeft size={15}/>Back to dashboard</Link><div className="flex items-center gap-2 text-[10px] font-semibold text-muted"><Save size={13}/>{saving ? "Saving…" : "Saved as you go"}</div></header>
+      <div className="mt-4">
+        <button type="button" onClick={() => setMobileGuideOpen((open) => !open)} aria-expanded={mobileGuideOpen} aria-controls="mobile-discovery-guide" className="flex w-full items-center justify-between rounded-xl border border-[#c9d8e6] bg-white px-4 py-3 text-left text-xs font-bold text-brand"><span className="flex items-center gap-2"><CircleHelp size={16}/>How this works</span><ChevronDown size={15} className={`transition-transform ${mobileGuideOpen ? "rotate-180" : ""}`}/></button>
+        {mobileGuideOpen ? <section id="mobile-discovery-guide" className="mt-2 rounded-xl border border-[#d8e3ed] bg-white p-4 shadow-sm"><p className="text-xs font-bold text-ink">Complete the four modules in order</p><ol className="mt-3 space-y-2 text-[11px] leading-5 text-muted"><li><strong className="text-ink">1.</strong> Answer the current question, then tap Continue.</li><li><strong className="text-ink">2.</strong> Finishing a module unlocks the next one.</li><li><strong className="text-ink">3.</strong> Your answers save automatically as you go.</li><li><strong className="text-ink">4.</strong> Review everything before Wattson builds the proposal.</li></ol></section> : null}
+      </div>
       <div className="mt-7 grid gap-6 lg:grid-cols-[240px_1fr]">
         <aside className="card h-fit p-4 lg:sticky lg:top-6">
           <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-brand text-white"><Sparkles size={18}/></span><div><div className="eyebrow">Guided setup</div><div className="mt-1 text-sm font-extrabold">{siteDiscoveryId ? "Site discovery" : "New system discovery"}</div></div></div>
-          <div className="mt-5 space-y-2">{discoveryStages.map((stage, position) => { const active=position===stageIndex; const done=position<stageIndex; const available=questions.some((item)=>item.stage===stage.id); return <button type="button" key={stage.id} onClick={() => goToStage(stage.id)} disabled={!available || saving} className={`w-full rounded-xl border p-3 text-left transition hover:border-brand disabled:cursor-not-allowed disabled:opacity-45 ${active?"theme-selected-tile border-brand bg-[#edf5fd]":done?"border-[#b8ddc8] bg-[#f1faf5]":"border-line bg-white"}`}><div className="flex items-center gap-2"><span className={`grid size-6 place-items-center rounded-full text-[10px] font-bold ${done?"bg-[#dff2e6] text-[#17603b]":active?"bg-brand text-white":"bg-[#edf1f5] text-muted"}`}>{done?<Check size={12}/>:position+1}</span><strong className="text-xs">{stage.label}</strong></div><p className="mt-2 text-[10px] leading-4 text-muted">{stage.description}</p></button>})}</div>
+          <div className="mt-5 space-y-2">{stageProgress.map((stage, position) => { const active=position===stageIndex; const locked=stage.available&&!stage.unlocked; return <button type="button" key={stage.id} onClick={() => goToStage(stage.id)} disabled={!stage.available || locked || saving} aria-label={locked ? `${stage.label} locked until the previous module is complete` : stage.label} className={`w-full rounded-xl border p-3 text-left transition enabled:hover:border-brand disabled:cursor-not-allowed ${active?"theme-selected-tile border-brand bg-[#edf5fd]":stage.complete?"border-[#b8ddc8] bg-[#f1faf5]":locked?"border-line bg-[#f7f8fa] opacity-60":"border-line bg-white"}`}><div className="flex items-center gap-2"><span className={`grid size-6 place-items-center rounded-full text-[10px] font-bold ${stage.complete?"bg-[#dff2e6] text-[#17603b]":active?"bg-brand text-white":"bg-[#edf1f5] text-muted"}`}>{stage.complete?<Check size={12}/>:locked?<LockKeyhole size={11}/>:position+1}</span><strong className="text-xs">{stage.label}</strong>{locked?<span className="ml-auto text-[9px] font-bold uppercase tracking-[.08em] text-muted">Locked</span>:null}</div><p className="mt-2 text-[10px] leading-4 text-muted">{stage.description}</p></button>})}</div>
           <div className="mt-5"><div className="flex justify-between text-[10px] font-bold"><span>Progress</span><span>{answered}/{questions.length}</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-[#e6edf4]"><div className="h-full rounded-full bg-[#f6c945] transition-all" style={{width:`${questions.length ? Math.round(answered/questions.length*100) : 0}%`}}/></div></div>
           {answered === questions.length && !reviewing ? <button type="button" onClick={() => { setReturningToReview(false); setIndex(questions.length); }} disabled={saving} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-brand px-3 py-3 text-xs font-bold text-white disabled:opacity-40"><Check size={15}/>Review completed discovery</button> : null}
           {siteDiscoveryId && <button type="button" onClick={() => void deleteSite()} disabled={saving} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-[#efb6a7] px-3 py-2.5 text-xs font-bold text-[#b9412b] hover:bg-[#fff1ed] disabled:opacity-40"><Trash2 size={15}/>Delete Site and discovery</button>}
@@ -651,6 +658,21 @@ type PanelOrientation = { id: string; name: string; direction: string; slope: st
 type StructureCondition = { id: string; name: string; material: string; age: string; condition: string; constructionDetail?: string };
 type PanelObstruction = { id: string; areaId: string; kind: string; lengthM: string; widthM: string };
 
+function guidedQuestionComplete(question: DiscoveryQuestion, answers: DiscoveryAnswers, context: { combinedInitialSetup: boolean; hasSavedSites: boolean }) {
+  if (!discoveryAnswerComplete(question.id, answers[question.id], answers)) return false;
+  if (question.id === "heavy_loads") {
+    const selectedLoads = Array.isArray(answers.heavy_loads) ? answers.heavy_loads.filter((item) => item !== "none") : [];
+    if (!highPowerLoadRatingsComplete(answers.household_motor_ratings, selectedLoads)) return false;
+  }
+  if (question.id === "site_name" && context.hasSavedSites && !answers.site_id) return false;
+  if (question.id === "system_name" && context.combinedInitialSetup) {
+    if (!answers.site_name || (context.hasSavedSites && !answers.site_id)) return false;
+    const createsNewSite = answers.site_id === "__new__" || !context.hasSavedSites;
+    if (createsNewSite && (typeof answers.site_latitude !== "number" || typeof answers.site_longitude !== "number")) return false;
+  }
+  return true;
+}
+
 function discoveryAnswerComplete(questionId: string, value: string | number | string[] | undefined, answers?: DiscoveryAnswers) {
   const unresolvedValues = new Set([unknownAnswer, "unknown", "not_checked", "not_decided", "undecided", "unknown_chemistry"]);
   if (typeof value === "string" && unresolvedValues.has(value)) return false;
@@ -1076,13 +1098,13 @@ function SystemSetupQuestionCard({ sites, selectedSiteId, siteName, defaultRegio
       </div>
     </div>
     <div className="space-y-6 p-6 md:p-8">
-      <label className="block"><span className="text-sm font-extrabold">What should we call this power setup?</span><span className="mt-1 block text-[11px] leading-5 text-muted">For example, House solar, Main home or Workshop.</span><input type="text" value={String(value ?? "")} onChange={(event) => setAnswer(event.target.value)} className="field mt-3" placeholder="Power system name"/></label>
+      <label className="theme-new-site-system-tile block rounded-2xl border p-4"><span className="text-sm font-extrabold">What should we call this power setup?</span><span className="mt-1 block text-[11px] leading-5 text-muted">For example, House solar, Main home or Workshop.</span><input type="text" value={String(value ?? "")} onChange={(event) => setAnswer(event.target.value)} className="field mt-3" placeholder="Power system name"/></label>
       <div className="border-t border-line pt-6">
         <div className="text-sm font-extrabold">Where will this power system be located?</div>
         <p className="mt-1 text-[11px] leading-5 text-muted">Choose an existing Site, or name a new Site if this is at a different property or location.</p>
         {sites.length ? <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {sites.map((site) => { const selected = selectedSiteId === site.id; return <button key={site.id} type="button" onClick={() => setSite(site.id, site.name)} className={`rounded-2xl border p-4 text-left transition ${selected ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{site.name}</strong>{selected && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Add this power system to the existing Site.</p></button>; })}
-          <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">Create a new Site</strong>{selectedSiteId === "__new__" && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Use this for a different property or location.</p></button>
+          <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "theme-new-site-system-tile ring-2 ring-[#9dccad]" : "border-line bg-white hover:border-[#78b58c]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">Create a new Site</strong>{selectedSiteId === "__new__" && <Check className="text-[#236438]" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Use this for a different property or location.</p></button>
         </div> : null}
         {(!sites.length || selectedSiteId === "__new__") && <><input type="text" value={siteName} onChange={(event) => setSite("__new__", event.target.value)} className="field mt-3" placeholder="Site name, e.g. River Views"/><NewSiteLocation siteName={siteName} defaultRegion={defaultRegion} initial={siteLocationAnswers} onChange={setSiteLocation}/></>}
       </div>
@@ -1117,8 +1139,8 @@ function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, set
             <p className="mt-2 text-[11px] leading-5 text-muted">Add this power system to the existing Site.</p>
           </button>;
         })}
-        <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}>
-          <div className="flex items-start justify-between gap-3"><strong className="text-sm">Create a new Site</strong>{selectedSiteId === "__new__" && <Check className="text-brand" size={16}/>}</div>
+        <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "theme-new-site-system-tile ring-2 ring-[#9dccad]" : "border-line bg-white hover:border-[#78b58c]"}`}>
+          <div className="flex items-start justify-between gap-3"><strong className="text-sm">Create a new Site</strong>{selectedSiteId === "__new__" && <Check className="text-[#236438]" size={16}/>}</div>
           <p className="mt-2 text-[11px] leading-5 text-muted">Use this when the system is at a different property or location.</p>
         </button>
       </div>

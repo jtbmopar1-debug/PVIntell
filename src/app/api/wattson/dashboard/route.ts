@@ -6,11 +6,20 @@ import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 import { newSystemQuestions } from "@/discovery/new-system";
 import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
+import { extractEquipmentLabel } from "@/ai/equipment-label";
+import { containsUnsupportedSettingsSetupAdvice, wattsonApplicationCapabilities } from "@/ai/application-capabilities";
 import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
 import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
 import { dashboardMessageAllowsActions } from "@/ai/dashboard-intent";
 import { createSystem } from "@/data/cloud-project";
-import { confirmedDestinationNames, conversationKind } from "@/ai/conversation-kind";
+import { confirmedDestinationNames } from "@/ai/conversation-kind";
+import {
+  buildActiveConversationState,
+  conceptualSchematicForActiveSetup,
+  conversationRetrievalPolicy,
+  equipmentTargetClarification,
+  removeRepeatedAnsweredQuestions,
+} from "@/ai/active-conversation";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -211,7 +220,10 @@ export async function POST(request: Request) {
       latestReading: (monitoringLatest.data ?? []).find((reading) => reading.connection_id === connection.id),
     })),
   }));
-  const conversationSiteId = parsed.data.siteId ?? selectedConversation.data?.site_id;
+  const directlyNamedSite = (sites.data ?? []).find((site) => new RegExp(
+    `(?:^|\\b)${site.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\b|$)`, "i",
+  ).test(parsed.data.message));
+  let conversationSiteId = directlyNamedSite?.id ?? parsed.data.siteId ?? selectedConversation.data?.site_id;
   const selectedSiteBrief = (siteDiscoveries.data ?? []).find((item) => item.site_id === conversationSiteId && item.status === "completed");
   let image: { data: string; mimeType: string } | undefined;
   let imageBytes: Uint8Array | undefined;
@@ -230,42 +242,66 @@ export async function POST(request: Request) {
   }
   const inventorySiteId = conversationSiteId ?? (systems.data ?? []).find((system) => system.id === parsed.data.projectId)?.site_id;
   let inventoryCapture: InventoryPhotoCapture | undefined;
-  if (inventorySiteId && imagePath && imageBytes && imageFile) {
-    inventoryCapture = await captureSiteInventoryFromLabel({
-      supabase,
-      siteId: inventorySiteId,
-      imagePath,
-      imageBytes,
-      mimeType: imageFile.type,
-    });
+  if (imagePath && imageBytes && imageFile) {
+    const explicitlyRequestsInventoryWrite = /\b(?:save|record|add|attach|import)\b[\s\S]{0,80}\b(?:photo|image|label|equipment|inventory|component)\b|\b(?:save|record|add|attach|import) (?:this|it)\b/i.test(parsed.data.message);
+    if (explicitlyRequestsInventoryWrite && inventorySiteId) {
+      inventoryCapture = await captureSiteInventoryFromLabel({
+        supabase,
+        siteId: inventorySiteId,
+        imagePath,
+        imageBytes,
+        mimeType: imageFile.type,
+      });
+    } else {
+      try {
+        inventoryCapture = {
+          extraction: await extractEquipmentLabel(imageBytes, imageFile.type),
+          saved: false,
+          warning: "Image evidence was analysed for this conversation only; no Site equipment record was created.",
+        };
+      } catch (problem) {
+        inventoryCapture = { saved: false, warning: problem instanceof Error ? problem.message : "Wattson could not read this equipment label." };
+      }
+    }
   }
-  let conversation;
-  if (parsed.data.conversationId) conversation = await supabase.from("user_conversations").select("id,title").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle();
-  else {
-    const candidates = await supabase.from("user_conversations").select("id,title").eq("owner_id", userId).order("created_at", { ascending: false }).limit(100);
-    conversation = { ...candidates, data: (candidates.data ?? []).find((item) => conversationKind(item.title) === "dashboard") ?? null };
-  }
+  const conversation = parsed.data.conversationId
+    ? await supabase.from("user_conversations").select("id,title").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle()
+    : { data: null, error: null };
   if (conversation.error) return Response.json({ error: conversation.error.message }, { status: 400 });
   if (parsed.data.conversationId && !conversation.data) return Response.json({ error: "That Wattson conversation was not found." }, { status: 404 });
-  if (!conversation.data) {
+  let conversationData = conversation.data;
+  if (!conversationData) {
     if (await userConversationCount(supabase, userId) >= WATTSON_CONVERSATION_LIMIT)
       return Response.json({ error: `You have reached the ${WATTSON_CONVERSATION_LIMIT}-chat limit. Delete an old chat from Wattson chats before starting another.` }, { status: 409 });
     const created = await supabase.from("user_conversations").insert({ owner_id: userId, site_id: conversationSiteId, project_id: parsed.data.projectId }).select("id").single();
     if (created.error) return Response.json({ error: created.error.message }, { status: 400 });
-    conversation = { ...conversation, data: { ...created.data, title: "Wattson dashboard" } };
+    conversationData = { ...created.data, title: "Wattson dashboard" };
   }
-  const conversationId = conversation.data?.id;
+  const conversationId = conversationData?.id;
   if (!conversationId) return Response.json({ error: "Could not open Wattson conversation." }, { status: 500 });
   const userContent = imageFile
     ? `${parsed.data.message}\n\n[Attached image: ${imageFile.name}]`
     : parsed.data.message;
   const inserted = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "user", content: userContent, structured_context: imagePath ? { imagePath } : {} });
   if (inserted.error) return Response.json({ error: inserted.error.message }, { status: 400 });
-  if (!conversation.data?.title || conversation.data.title === "Wattson dashboard")
+  if (!conversationData?.title || conversationData.title === "Wattson dashboard")
     await supabase.from("user_conversations").update({ title: conversationTitle(parsed.data.message) }).eq("id", conversationId).eq("owner_id", userId);
-  const recent = await supabase.from("user_chat_messages").select("role,content,structured_context").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(12);
+  // Keep a useful replay window here. The explicit active state stored on each
+  // assistant turn carries the subject and accepted/rejected decisions beyond it.
+  const recent = await supabase.from("user_chat_messages").select("role,content,structured_context").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(40);
   const history = (recent.data ?? []).reverse();
   const prior = history.at(-1)?.content === userContent ? history.slice(0, -1) : history;
+  const activeConversation = buildActiveConversationState({
+    messages: prior,
+    currentMessage: parsed.data.message,
+    knownSites: sites.data ?? [],
+    knownSystems: connectedSystems.map((system) => ({ id: system.id, name: system.name, siteId: system.site_id, siteName: system.site?.name })),
+    ambientSite: (sites.data ?? []).find((site) => site.id === conversationSiteId),
+    currentImageCapture: inventoryCapture,
+  });
+  if (activeConversation.currentSite?.id && activeConversation.currentSite.id !== selectedConversation.data?.site_id) {
+    conversationSiteId = activeConversation.currentSite.id;
+  }
   const dailyMonitorLog = await loadDailyLogContext(supabase, userId, { systemId: parsed.data.projectId, siteId: conversationSiteId ?? undefined });
   const priorAssistant = [...prior].reverse().find((item) => item.role === "assistant");
   const priorAssistantMessage = priorAssistant?.content;
@@ -368,14 +404,37 @@ export async function POST(request: Request) {
       project: dashboardProject(profile.data.home_location ?? ""),
       recentConversation: prior,
       questionnaireContext: {
+        activeConversation,
+        retrievalPolicy: conversationRetrievalPolicy(activeConversation),
+        applicationCapabilities: wattsonApplicationCapabilities(),
         dailyMonitorLog,
         userAssessment: profile.data.onboarding_assessment ?? {},
         userTimezone: profile.data.timezone,
         selectedSiteDiscovery: selectedSiteBrief ?? undefined,
         selectedSiteWeather,
         inventoryLabelCapture: inventoryCapture,
-        sites: (sites.data ?? []).map((site) => ({ ...site, unassignedEquipment: (siteEquipment.data ?? []).filter((item) => item.site_id === site.id && !item.assigned_project_id) })),
-        connectedSiteSystems: connectedSystems,
+        sites: (sites.data ?? []).map((site) => ({
+          ...site,
+          unassignedEquipment: activeConversation.currentSubject?.association === "unassociated"
+            ? []
+            : (siteEquipment.data ?? []).filter((item) => item.site_id === site.id && !item.assigned_project_id),
+        })),
+        connectedSiteSystems: connectedSystems.map((system) => activeConversation.currentSubject?.association === "unassociated"
+          ? {
+              id: system.id,
+              site_id: system.site_id,
+              name: system.name,
+              mode: system.mode,
+              phase: system.phase,
+              site: system.site,
+              conversationRelationship: "retrieved-record-not-associated-with-active-subject; equipment details withheld",
+            }
+          : {
+              ...system,
+              conversationRelationship: activeConversation.currentSubject?.associatedSystemId === system.id
+                ? "explicitly-associated-with-active-subject"
+                : "retrieved-record-not-associated-with-active-subject",
+            }),
         scope: "Dashboard Wattson is a general solar and electrical assistant with selected-Site awareness. Answer the user's actual question directly first, whether it is general, educational, comparative, diagnostic or specific to a recorded Site/system. selectedSiteWeather is the exact full five-day hourly forecast currently available to PVIntell, including timestamps, timezone, irradiance, cloud cover, precipitation, wind, temperature and UV. For weather, solar-yield, charge-timing or day-specific questions such as ‘on Wednesday’, filter those timestamped hours in the supplied site timezone and use them rather than inventing a general weather narrative. Mention when the forecast was fetched when freshness matters. Explicitly distinguish measured monitoring readings from forecast values. Use the selected Site and its complete installed component, PV-array/string, load, assumption and connection records whenever the question concerns that Site, performance or improvement; do not make the user remind you what is already mounted. connectedSiteSystems may include map_latitude, map_longitude, location_mode and map_location_updated_at. A static system position is installation context. A mobile system position is only the user's last saved guide position: state that limitation when location materially affects the answer and never imply that a boat, vehicle or movable system is permanently there. For azimuth, tilt, yield or expansion questions, explicitly compare the recorded existing arrays with the location-based ideal and distinguish improving the existing installation from proposing a separate new array. Do not force an unrelated Site context onto a genuinely general question. A hypothetical design question is not a request to create a system. Never start system discovery, create a workspace, or redirect to Start here from dashboard chat; the dedicated Start a new system flow owns that job. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update an existing system record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If Wattson asks which Site should receive a record, recognise 'new site' as a request for a new Site rather than repeatedly asking for an existing system; retain any system name supplied after it and ask only for the missing new-Site name. If a requested Site-specific action otherwise has an unclear target after checking the records, ask one focused question instead of taking an action.",
       },
       image,
@@ -385,8 +444,9 @@ export async function POST(request: Request) {
       .filter((action) => action.name === "resolve_installed_import_destination")
       .map((action) => installedImportRouteSchema.safeParse(action.arguments))
       .find((candidate) => candidate.success)?.data;
-    const dashboardTargetIsExplicit = Boolean(parsed.data.projectId || parsed.data.siteId);
-    const dashboardTargetIsAmbiguous = !dashboardTargetIsExplicit && connectedSystems.length > 1;
+    const activeSubjectIsUnassociated = activeConversation.currentSubject?.association === "unassociated";
+    const dashboardTargetIsExplicit = Boolean(parsed.data.projectId) && !activeSubjectIsUnassociated;
+    const dashboardTargetIsAmbiguous = !dashboardTargetIsExplicit && (connectedSystems.length > 1 || activeSubjectIsUnassociated);
     const ownedSystemIds = new Set(systemIds);
     const appliedActions: AppliedWattsonAction[] = [];
     const actionsBySystem = new Map<string, WattsonActionRequest[]>();
@@ -403,11 +463,11 @@ export async function POST(request: Request) {
       ? assessment.lastGuidedDiscovery as Record<string, unknown>
       : undefined;
     const guidedSystemId = typeof guidedReview?.systemId === "string" ? guidedReview.systemId : undefined;
-    const activeSystem = connectedSystems.find((item) => item.id === parsed.data.projectId)
-      ?? connectedSystems.find((item) => item.id === selectedConversation.data?.project_id)
-      ?? connectedSystems.find((item) => item.site_id === conversationSiteId)
-      ?? connectedSystems.find((item) => item.id === guidedSystemId)
-      ?? (connectedSystems.length === 1 ? connectedSystems[0] : undefined);
+    const activeSystem = (!activeSubjectIsUnassociated ? connectedSystems.find((item) => item.id === parsed.data.projectId) : undefined)
+      ?? (!activeSubjectIsUnassociated ? connectedSystems.find((item) => item.id === selectedConversation.data?.project_id) : undefined)
+      ?? (!activeSubjectIsUnassociated ? connectedSystems.find((item) => item.site_id === conversationSiteId) : undefined)
+      ?? (!activeSubjectIsUnassociated ? connectedSystems.find((item) => item.id === guidedSystemId) : undefined)
+      ?? (!activeSubjectIsUnassociated && connectedSystems.length === 1 ? connectedSystems[0] : undefined);
     const activeSettings = activeSystem?.settings && typeof activeSystem.settings === "object"
       ? activeSystem.settings as Record<string, unknown>
       : {};
@@ -561,6 +621,12 @@ export async function POST(request: Request) {
       autonomousContinuation = continuation.message.trim() || undefined;
     }
     let message = friendlyMonitoringReferences(autonomousContinuation ?? result.message.trim(), connectedSystems);
+    message = removeRepeatedAnsweredQuestions(message, activeConversation);
+    message = conceptualSchematicForActiveSetup(activeConversation) ?? message;
+    message = equipmentTargetClarification(activeConversation) ?? message;
+    if (containsUnsupportedSettingsSetupAdvice(message)) {
+      message = `${message.replace(/[^.!?]*(?:go|head|navigate) to (?:the )?settings[^.!?]*[.!?]?|[^.!?]*open (?:the )?settings[^.!?]*[.!?]?/gi, "").trim()}${message.trim() ? "\n\n" : ""}You do not need generic Settings for this. I can keep working from the confirmed details in this conversation; a specific PVIntell page should be named only when its actual controls are needed.`.trim();
+    }
     if (installedImportRoute?.authorised && installedImportRoute.destination === "new" && (!installedImportRoute.site_name || !installedImportRoute.system_name))
       message = !installedImportRoute.site_name && !installedImportRoute.system_name
         ? "Understood—this is a new Site. What shall I call the new Site and its installed system?"
@@ -619,6 +685,12 @@ export async function POST(request: Request) {
       message = result.actions.length
         ? "Which site shall I attach that to and what shall I call it?"
         : "I didn’t produce a useful reply. Please send that once more.";
+    if (activeConversation.proposedAction?.type === "create-standalone-system"
+      && activeConversation.proposedAction.confirmed
+      && /^\s*(?:yes|yes please|sure|okay|ok|do it)\b/i.test(parsed.data.message)
+      && !activeConversation.proposedAction.parameters.systemName) {
+      message = `Yes—I’ll use the controller, panel and battery setup already established here as a new standalone system on ${activeConversation.proposedAction.siteName ?? activeConversation.currentSite?.name ?? "the current Site"}. What name would you like for the system?`;
+    }
     const answeredPlaceName = /what name.*(?:property|place)|name.*(?:home|farm|cabin)/i.test(lastAssistantMessage ?? "")
       && /^\s*[\p{L}\p{N}][\p{L}\p{N}' -]{0,59}\s*$/u.test(parsed.data.message);
     const startFirstSystem = !connectedSystems.length && (result.actions.length > 0 || answeredPlaceName || /\b(?:what should i do|where do i start|start|set up|setup|first system)\b/i.test(parsed.data.message));
@@ -654,7 +726,7 @@ export async function POST(request: Request) {
         : message === "Which site shall I attach that to and what shall I call it?"
           ? { step: "destination" }
           : undefined;
-    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, pendingInstalledImport: pendingInstalledImportState, actionUrl: proposedDesignLink ?? monitorModeLink ?? startSystemLink, actionLabel: proposedDesignLink ? "Open proposed design" : monitorModeLink ? "Open monitor" : startSystemLink ? "Start guided setup" : undefined } });
+    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, activeConversation, pendingInstalledImport: pendingInstalledImportState, actionUrl: proposedDesignLink ?? monitorModeLink ?? startSystemLink, actionLabel: proposedDesignLink ? "Open proposed design" : monitorModeLink ? "Open monitor" : startSystemLink ? "Start guided setup" : undefined } });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
     const proposedDesignUrl = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`

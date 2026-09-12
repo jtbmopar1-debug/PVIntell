@@ -1,7 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { discoveryProjectType, visibleDiscoveryQuestions } from "./new-system";
+import { discoveryProjectType, hasReliableMeasuredEnergyUse, sequentialDiscoveryStageProgress, visibleDiscoveryQuestions, type DiscoveryQuestion } from "./new-system";
 
 describe("new-system discovery", () => {
+  const stagedQuestions: DiscoveryQuestion[] = [
+    { id: "goal", stage: "discovery", title: "Goal", noviceHelp: "", type: "text" },
+    { id: "location", stage: "site", title: "Location", noviceHelp: "", type: "text" },
+    { id: "loads", stage: "needs", title: "Loads", noviceHelp: "", type: "text" },
+    { id: "preference", stage: "design", title: "Preference", noviceHelp: "", type: "text" },
+  ];
+
+  it("unlocks discovery modules only after every preceding module is complete", () => {
+    expect(sequentialDiscoveryStageProgress(stagedQuestions, new Set()).map(({ id, unlocked, complete }) => ({ id, unlocked, complete }))).toEqual([
+      { id: "discovery", unlocked: true, complete: false },
+      { id: "site", unlocked: false, complete: false },
+      { id: "needs", unlocked: false, complete: false },
+      { id: "design", unlocked: false, complete: false },
+    ]);
+
+    expect(sequentialDiscoveryStageProgress(stagedQuestions, new Set(["goal", "location"])).map(({ id, unlocked, complete }) => ({ id, unlocked, complete }))).toEqual([
+      { id: "discovery", unlocked: true, complete: true },
+      { id: "site", unlocked: true, complete: true },
+      { id: "needs", unlocked: true, complete: false },
+      { id: "design", unlocked: false, complete: false },
+    ]);
+  });
+
+  it("does not unlock a later module just because that module already contains answers", () => {
+    const progress = sequentialDiscoveryStageProgress(stagedQuestions, new Set(["loads", "preference"]));
+    expect(progress.find((stage) => stage.id === "needs")?.unlocked).toBe(false);
+    expect(progress.find((stage) => stage.id === "design")?.unlocked).toBe(false);
+  });
+
+  it("starts the first available filtered module without requiring hidden modules", () => {
+    const siteOnly = stagedQuestions.filter((question) => question.stage === "site");
+    expect(sequentialDiscoveryStageProgress(siteOnly, new Set())[1]).toMatchObject({ id: "site", available: true, unlocked: true });
+  });
+
   it("gates proposal discovery on whether a system is already installed", () => {
     const questions = visibleDiscoveryQuestions({});
     expect(questions[0]).toMatchObject({
@@ -13,6 +47,14 @@ describe("new-system discovery", () => {
         expect.objectContaining({ value: "installed_change_planned" }),
       ],
     });
+  });
+
+  it("uses floor area only as a fallback when reliable measured energy is unavailable", () => {
+    const residential = { utility_relationship: "grid_connected", building_type: ["detached_house"] };
+    expect(hasReliableMeasuredEnergyUse({ ...residential, current_energy_use: 430 })).toBe(true);
+    expect(visibleDiscoveryQuestions({ ...residential, current_energy_use: 430 }).map((question) => question.id)).not.toContain("served_floor_area");
+    expect(visibleDiscoveryQuestions(residential).map((question) => question.id)).toContain("served_floor_area");
+    expect(visibleDiscoveryQuestions({ utility_relationship: "off_grid", building_type: ["detached_house"], off_grid_daily_energy_use: 12 }).map((question) => question.id)).not.toContain("served_floor_area");
   });
 
   it("makes no public electricity authoritative when producing system topology", () => {

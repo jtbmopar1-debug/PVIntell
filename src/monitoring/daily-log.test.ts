@@ -21,6 +21,35 @@ describe("daily monitoring data", () => {
     expect(html.indexOf("Grid use")).toBeGreaterThan(html.indexOf("Ran generator this day"));
     expect(html).toContain("Leave blank if off-grid or unknown");
   });
+  it("offers approximate charging power only after a generator run is selected", () => {
+    const hidden = renderToStaticMarkup(createElement(DailyEntryForm, { systemId: "fixture", date: "2026-09-10", today: "2026-09-10", weatherStatus: "", onSave: () => undefined, onDirty: () => undefined }));
+    const visible = renderToStaticMarkup(createElement(DailyEntryForm, { systemId: "fixture", date: "2026-09-10", today: "2026-09-10", existing: { ...row("2026-09-10", 4), generatorRan: true }, weatherStatus: "", onSave: () => undefined, onDirty: () => undefined }));
+    expect(hidden).not.toContain("Approx. charging power");
+    expect(visible).toContain("Approx. charging power");
+    expect(visible).toContain("Total runtime");
+    expect(visible).toContain("(hours)");
+    expect(visible).toContain("Runtime never includes grid input");
+  });
+  it("calculates approximate generator charging energy without calling it SOC", () => {
+    const html = renderToStaticMarkup(createElement(DailyEntryForm, { systemId: "fixture", date: "2026-09-10", today: "2026-09-10", existing: { ...row("2026-09-10", 4), generatorRan: true, generatorMinutes: 180, generatorChargingWatts: 4000 }, weatherStatus: "", onSave: () => undefined, onDirty: () => undefined }));
+    expect(html).toContain("Approx. generator charging energy: 12 kWh");
+    expect(html).toContain("This is energy, not an SOC percentage");
+    expect(dailyLogSummary([{ ...row("2026-09-10", 4), generatorRan: true, generatorMinutes: 180, generatorChargingWatts: 4000 }])).toMatchObject({ generatorChargeEstimateDays: 1, generatorChargeKwh: 12 });
+  });
+  it("adds labelled generator and grid energy to the daily forecast card", () => {
+    const html = renderToStaticMarkup(createElement(DailyEntryForm, { systemId: "fixture", date: "2026-09-10", today: "2026-09-10", existing: { ...row("2026-09-10", 4, 20), generatorRan: true, generatorMinutes: 180, generatorChargingWatts: 4000, gridImportKwh: 3 }, weatherStatus: "", onSave: () => undefined, onDirty: () => undefined }));
+    expect(html).toContain("Generator charging +12 kWh");
+    expect(html).toContain("Grid import +3 kWh");
+    expect(html).toContain("Simple input total 35 kWh");
+    expect(html).toContain("not measured consumption, SOC change or a complete energy balance");
+  });
+  it("starts grid use minimised for an off-grid system", () => {
+    const html = renderToStaticMarkup(createElement(DailyEntryForm, { systemId: "fixture", date: "2026-09-10", today: "2026-09-10", isOffGrid: true, weatherStatus: "", onSave: () => undefined, onDirty: () => undefined }));
+    expect(html).toContain("Grid use");
+    expect(html).toContain("off-grid");
+    expect(html).toContain("Add grid readings");
+    expect(html).not.toContain("Grid import / input");
+  });
   it("loads older entries without inventing grid readings", () => {
     const observations = Object.fromEntries(Object.entries(emptyObservation).filter(([key]) => !key.startsWith("grid")));
     const entry = mapDailyLog({ observations, log_date: "2026-09-09", timezone: "Pacific/Auckland", forecast: null, updated_at: "2026-09-10T00:00:00Z" });

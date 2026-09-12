@@ -6,10 +6,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { BrandLogo } from "@/components/brand-logo";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
-import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
+import type { ChatMessage, Site } from "@/domain/models";
 import { useSolarWeather } from "@/weather/use-solar-weather";
 
-export function WattsonPage({ sites, systems, initialSiteId, initialConversationId, initialMessages }: { sites: Site[]; systems: SystemSummary[]; initialSiteId?: string; initialConversationId?: string; initialMessages: ChatMessage[] }) {
+export function WattsonPage({ sites, initialSiteId, initialConversationId, initialMessages }: { sites: Site[]; initialSiteId?: string; initialConversationId?: string; initialMessages: ChatMessage[] }) {
   const router = useRouter();
   const [siteId, setSiteId] = useState(initialSiteId ?? sites[0]?.id ?? "");
   const [conversationId, setConversationId] = useState(initialConversationId);
@@ -17,7 +17,6 @@ export function WattsonPage({ sites, systems, initialSiteId, initialConversation
   const [input, setInput] = useState(""); const [attachment, setAttachment] = useState<File>(); const [sending, setSending] = useState(false); const [menuOpen, setMenuOpen] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const site = sites.find((item) => item.id === siteId) ?? sites[0];
-  const siteSystems = systems.filter((system) => system.siteId === siteId);
   const weather = useSolarWeather(site ?? { id: "none", name: "", location: "", timezone: "UTC", locationSource: "manual", locationConfirmed: false });
   const siteQuery = siteId ? `?site=${siteId}` : "";
   useEffect(() => {
@@ -28,7 +27,7 @@ export function WattsonPage({ sites, systems, initialSiteId, initialConversation
     const message = input.trim() || (attachment ? "Please use this image as evidence." : ""); if (!message || sending) return;
     setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", content: message, createdAt: new Date().toISOString() }]); setInput(""); setSending(true);
     try {
-      const data = new FormData(); data.set("message", message); if (siteId) data.set("siteId", siteId); if (conversationId) data.set("conversationId", conversationId); if (siteSystems.length === 1) data.set("projectId", siteSystems[0].id); if (attachment) data.set("file", attachment);
+      const data = new FormData(); data.set("message", message); if (siteId) data.set("siteId", siteId); if (conversationId) data.set("conversationId", conversationId); if (attachment) data.set("file", attachment);
       if (weather.data) data.set("weatherContext", JSON.stringify({ site: weather.data.site, fetchedAt: weather.data.fetchedAt, allForecastHours: weather.data.hours }));
       const response = await fetch("/api/wattson/dashboard", { method: "POST", body: data }); const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
       if (body.conversationId) setConversationId(body.conversationId);

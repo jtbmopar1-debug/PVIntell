@@ -4,6 +4,7 @@ import { ArrowRight, Bot, Cloud, ImagePlus, Menu as MenuIcon, RotateCcw, Send, S
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { BrandLogo } from "@/components/brand-logo";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
 import { LocalDevFooter } from "@/components/localdev-footer";
@@ -11,7 +12,7 @@ import { WattsonHeaderAction } from "@/components/wattson-header-action";
 import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { formatRainfall, formatTemperature, formatWindSpeed, useUnitPreferences } from "@/preferences/units";
-import { fiveDaySolarOutlook, latestForecastHour, type SolarArrayForecastInput } from "@/weather/forecast";
+import { fiveDaySolarOutlook, latestForecastHour, type SolarArrayForecastInput, type SolarWeatherHour } from "@/weather/forecast";
 import { useForecastNow, useSolarWeather } from "@/weather/use-solar-weather";
 
 type GuidedDiscoveryDraft = {
@@ -102,19 +103,19 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
     const installedHref = selectedSite ? `/record-installed?site=${selectedSite.id}` : "/record-installed";
     const guidedDraft = profile.assessment.guidedNewSystem;
     const hasGuidedDraft = guidedDraft?.status === "draft" && Boolean(guidedDraft.questionId || Object.keys(guidedDraft.answers ?? {}).length);
-    const steps: Array<{ title: string; detail: string; href: string }> = discoveryDrafts.map((draft) => {
+    const steps: Array<{ title: string; detail: string; href: string; kind: "continue" | "new" | "installed" }> = discoveryDrafts.map((draft) => {
       const name = typeof draft.answers?.system_name === "string" ? draft.answers.system_name.trim() : "";
-      return { title: name ? `Continue System Build — ${name}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: `/discovery/new-system?draft=${draft.id}` };
+      return { title: name ? `Continue System Build — ${name}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: `/discovery/new-system?draft=${draft.id}`, kind: "continue" };
     });
     if (hasGuidedDraft) {
       const legacyName = typeof guidedDraft?.answers?.system_name === "string" ? guidedDraft.answers.system_name.trim() : "";
-      steps.unshift({ title: legacyName ? `Continue System Build — ${legacyName}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: "/discovery/new-system" });
+      steps.unshift({ title: legacyName ? `Continue System Build — ${legacyName}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: "/discovery/new-system", kind: "continue" });
     }
     systems.filter((system) => resumeHrefs[system.id]).reverse().forEach((system) => {
-      steps.unshift({ title: `Continue System Build — ${system.name}`, detail: "Return to this proposal's saved discovery, design or build stage.", href: resumeHrefs[system.id] });
+      steps.unshift({ title: `Continue System Build — ${system.name}`, detail: "Return to this proposal's saved discovery, design or build stage.", href: resumeHrefs[system.id], kind: "continue" });
     });
-    steps.push({ title: steps.length ? "Plan another new system" : "Plan a new system", detail: "Design a new solar or battery system for a site without one installed.", href: "/discovery/new-system?new=1" });
-    steps.push({ title: "Record installed equipment", detail: "Create an as-built system, then add the equipment and connections that are already there.", href: installedHref });
+    steps.push({ title: steps.length ? "Plan another new system" : "Plan a new system", detail: "Design a new solar or battery system for a site without one installed.", href: "/discovery/new-system?new=1", kind: "new" });
+    steps.push({ title: "Record installed equipment", detail: "Create an as-built system, then add the equipment and connections that are already there.", href: installedHref, kind: "installed" });
     return steps;
   }, [discoveryDrafts, profile.assessment.guidedNewSystem, selectedSite, systems, resumeHrefs]);
 
@@ -127,11 +128,9 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
     setInput("");
     setSending(true);
     try {
-      const targetProjectId = siteSystems.length === 1 ? siteSystems[0].id : systems.length === 1 ? systems[0].id : undefined;
       const bodyData = new FormData();
       bodyData.set("message", message);
       if (attachment) bodyData.set("file", attachment);
-      if (targetProjectId) bodyData.set("projectId", targetProjectId);
       if (siteId) bodyData.set("siteId", siteId);
       if (activeConversationId) bodyData.set("conversationId", activeConversationId);
       if (today && weather.data) bodyData.set("weatherContext", JSON.stringify({
@@ -278,13 +277,13 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
         {weather.error ? <div className="rounded-2xl border border-[#e8c86b] bg-[#fff8d9] px-4 py-3 text-xs text-[#735800]">{selectedSite ? "Today’s live weather could not be loaded. Your saved Site and system information is still available." : `Regional weather could not be loaded for ${profile.location || "your saved region"}. ${weather.error}`}</div> : null}
 
         <section>
-          <div className="mb-3 flex items-end justify-between gap-4">
-            <div><div className="eyebrow">Today’s solar conditions</div><h2 className="mt-2 font-display text-xl font-extrabold">The useful numbers at a glance</h2></div>
+          <div className="mb-2 flex items-end justify-between gap-3 sm:mb-3 sm:gap-4">
+            <div><div className="eyebrow">Today’s solar conditions</div><h2 className="mt-1.5 font-display text-lg font-extrabold sm:mt-2 sm:text-xl">The useful numbers at a glance</h2></div>
             {selectedSite ? <button onClick={() => openSystemView("weather")} className="shrink-0 text-[11px] font-bold text-brand">Full forecast →</button> : null}
           </div>
-          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-            <Metric emoji="☀️" label="Expected solar today" value={selectedSite && today ? `${today.expected.toFixed(1)} kWh` : weather.loading ? "Loading…" : profile.location ? "Regional outlook" : "—"} detail={selectedSite && today ? `${today.remaining.toFixed(1)} kWh still available · ${today.forecastBasis === "array-geometry" ? "using panel angle" : "basic estimate"}` : profile.location ? `Sunlight and weather for ${weather.data?.site.location ?? profile.location} · add a system for kWh` : "Add a regional location in Onboarding answers"} />
-            <Metric emoji="🌤️" label="Best solar hour" value={today?.peak ? new Intl.DateTimeFormat("en-NZ", { hour: "numeric", timeZone: weather.data?.site.timezone ?? forecastSite.timezone }).format(new Date(today.peak.time)) : "—"} detail={today?.peak ? `${Math.round(today.peak.irradiance ?? 0)} W/m² forecast` : "Waiting for regional weather"} />
+          <div className="grid grid-cols-2 gap-1.5 sm:gap-2.5 md:grid-cols-3">
+            <Metric emoji={<SolarYieldCurve />} label="Expected solar today" value={selectedSite && today ? `${today.expected.toFixed(1)} kWh` : weather.loading ? "Loading…" : profile.location ? "Regional outlook" : "—"} detail={selectedSite && today ? `${today.remaining.toFixed(1)} kWh still available · ${today.forecastBasis === "array-geometry" ? "using panel angle" : "basic estimate"}` : profile.location ? `Sunlight and weather for ${weather.data?.site.location ?? profile.location} · add a system for kWh` : "Add a regional location in Onboarding answers"} />
+            <Metric emoji={forecastWeatherEmoji(today?.peak)} label="Best solar hour" value={today?.peak ? new Intl.DateTimeFormat("en-NZ", { hour: "numeric", timeZone: weather.data?.site.timezone ?? forecastSite.timezone }).format(new Date(today.peak.time)) : "—"} detail={today?.peak ? `${Math.round(today.peak.irradiance ?? 0)} W/m² forecast` : "Waiting for regional weather"} />
             <Metric emoji="🌡️" label="Temperature now" value={today?.current?.temperature != null ? formatTemperature(today.current.temperature, units) : "—"} detail={today?.current?.cloudCover != null ? `${Math.round(today.current.cloudCover)}% cloud cover` : "Current local conditions"} />
             <Metric emoji="🌧️" label="Rain today" value={today ? formatRainfall(today.rain, units) : "—"} detail="Daily forecast total" />
             <Metric emoji="💨" label="Wind today" value={today ? formatWindSpeed(today.maxWind, units) : "—"} detail={today?.current?.windSpeed != null ? `${formatWindSpeed(today.current.windSpeed, units)} right now` : "Peak forecast speed"} />
@@ -297,9 +296,9 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             <div className="eyebrow">Let’s get started</div>
             <div className={`mt-5 grid gap-4 ${connectedSiteSystems.length ? "md:grid-cols-3" : "sm:grid-cols-2"}`}>
               {nextSteps.map((step) => (
-                <Link key={step.href} href={step.href} className="min-h-36 rounded-2xl border border-[#e5b92e] bg-[#f6c945] p-5 transition hover:-translate-y-0.5 hover:bg-[#f9d65b] hover:shadow-md md:p-6">
-                  <div className="flex items-center justify-between gap-3"><strong className="text-base text-brand">{step.title}</strong><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 text-brand"><ArrowRight size={17} /></span></div>
-                  <p className="mt-3 max-w-xl text-xs leading-5 text-[#3f5870]">{step.detail}</p>
+                <Link key={step.href} href={step.href} className={`min-h-36 rounded-2xl border p-5 transition hover:-translate-y-0.5 hover:shadow-md md:p-6 ${step.kind === "new" ? "theme-new-system-action border-[#78b58c] bg-[#bfe8cc] hover:bg-[#ccefd6]" : step.kind === "continue" ? "theme-continue-discovery-action border-[#76abd0] bg-[#b9dcf5] hover:bg-[#c9e5f7]" : "border-[#e5b92e] bg-[#f6c945] hover:bg-[#f9d65b]"}`}>
+                  <div className="flex items-center justify-between gap-3"><strong className={`text-base ${step.kind === "new" ? "text-[#123d2b]" : step.kind === "continue" ? "text-[#103b5b]" : "text-brand"}`}>{step.title}</strong><span className={`grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 ${step.kind === "new" ? "text-[#123d2b]" : step.kind === "continue" ? "text-[#103b5b]" : "text-brand"}`}><ArrowRight size={17} /></span></div>
+                  <p className={`mt-3 max-w-xl text-xs leading-5 ${step.kind === "new" ? "text-[#294f3d]" : step.kind === "continue" ? "text-[#284f6b]" : "text-[#3f5870]"}`}>{step.detail}</p>
                 </Link>
               ))}
               {connectedSiteSystems.length ? <button type="button" onClick={openMonitor} className="min-h-36 rounded-2xl border border-[#e5b92e] bg-[#f6c945] p-5 text-left transition hover:-translate-y-0.5 hover:bg-[#f9d65b] hover:shadow-md md:p-6"><div className="flex items-center justify-between gap-3"><strong className="text-base text-brand">Connect live systems</strong><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 text-brand"><Zap size={17}/></span></div><p className="mt-3 max-w-xl text-xs leading-5 text-[#3f5870]">Open live readings for {connectedSiteSystems.length === 1 ? connectedSiteSystems[0].name : `${connectedSiteSystems.length} connected systems at ${selectedSite?.name}`}.</p></button> : null}
@@ -372,6 +371,18 @@ function WeatherPill({ icon: Icon, label }: { icon: typeof Sun; label: string })
   return <span className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-[11px] font-bold backdrop-blur-sm"><Icon size={14} className="text-[#ffe07b]" />{label}</span>;
 }
 
-function Metric({ emoji, label, value, detail }: { emoji: string; label: string; value: string; detail: string }) {
-  return <div className="card min-w-0 p-2.5 sm:p-3"><div className="text-[9px] font-semibold leading-4 text-muted">{label}</div><div className="mt-1.5 flex min-w-0 items-center gap-2"><span aria-hidden="true" className="shrink-0 text-base leading-none">{emoji}</span><div className="min-w-0 break-words font-display text-base font-extrabold tracking-[-.035em] sm:text-lg">{value}</div></div><div className="mt-1 truncate text-[8px] leading-3 text-muted" title={detail}>{detail}</div></div>;
+function SolarYieldCurve() {
+  return <svg viewBox="0 0 20 20" className="size-[18px] text-[#d99500]" fill="none" aria-hidden="true"><path d="M2 16C4.4 16 5.1 5 10 5s5.6 11 8 11H2Z" fill="currentColor" opacity=".22"/><path d="M2 16c2.4 0 3.1-11 8-11s5.6 11 8 11M2 16h16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+}
+
+function forecastWeatherEmoji(hour?: SolarWeatherHour) {
+  if (!hour) return "—";
+  if ((hour.precipitation ?? 0) >= 0.2) return "🌧️";
+  if ((hour.cloudCover ?? 0) >= 75) return "☁️";
+  if ((hour.cloudCover ?? 0) >= 30) return "🌤️";
+  return "☀️";
+}
+
+function Metric({ emoji, label, value, detail }: { emoji: ReactNode; label: string; value: string; detail: string }) {
+  return <div className="card min-w-0 p-2 sm:p-3"><div className="truncate text-[8px] font-semibold leading-3 text-muted sm:text-[9px] sm:leading-4">{label}</div><div className="mt-1 flex min-w-0 items-center gap-1.5 sm:mt-1.5 sm:gap-2"><span aria-hidden="true" className="shrink-0 text-sm leading-none sm:text-base">{emoji}</span><div className="min-w-0 break-words font-display text-sm font-extrabold tracking-[-.035em] sm:text-lg">{value}</div></div><div className="mt-1 hidden truncate text-[8px] leading-3 text-muted sm:block" title={detail}>{detail}</div></div>;
 }

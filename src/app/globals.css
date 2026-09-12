@@ -191,6 +191,28 @@ html[data-theme="dark"] .dashboard-actions a p,
 html[data-theme="dark"] .dashboard-actions button p,
 html[data-theme="dark"] .dashboard-actions a .text-brand,
 html[data-theme="dark"] .dashboard-actions button .text-brand {color:#143c63!important}
+
+/* Solar-yellow remains a light surface in both themes. Dark mode changes the
+   brand and muted text tokens to pale colours, so every foreground inside a
+   yellow control must return to the dark solar-surface ink. */
+html[data-theme="dark"] [class~="bg-[#f6c945]"],
+html[data-theme="dark"] [class~="bg-[#f6c945]"] * {color:#143c63!important}
+html[data-theme="dark"] [class~="bg-[#f6c945]"] [class*="bg-white/"] {background-color:rgba(255,255,255,.55)!important}
+html[data-theme="dark"] .theme-new-system-action {background-color:#a9dcb9!important;border-color:#65a77b!important;color:#123d2b!important}
+html[data-theme="dark"] .theme-new-system-action * {color:#123d2b!important}
+html[data-theme="dark"] .theme-new-system-action [class*="bg-white/"] {background-color:rgba(255,255,255,.58)!important}
+html[data-theme="dark"] .theme-continue-discovery-action {background-color:#a9d2ee!important;border-color:#659dc5!important;color:#103b5b!important}
+html[data-theme="dark"] .theme-continue-discovery-action * {color:#103b5b!important}
+html[data-theme="dark"] .theme-continue-discovery-action [class*="bg-white/"] {background-color:rgba(255,255,255,.58)!important}
+.theme-continue-discovery-header {background-color:#b9dcf5;border-color:#76abd0;color:#103b5b}
+.theme-continue-discovery-header .text-muted {color:#42647e}
+html[data-theme="dark"] .systems-card-list>article.card>.theme-continue-discovery-header {background:#17364e!important;border-color:#659dc5!important;color:#eaf6ff}
+html[data-theme="dark"] .systems-card-list>article.card>.theme-continue-discovery-header .text-muted {color:#b8d5e8!important}
+.theme-new-site-system-tile {background-color:#e2f3e9;border-color:#78b58c;color:#123d2b}
+.theme-new-site-system-tile .text-muted {color:#496b58}
+html[data-theme="dark"] .theme-new-site-system-tile {background-color:#173126!important;border-color:#65a77b!important;color:#e9f8ef!important}
+html[data-theme="dark"] .theme-new-site-system-tile .text-muted {color:#b7d5c2!important}
+html[data-theme="dark"] .theme-new-site-system-tile .text-\[\#236438\] {color:#8ed9af!important}
 .wattson-conversation,
 #wattson > .thin-scrollbar {
   height: clamp(360px, 52vh, 520px) !important;

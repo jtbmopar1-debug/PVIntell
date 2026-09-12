@@ -28,9 +28,9 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
-  // Site-owned data has foreign-key cascades. This removes its discovery,
-  // systems, equipment links and child system records as one workspace.
-  const removed = await supabase.from("sites").delete().eq("id", id).eq("owner_id", userId);
+  const removed = await supabase.rpc("delete_site_workspace", { target_site_id: id });
   if (removed.error) return Response.json({ error: removed.error.message }, { status: 400 });
+  const outcome = removed.data as { deleted?: boolean } | null;
+  if (!outcome?.deleted) return Response.json({ error: "Site not found." }, { status: 404 });
   return Response.json({ deleted: true });
 }

@@ -7,6 +7,15 @@ import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 import { isNewSystemSetupIntent, startHereLabel, startHereMessage, startHereUrl } from "@/ai/new-system-intent";
 import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/inventory-from-label";
+import { extractEquipmentLabel } from "@/ai/equipment-label";
+import { containsUnsupportedSettingsSetupAdvice, wattsonApplicationCapabilities } from "@/ai/application-capabilities";
+import {
+  buildActiveConversationState,
+  conceptualSchematicForActiveSetup,
+  conversationRetrievalPolicy,
+  equipmentTargetClarification,
+  removeRepeatedAnsweredQuestions,
+} from "@/ai/active-conversation";
 import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
 import { loadMonitoringSnapshot } from "@/monitoring/repository";
 import { buildMonitoringWattsonContext } from "@/monitoring/wattson-context";
@@ -144,13 +153,20 @@ export async function POST(request: Request) {
   }
   let inventoryCapture: InventoryPhotoCapture | undefined;
   if (imagePath && imageBytes && imageFile) {
-    inventoryCapture = await captureSiteInventoryFromLabel({
-      supabase,
-      siteId: owned.data.site_id,
-      imagePath,
-      imageBytes,
-      mimeType: imageFile.type,
-    });
+    const explicitlyRequestsInventoryWrite = /\b(?:save|record|add|attach|import)\b[\s\S]{0,80}\b(?:photo|image|label|equipment|inventory|component)\b|\b(?:save|record|add|attach|import) (?:this|it)\b/i.test(parsed.data.message);
+    if (explicitlyRequestsInventoryWrite) {
+      inventoryCapture = await captureSiteInventoryFromLabel({ supabase, siteId: owned.data.site_id, imagePath, imageBytes, mimeType: imageFile.type });
+    } else {
+      try {
+        inventoryCapture = {
+          extraction: await extractEquipmentLabel(imageBytes, imageFile.type),
+          saved: false,
+          warning: "Image evidence was analysed for this conversation only; no Site equipment record was created.",
+        };
+      } catch (problem) {
+        inventoryCapture = { saved: false, warning: problem instanceof Error ? problem.message : "Wattson could not read this equipment label." };
+      }
+    }
   }
 
   let conversation = parsed.data.conversationId
@@ -202,10 +218,10 @@ export async function POST(request: Request) {
 
   const recent = await supabase
     .from("chat_messages")
-    .select("role,content")
+    .select("role,content,structured_context")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
-    .limit(12);
+    .limit(40);
   const history = (recent.data ?? []).reverse();
   const priorHistory =
     history.at(-1)?.role === "user" &&
@@ -242,6 +258,14 @@ export async function POST(request: Request) {
       { error: profileResult.error.message },
       { status: 400 },
     );
+  const siteResult = await supabase
+    .from("sites")
+    .select("id,name")
+    .eq("id", owned.data.site_id)
+    .eq("owner_id", userId)
+    .single();
+  if (siteResult.error)
+    return Response.json({ error: siteResult.error.message }, { status: 400 });
   const equipmentResult = await supabase
     .from("site_equipment")
     .select(
@@ -321,6 +345,50 @@ export async function POST(request: Request) {
       (connection) => connection.project_id === system.id,
     ),
   }));
+  const activeConversation = buildActiveConversationState({
+    messages: priorHistory,
+    currentMessage: parsed.data.message,
+    knownSites: [siteResult.data],
+    knownSystems: connectedSiteSystems.map((system) => ({ id: system.id, name: system.name, siteId: siteResult.data.id, siteName: siteResult.data.name })),
+    ambientSite: siteResult.data,
+    currentImageCapture: inventoryCapture,
+  });
+  const activeSubjectIsUnassociated = activeConversation.currentSubject?.association === "unassociated";
+  const groundedProject = activeSubjectIsUnassociated
+    ? {
+        ...parsed.data.project,
+        name: "Saved project context withheld — active setup is not associated",
+        description: "",
+        goal: "",
+        priorities: [],
+        loads: [],
+        assumptions: [],
+        components: [],
+        connections: [],
+        designCalculator: undefined,
+        designDiscovery: undefined,
+        pvArrays: [],
+        installationSteps: [],
+        commissioning: [],
+      }
+    : parsed.data.project;
+  const groundedSiteEquipment = activeSubjectIsUnassociated ? [] : equipmentResult.data ?? [];
+  const groundedSiteSystems = connectedSiteSystems.map((system) => activeSubjectIsUnassociated
+    ? {
+        id: system.id,
+        name: system.name,
+        mode: system.mode,
+        phase: system.phase,
+        system_voltage: system.system_voltage,
+        selected: system.selected,
+        conversationRelationship: "retrieved-record-not-associated-with-active-subject; equipment details withheld",
+      }
+    : {
+        ...system,
+        conversationRelationship: activeConversation.currentSubject?.associatedSystemId === system.id || system.selected
+          ? "explicitly-associated-with-active-subject"
+          : "retrieved-record-not-associated-with-active-subject",
+      });
   const selectedSystem = connectedSiteSystems.find((system) => system.id === parsed.data.projectId);
   const monitoringOnlyIntent = completedSystemIntent(parsed.data.message);
   let phaseMovedToMonitor = false;
@@ -345,19 +413,22 @@ export async function POST(request: Request) {
       } catch { /* Monitoring must not break non-monitoring Wattson conversations. */ }
       const result = await askGemini({
         message: parsed.data.message,
-        project: parsed.data.project,
+        project: groundedProject,
         recentConversation: priorHistory,
         questionnaireContext: {
-          dailyMonitorLog: await loadDailyLogContext(supabase, userId, { systemId: parsed.data.projectId, siteId: owned.data.site_id }),
+          activeConversation,
+          retrievalPolicy: conversationRetrievalPolicy(activeConversation),
+          applicationCapabilities: wattsonApplicationCapabilities(),
+          dailyMonitorLog: activeSubjectIsUnassociated ? undefined : await loadDailyLogContext(supabase, userId, { systemId: parsed.data.projectId, siteId: owned.data.site_id }),
           onboardingLocation: profileResult.data.home_location,
           userTimezone: profileResult.data.timezone,
           userAssessment: profileResult.data.onboarding_assessment ?? {},
-          responses: questionnaireResult.data ?? [],
-          siteEquipment: equipmentResult.data ?? [],
+          responses: activeSubjectIsUnassociated ? [] : questionnaireResult.data ?? [],
+          siteEquipment: groundedSiteEquipment,
           inventoryLabelCapture: inventoryCapture,
-          connectedSiteSystems,
+          connectedSiteSystems: groundedSiteSystems,
         },
-        monitoringContext,
+        monitoringContext: activeSubjectIsUnassociated ? undefined : monitoringContext,
         image,
       });
       const systemSettings = selectedSystem?.settings;
@@ -371,7 +442,8 @@ export async function POST(request: Request) {
         supabase,
         parsed.data.projectId,
         result.actions.filter((action) =>
-          !(monitoringOnlySystem && ["record_design_discovery", "record_design_preference", "record_preliminary_design", "record_proposed_component"].includes(action.name))
+          !activeSubjectIsUnassociated
+          && !(monitoringOnlySystem && ["record_design_discovery", "record_design_preference", "record_preliminary_design", "record_proposed_component"].includes(action.name))
           &&
           (action.name !== "record_design_preference" || !blockedArchitecture)
           && (action.name !== "record_design_discovery" || !uncertainDiscovery)
@@ -420,6 +492,13 @@ export async function POST(request: Request) {
         message = result.actions.length
           ? "I couldn’t safely apply that change to a specific record. Tell me which item it belongs to."
           : "I didn’t produce a useful reply. Please send that once more.";
+      message = removeRepeatedAnsweredQuestions(message, activeConversation);
+      message = conceptualSchematicForActiveSetup(activeConversation) ?? message;
+      message = equipmentTargetClarification(activeConversation) ?? message;
+      if (containsUnsupportedSettingsSetupAdvice(message)) {
+        const withoutSettingsAdvice = message.replace(/[^.!?]*(?:go|head|navigate) to (?:the )?settings[^.!?]*[.!?]?|[^.!?]*open (?:the )?settings[^.!?]*[.!?]?/gi, "").trim();
+        message = `${withoutSettingsAdvice}${withoutSettingsAdvice ? "\n\n" : ""}You do not need generic Settings for this. I can keep working from the confirmed details in this conversation; a specific PVIntell page should be named only when its actual controls are needed.`;
+      }
       citations = result.citations;
       structuredContext = {
         provider: "gemini",
@@ -431,6 +510,7 @@ export async function POST(request: Request) {
         actions: appliedActions,
         imagePath,
         inventoryCapture,
+        activeConversation,
       };
     } catch (error) {
       const detail =
@@ -442,9 +522,9 @@ export async function POST(request: Request) {
     }
   } else {
     message = await new MockAIProvider().sendMessage(parsed.data.message, {
-      project: parsed.data.project,
+      project: groundedProject,
     });
-    structuredContext = { provider: "mock", projectId: parsed.data.projectId };
+    structuredContext = { provider: "mock", projectId: parsed.data.projectId, activeConversation };
   }
   if (inventoryCapture?.saved)
     message = `${message}\n\nI added ${inventoryCapture.equipmentName ?? "this equipment"} to this Site’s inventory from the label photo. I saved only visible label details and marked its physical condition as needing testing; you can review or correct the inventory record at any time.`;
