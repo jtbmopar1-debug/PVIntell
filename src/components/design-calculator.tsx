@@ -13,6 +13,7 @@ import { recommendedPanelOrientation } from "@/design/panel-orientation";
 import { generatorFromDiscovery, proposalIncludesSolar } from "@/design/proposal-inputs";
 import { assessPanelSurfaces } from "@/design/panel-surfaces";
 import { suggestPvDcStringCable } from "@/design/pv-dc-cable-sizing";
+import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
 import type { DesignCalculatorState, Project, Site } from "@/domain/models";
 
 const n = (value: unknown, fallback = 0) => {
@@ -138,7 +139,7 @@ function systemScopeSummary(project: Project, design?: DesignCalculatorState) {
   return `Wattson has arranged ${arrayText} ${inverterText} ${gridRelationship}${outcome ? `, with the goal of helping you ${outcome}` : " from the confirmed Site, load and future-use requirements"}. ${batteryText}${generatorText}`;
 }
 
-export function ProposalScopeOverview({ project, design }: { project: Project; design: DesignCalculatorState }) {
+export function ProposalScopeOverview({ project, design, site }: { project: Project; design: DesignCalculatorState; site?: Site }) {
   const surfaces = assessPanelSurfaces(project.designDiscovery ?? {}, design, project.solarResource?.latitude);
   const value = (key: string) => project.designDiscovery?.[key]?.value ?? "";
   const panelCount = n(design.panelCount);
@@ -194,6 +195,12 @@ export function ProposalScopeOverview({ project, design }: { project: Project; d
   const powerConversionText = mixedMicroinverterRetrofit
     ? `Power conversion follows two paths: the existing ${existingPanelCount}-panel array retains its microinverters, while the separate ${round(supplementary?.targetPvKw ?? 0, 2)} kW minimum additional array feeds ${batteryInverterName} through a DC-isolated MPPT input. The saved ${design.inverterKw ?? "unconfirmed"} kW sizing value is not treated as the confirmed nameplate rating of either inverter path.`
     : `Power conversion is through ${design.inverterKw ? `${inverterArticle} ${design.inverterKw} kW ` : "a "}${architecture}.`;
+  const inverterAdvice = inverterArrangementAdvice({
+    requiredKw: design.inverterKw,
+    siteLocation: site?.location,
+    timezone: site?.timezone,
+    connectionType: design.connectionType,
+  });
   const solarFirstAlternative = !proposalUsesPublicGrid(project) && !proposalIncludesBattery(project)
     ? solarFirstPowerAlternative({ panelCount, panelWatts: n(design.panelWatts), inverterKw: n(design.inverterKw), startupPeakKw: startupEnvelopeKw })
     : undefined;
@@ -251,6 +258,7 @@ export function ProposalScopeOverview({ project, design }: { project: Project; d
     <p className="mt-3 text-xs leading-5 text-[#31465c]">{moduleAreaM2 ? `${round(moduleAreaM2, 1)} m² of known panel face area` : "Panel dimensions still need confirming"}{recordedAreaM2 ? `; ${round(recordedAreaM2, 1)} m² of recorded ${areaType} before the listed exclusions.` : "; usable mounting area still needs confirming."} The location-based starting recommendation is {azimuthText(design.azimuthDegrees)} azimuth and {design.tiltDegrees !== undefined ? `${round(design.tiltDegrees, 0)}° tilt` : "tilt to confirm"}. Roof-mounted panels normally follow the recorded roof face and pitch; these target angles do not describe an unmeasured roof. Mounting basis: {mountingApproach}.{shadePlanningText}</p>
     {surfaces.faces.length ? <div className="mt-3 space-y-2 text-xs leading-5 text-[#31465c]">{surfaces.faces.map((face) => <p key={face.id}><strong>{face.name}:</strong> {face.direction ? face.direction.replaceAll("_", " ") : "Direction unconfirmed"}{face.pitch ? `, ${face.pitch} surface pitch` : ", pitch unconfirmed"}. {face.capacity !== undefined ? `About ${face.capacity} modules in the preliminary rectangular layout. ` : "Module fit awaits dimensions. "}{face.mountingDescription} {face.aspect}</p>)}{surfaces.warnings.map((warning) => <p key={warning} className="rounded-lg border border-[#e2c765] bg-[#fff8d8] p-3">{warning}</p>)}</div> : null}
     <p className="mt-3 text-xs leading-5 text-[#31465c]">{powerConversionText} {gridRelationship} {proposalIncludesBattery(project) ? `The proposed ${[batteryVoltageText, design.batteryUsableKwh ? `${round(design.batteryUsableKwh, 1)} kWh usable` : "", chemistry].filter(Boolean).join(", ")} battery supports the recorded backup or energy-shifting goal.` : "No battery is included."}{generatorText}</p>
+    {inverterAdvice ? <p className="mt-3 rounded-xl border border-[#e2c765] bg-[#fff8d8] p-3 text-xs leading-5 text-[#6a5110]"><strong>Inverter capacity and phase check:</strong> {inverterAdvice.message}</p> : null}
     {bifacialModulesIncluded ? <p className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 text-xs leading-5 text-[#31465c]"><strong>Bifacial design check:</strong> Panel wattage is treated as front-side nameplate capacity. Rear-side gain varies with mounting height, ground reflectance, spacing, shade and season, so it is not assumed as guaranteed output. The selected inverter and MPPT inputs must be checked against the module datasheet&apos;s bifacial current allowance, maximum voltage and the chosen DC oversizing or clipping strategy.</p> : null}
     {topologyNote ? <p className="mt-3 rounded-xl border border-[#e2c765] bg-[#fff8d8] p-3 text-xs leading-5 text-[#6a5110]"><strong>Inverter arrangement check:</strong> {topologyNote}</p> : null}
     {proposalUsesPublicGrid(project) && directSolarLoadKw ? <p className="mt-3 rounded-xl border border-[#9bcdb2] bg-[#effaf4] p-3 text-xs font-semibold leading-5 text-[#245c3e]"><strong>Solar-first daylight sizing:</strong> The array and inverter are sized to serve about {round(directSolarLoadKw, 2)} kW of overlapping loads explicitly scheduled for daylight in adequate sun. The public grid remains the fallback for motor starts, cloud and production shortfalls.</p> : null}
@@ -817,14 +825,32 @@ export function recoverRecordedStringLayout(design: DesignCalculatorState, panel
   const iscA = n(design.panelIscA);
   const coefficient = Number(design.panelVocTemperatureCoefficientPercentPerC);
   if (!vmpV || !vocV || !impA || !iscA || !Number.isFinite(coefficient)) return undefined;
-  return defaultProposalPanelStringLayout(panelCount, {
+  const profile = {
     ...proposalPanelProfile(design.panelType),
     vmpV,
     vocV,
     impA,
     iscA,
     vocTemperatureCoefficientPercentPerC: coefficient,
-  });
+  };
+  const strings = Math.round(n(design.pvStrings));
+  const panelsPerString = Math.round(n(design.panelsPerString));
+  const recordedIsConsistent = strings > 0 && panelsPerString > 0
+    && strings * panelsPerString === panelCount;
+  const layout = recordedIsConsistent
+    ? { strings, panelsPerString }
+    : defaultProposalPanelStringLayout(panelCount, profile);
+  if (!layout) return undefined;
+  const coldVocPerPanel = vocV * (1 + Math.abs(coefficient) / 100 * 35);
+  return {
+    ...layout,
+    stringVmpV: Number((layout.panelsPerString * vmpV).toFixed(1)),
+    stringVocV: Number((layout.panelsPerString * vocV).toFixed(1)),
+    coldStringVocV: Number((layout.panelsPerString * coldVocPerPanel).toFixed(1)),
+    minimumMpptCurrentA: impA,
+    minimumInputShortCircuitCurrentA: iscA,
+    planningMinimumTemperatureC: -10,
+  };
 }
 
 function discoveredAcSupply(project: Project) {
@@ -902,9 +928,9 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       panelThicknessMm: saved.panelThicknessMm,
       panelWeightKg: saved.panelWeightKg,
       panelWeightBasis: saved.panelWeightBasis,
-      pvStrings: rejectWattsonPanelSizing ? undefined : saved.pvStrings ?? recoveredStringLayout?.strings,
-      panelsPerString: rejectWattsonPanelSizing ? undefined : saved.panelsPerString ?? recoveredStringLayout?.panelsPerString,
-      stringDesign: rejectWattsonPanelSizing ? undefined : saved.stringDesign ?? recoveredStringLayout,
+      pvStrings: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.strings,
+      panelsPerString: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.panelsPerString,
+      stringDesign: rejectWattsonPanelSizing ? undefined : recoveredStringLayout,
       panelVmpV: saved.panelVmpV,
       panelVocV: saved.panelVocV,
       panelImpA: saved.panelImpA,
@@ -1042,7 +1068,7 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     } catch (problem) { setStatus(problem instanceof Error ? problem.message : "Could not save design"); }
   }
   return <div className="animate-rise space-y-4">
-    <div><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><div className="eyebrow">{commissioned ? "Installed system record" : "System planning record"}</div><h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">{project.name} System Overview</h1><p className="mt-1.5 max-w-3xl text-xs leading-5 text-muted">{commissioned ? "The commissioned specification and as-built component record. Keep it current when equipment, settings or connections change." : "The planning numbers behind the working schematic. Wattson prefills these from discovery and completes them as routes and equipment are confirmed."}</p></div>{!commissioned ? <Link href={`/sites/${project.siteId}/systems/${project.id}/design/schematic`} className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">← Back to schematic</Link> : null}</div><div className="mt-4 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div>{commissioned ? <p className="mt-2 text-sm font-semibold leading-6">{systemScopeSummary(project, design)}</p> : <div className="mt-2"><ProposalScopeOverview project={project} design={design}/></div>}</div>{status && <p className="mt-1.5 text-[9px] font-bold text-brand">{status}</p>}</div>
+    <div><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><div className="eyebrow">{commissioned ? "Installed system record" : "System planning record"}</div><h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.045em] md:text-[30px]">{project.name} System Overview</h1><p className="mt-1.5 max-w-3xl text-xs leading-5 text-muted">{commissioned ? "The commissioned specification and as-built component record. Keep it current when equipment, settings or connections change." : "The planning numbers behind the working schematic. Wattson prefills these from discovery and completes them as routes and equipment are confirmed."}</p></div>{!commissioned ? <Link href={`/sites/${project.siteId}/systems/${project.id}/design/schematic`} className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">← Back to schematic</Link> : null}</div><div className="mt-4 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div>{commissioned ? <p className="mt-2 text-sm font-semibold leading-6">{systemScopeSummary(project, design)}</p> : <div className="mt-2"><ProposalScopeOverview project={project} design={design} site={site}/></div>}</div>{status && <p className="mt-1.5 text-[9px] font-bold text-brand">{status}</p>}</div>
 
     <section className="card overflow-hidden">
       <div className="border-b border-line bg-[#eef5fc] p-5"><div className="eyebrow">{commissioned ? "As-built equipment schedule" : "Schematic equipment schedule"}</div><h2 className="mt-2 text-lg font-extrabold">Every component in this system</h2><p className="mt-1 max-w-3xl text-xs leading-5 text-muted">{commissioned ? "This is the commissioned system record. The equipment schedule, technical specifications and schematic describe what is installed." : "This list and the schematic are the same working record. Proposed items become the verified as-built record when installation and commissioning are completed."}</p></div>
@@ -1202,7 +1228,7 @@ export function ProposedBuildSchematic({ project, site, showIntro = false }: { p
     const batterySizing = includeBattery ? proposalBatterySizing(project, wattsonSizedWithoutDailyEnergy ? undefined : n(saved.batteryUsableKwh) || undefined, saved.updatedBy !== "wattson") : { usableKwh: undefined, acceptedSavedValue: false };
     const batteryUsableKwh = includeBattery ? batterySizing.usableKwh : undefined;
     const batteryAh = includeBattery ? (batterySizing.acceptedSavedValue ? saved.batteryAh : undefined) ?? (batteryUsableKwh ? Math.ceil((batteryUsableKwh * 1000) / Math.max(n(batteryVoltage) * (n(usableBatteryPercent, 80) / 100), 1)) : undefined) : undefined;
-    return { ...saved, panelWatts, panelCount, targetPvKw: rejectWattsonPanelSizing ? undefined : saved.targetPvKw, mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project), pvStrings: rejectWattsonPanelSizing ? undefined : saved.pvStrings ?? recoveredStringLayout?.strings, panelsPerString: rejectWattsonPanelSizing ? undefined : saved.panelsPerString ?? recoveredStringLayout?.panelsPerString, stringDesign: rejectWattsonPanelSizing ? undefined : saved.stringDesign ?? recoveredStringLayout, panelVmpV: saved.panelVmpV, panelVocV: saved.panelVocV, panelImpA: saved.panelImpA, panelIscA: saved.panelIscA, inverterKw, batteryVoltage, batteryUsableKwh, batteryAh, batteryQuantity: includeBattery ? saved.batteryQuantity ?? 1 : undefined, usableBatteryPercent, generatorIncluded: generator.included, generatorPurchaseStatus: saved.generatorPurchaseStatus ?? generator.purchaseStatus, generatorType: saved.generatorType ?? generator.generatorType, generatorFuel: saved.generatorFuel ?? generator.fuel, generatorContinuousKw, generatorSurgeKw: saved.generatorSurgeKw ?? generator.surgeKw, generatorConnectionMethod: saved.generatorConnectionMethod ?? generator.connectionMethod, electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site) };
+    return { ...saved, panelWatts, panelCount, targetPvKw: rejectWattsonPanelSizing ? undefined : saved.targetPvKw, mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project), pvStrings: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.strings, panelsPerString: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.panelsPerString, stringDesign: rejectWattsonPanelSizing ? undefined : recoveredStringLayout, panelVmpV: saved.panelVmpV, panelVocV: saved.panelVocV, panelImpA: saved.panelImpA, panelIscA: saved.panelIscA, inverterKw, batteryVoltage, batteryUsableKwh, batteryAh, batteryQuantity: includeBattery ? saved.batteryQuantity ?? 1 : undefined, usableBatteryPercent, generatorIncluded: generator.included, generatorPurchaseStatus: saved.generatorPurchaseStatus ?? generator.purchaseStatus, generatorType: saved.generatorType ?? generator.generatorType, generatorFuel: saved.generatorFuel ?? generator.fuel, generatorContinuousKw, generatorSurgeKw: saved.generatorSurgeKw ?? generator.surgeKw, generatorConnectionMethod: saved.generatorConnectionMethod ?? generator.connectionMethod, electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site) };
   });
   const [status, setStatus] = useState("");
   const [introOpen, setIntroOpen] = useState(showIntro);
@@ -1277,8 +1303,8 @@ export function ProposedBuildSchematic({ project, site, showIntro = false }: { p
     router.replace(`${base}/design/schematic`, { scroll: false });
   };
   return <div className="proposed-schematic-page animate-rise space-y-5">
-    {introOpen && introPortalTarget ? createPortal(<div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-[#0b2742]/55 p-4 pt-[max(1rem,env(safe-area-inset-top))] sm:items-center sm:py-8" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissIntro(); }}><section role="dialog" aria-modal="true" aria-labelledby="proposal-intro-title" className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-3xl border border-[#bad0e4] bg-white p-6 shadow-2xl md:p-8"><div className="flex items-start justify-between gap-4"><div><div className="eyebrow">Your proposal is ready</div><h2 id="proposal-intro-title" className="mt-2 font-display text-2xl font-extrabold tracking-[-.04em]">Here is how your proposed system works</h2></div><button type="button" onClick={dismissIntro} className="grid size-10 shrink-0 place-items-center rounded-xl border border-line text-muted" aria-label="Dismiss proposal introduction"><X size={18}/></button></div><div className="mt-5 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design}/></div></div><button type="button" onClick={dismissIntro} className="mt-5 h-12 w-full rounded-xl bg-brand px-5 text-sm font-extrabold text-white">Explore and adjust my schematic</button></section></div>, introPortalTarget) : null}
-    <div className="schematic-page-intro"><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p><div className="mt-4 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design}/></div></div></div><section className="proposed-schematic-shell card overflow-hidden"><ProposedSchematic project={project} projectName={project.name} gridConnected={proposalUsesPublicGrid(project)} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}</div>;
+    {introOpen && introPortalTarget ? createPortal(<div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-[#0b2742]/55 p-4 pt-[max(1rem,env(safe-area-inset-top))] sm:items-center sm:py-8" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissIntro(); }}><section role="dialog" aria-modal="true" aria-labelledby="proposal-intro-title" className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-3xl border border-[#bad0e4] bg-white p-6 shadow-2xl md:p-8"><div className="flex items-start justify-between gap-4"><div><div className="eyebrow">Your proposal is ready</div><h2 id="proposal-intro-title" className="mt-2 font-display text-2xl font-extrabold tracking-[-.04em]">Here is how your proposed system works</h2></div><button type="button" onClick={dismissIntro} className="grid size-10 shrink-0 place-items-center rounded-xl border border-line text-muted" aria-label="Dismiss proposal introduction"><X size={18}/></button></div><div className="mt-5 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design} site={site}/></div></div><button type="button" onClick={dismissIntro} className="mt-5 h-12 w-full rounded-xl bg-brand px-5 text-sm font-extrabold text-white">Explore and adjust my schematic</button></section></div>, introPortalTarget) : null}
+    <div className="schematic-page-intro"><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p><div className="mt-4 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design} site={site}/></div></div></div><section className="proposed-schematic-shell card overflow-hidden"><ProposedSchematic project={project} projectName={project.name} gridConnected={proposalUsesPublicGrid(project)} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}</div>;
 }
 
 function ProposedSchematic({ project, projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref }: { project: Project; projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string }) {

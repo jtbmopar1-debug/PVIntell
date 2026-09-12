@@ -234,6 +234,41 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(layout).toMatchObject({ strings: 1, panelsPerString: 10, stringVmpV: 330, stringVocV: 395 });
   });
 
+  it("repairs a globally inconsistent saved string count instead of drawing phantom panels", () => {
+    const layout = recoverRecordedStringLayout({
+      panelType: "monofacial",
+      panelCount: 16,
+      panelWatts: 460,
+      pvStrings: 3,
+      panelsPerString: 8,
+      panelVmpV: 33.17,
+      panelVocV: 39.7,
+      panelImpA: 13.87,
+      panelIscA: 14.64,
+      panelVocTemperatureCoefficientPercentPerC: -.25,
+    }, 16);
+
+    expect(layout).toMatchObject({ strings: 2, panelsPerString: 8 });
+    expect((layout?.strings ?? 0) * (layout?.panelsPerString ?? 0)).toBe(16);
+  });
+
+  it("preserves a valid recorded string topology", () => {
+    const layout = recoverRecordedStringLayout({
+      panelType: "monofacial",
+      panelCount: 24,
+      panelWatts: 460,
+      pvStrings: 3,
+      panelsPerString: 8,
+      panelVmpV: 33.17,
+      panelVocV: 39.7,
+      panelImpA: 13.87,
+      panelIscA: 14.64,
+      panelVocTemperatureCoefficientPercentPerC: -.25,
+    }, 24);
+
+    expect(layout).toMatchObject({ strings: 3, panelsPerString: 8 });
+  });
+
   it("does not repeatedly prepend the inverter rating while reconciling a draft", () => {
     const design = { inverterKw: 4 } as DesignCalculatorState;
     const first = planningNodeDetail({ id: "pv-inverter", label: "Solar string inverter", detail: "Converts the PV strings to AC", image: "/inverter.jpg", x: 0, y: 0 }, design);
