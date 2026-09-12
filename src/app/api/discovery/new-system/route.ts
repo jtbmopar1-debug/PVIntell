@@ -232,6 +232,10 @@ export async function POST(request: Request) {
   const answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers);
   const context = await accountContext();
   if ("error" in context) return context.error;
+  if (answers.existing_system_status !== "none") return Response.json({
+    error: "Record the installed system before creating a proposal.",
+    recordInstalledUrl: "/record-installed",
+  }, { status: 409 });
   const unresolvedValues = new Set([unknownAnswer, "unknown", "not_checked", "not_decided", "undecided", "unknown_chemistry"]);
   const missingAnswers = visibleDiscoveryQuestions(answers).filter((question) => {
     const value = answers[question.id];

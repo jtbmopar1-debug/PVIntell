@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { discoveryProjectType, visibleDiscoveryQuestions } from "./new-system";
 
 describe("new-system discovery", () => {
+  it("gates proposal discovery on whether a system is already installed", () => {
+    const questions = visibleDiscoveryQuestions({});
+    expect(questions[0]).toMatchObject({
+      id: "existing_system_status",
+      options: [
+        expect.objectContaining({ value: "none" }),
+        expect.objectContaining({ value: "installed" }),
+        expect.objectContaining({ value: "partly_installed" }),
+        expect.objectContaining({ value: "installed_change_planned" }),
+      ],
+    });
+  });
+
   it("makes no public electricity authoritative when producing system topology", () => {
     expect(discoveryProjectType({
       utility_relationship: "off_grid",

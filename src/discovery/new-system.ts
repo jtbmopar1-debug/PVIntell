@@ -128,6 +128,17 @@ export const discoveryStages: Array<{ id: DiscoveryStage; label: string; descrip
 
 export const newSystemQuestions: DiscoveryQuestion[] = [
   {
+    id: "existing_system_status", stage: "discovery", title: "Do you already have an installed solar or battery system at this site?",
+    noviceHelp: "PVIntell records what is physically installed before creating any proposal. This keeps existing equipment separate from equipment you may add, replace or compare later.",
+    technicalHelp: "Use the as-built workflow first for installed or partly installed equipment. Any later expansion or replacement proposal must reference that installed baseline rather than recreating it as proposed equipment.",
+    type: "choice", options: [
+      { value: "none", label: "No installed system", description: "Continue into discovery for a completely new proposal." },
+      { value: "installed", label: "Yes - already installed", description: "Record the existing system, equipment and connections first." },
+      { value: "partly_installed", label: "Partly installed", description: "Record what physically exists and its current completion state first." },
+      { value: "installed_change_planned", label: "Yes - I want changes", description: "Record the existing baseline first, then create a linked expansion or replacement proposal." },
+    ],
+  },
+  {
     id: "system_name", stage: "discovery", title: "What should we call this power setup?",
     noviceHelp: "A simple name is fine, such as House solar, Main home or Workshop.", type: "text",
   },

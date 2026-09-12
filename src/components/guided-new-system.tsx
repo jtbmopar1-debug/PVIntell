@@ -31,9 +31,11 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const normalizedInitialAnswers = reconcileDiscoveryDependencies(initialAnswers);
   const [answers, setAnswers] = useState<DiscoveryAnswers>(normalizedInitialAnswers);
   const combinedInitialSetup = !stageFilter && !siteDiscoveryId;
-  const questionsFor = (values: DiscoveryAnswers) => visibleDiscoveryQuestions(values).filter((item) => item.id !== "household_motor_ratings" && (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"));
+  const questionsFor = (values: DiscoveryAnswers) => visibleDiscoveryQuestions(values).filter((item) => item.id !== "household_motor_ratings" && (item.id !== "existing_system_status" || (combinedInitialSetup && !existingSystemId)) && (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"));
   const initialQuestions = questionsFor(normalizedInitialAnswers);
   const [index, setIndex] = useState(() => {
+    const gateIndex = initialQuestions.findIndex((question) => question.id === "existing_system_status" && !discoveryAnswerComplete(question.id, normalizedInitialAnswers[question.id], normalizedInitialAnswers));
+    if (gateIndex >= 0) return gateIndex;
     const requestedIndex = initialQuestions.findIndex((question) => question.id === initialQuestionId);
     if (requestedIndex >= 0) return requestedIndex;
     const firstIncompleteIndex = initialQuestions.findIndex((question) => !discoveryAnswerComplete(question.id, normalizedInitialAnswers[question.id], normalizedInitialAnswers));
@@ -154,6 +156,11 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   async function next() {
     if (!question) return;
     const nextQuestions = questionsFor(answers);
+    if (question.id === "existing_system_status" && answers.existing_system_status !== "none") {
+      await save(answers, question.id);
+      router.push("/record-installed");
+      return;
+    }
     if (returningToReview) {
       await save(answers);
       setReturningToReview(false);
