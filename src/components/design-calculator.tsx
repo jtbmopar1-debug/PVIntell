@@ -573,6 +573,15 @@ export function tidySchematicNodes(nodes: ProposedNode[]) {
   }));
 }
 
+type SchematicConnectionView = "all" | "ac" | "dc" | "earth";
+
+export function schematicConnectionsForView(connections: NonNullable<ProposedDraft["connections"]>, view: SchematicConnectionView) {
+  if (view === "all") return connections;
+  if (view === "ac") return connections.filter((connection) => connection.kind === "ac");
+  if (view === "dc") return connections.filter((connection) => connection.kind === "solar-dc" || connection.kind === "battery-dc");
+  return connections.filter((connection) => connection.kind === "earth");
+}
+
 export function schematicCardDetail(node: ProposedNode, draft: ProposedDraft, design: DesignCalculatorState) {
   if (node.id === "solar" || node.id.startsWith("solar-pv-")) {
     const supplementary = supplementaryArray(design);
@@ -1519,6 +1528,7 @@ function ProposedSchematic({ project, projectName, gridConnected, includeBattery
 function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, systemName, onChange, onRedesign, wattsonHref }: { draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>; design: DesignCalculatorState; project: Project; gridConnected: boolean; systemName: string; onChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string }) {
   const [zoom, setZoom] = useState(1);
   const [showConnectionLabels, setShowConnectionLabels] = useState(true);
+  const [connectionView, setConnectionView] = useState<SchematicConnectionView>("all");
   const [selectedNodeId, setSelectedNodeId] = useState<string>();
   const [selectedConnectionKey, setSelectedConnectionKey] = useState<string>();
   const [routeLength, setRouteLength] = useState(0);
@@ -1555,6 +1565,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const nodeCentre = 52.5;
   const nodes = draft.nodes ?? [];
   const connections = draft.connections ?? [];
+  const visibleConnections = schematicConnectionsForView(connections, connectionView);
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const canvasSize = schematicCanvasSize(nodes, nodeWidth, 128);
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
@@ -1807,16 +1818,16 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     return { path, labelX: (x1 + x2) / 2, labelY: (y1 + y2) / 2 };
   };
   const pathFor = (fromId: string, toId: string, offset = 0, kind?: (typeof connections)[number]["kind"]) => connectionGeometry(fromId, toId, offset, kind).path;
-  const earthConnections = connections.filter((connection) => connection.kind === "earth");
+  const earthConnections = visibleConnections.filter((connection) => connection.kind === "earth");
   const earthLaneOffset = (connection: (typeof connections)[number]) => connection.kind === "earth" ? Math.max(0, earthConnections.indexOf(connection)) * 10 : 0;
 
-  return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><button type="button" onClick={tidyLayout} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={addItem} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">+ Add item</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div><div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto overscroll-contain">
+  return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><label className="sr-only" htmlFor="schematic-connection-view">Show schematic connections</label><select id="schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as SchematicConnectionView)} className="h-8 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC connections</option><option value="dc">DC connections</option><option value="earth">Earth connections</option></select><button type="button" onClick={tidyLayout} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={addItem} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">+ Add item</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div><div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto overscroll-contain">
     {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5">{selectedNodeIsSolar && !supplementaryArray(design) ? <div className="rounded-2xl border border-[#9fc6e7] bg-[#eef6fd] p-4"><div className="eyebrow">Quick edit</div><label className="mt-3 block text-xs font-bold">Total panel quantity<div className="mt-1.5 flex gap-2"><input type="number" min="1" max="10000" step="1" inputMode="numeric" value={quickPanelCount} onChange={(event) => { setQuickPanelCount(event.target.value); setQuickEditMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={saveQuickPanelQuantity} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">Save quantity</button></div></label><p className="mt-2 text-[10px] leading-4 text-muted">This refreshes array capacity, string layout and the dependent inverter and storage planning figures.</p>{quickEditMessage ? <p className="mt-2 text-[10px] font-semibold text-brand" role="status">{quickEditMessage}</p> : null}</div> : null}<div className="mt-5 eyebrow">Full component specification</div><dl className="mt-3 grid gap-3 sm:grid-cols-2">{selectedNodeSpecs.map(([label, value]) => <div key={label} className="rounded-xl border border-line bg-[#f7fafc] p-3"><dt className="text-[9px] font-bold uppercase tracking-[.12em] text-muted">{label}</dt><dd className="mt-1 text-xs font-extrabold">{value}</dd></div>)}</dl><button type="button" onClick={removeSelectedNode} className="mt-4 h-9 w-full rounded-lg border border-[#e7b7af] text-[10px] font-bold text-[#a7442d]">Delete this item</button></div>, componentModalTarget) : null}
     <div className="origin-top-left" style={{ zoom, width: canvasSize.width }}>
     <div className="flex items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted" style={{ minWidth: canvasSize.width }}><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery DC</span><span><b className="text-[#d99500]">Gold</b> = inverter AC to the building</span><span><b className="text-[#9b3db5]">Purple</b> = controlled public-grid AC</span><span><b className="text-[#25875a]">Green</b> = protective earth / bonding</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
     <div className="relative bg-[radial-gradient(circle,#c8d7e4_1px,transparent_1px),radial-gradient(circle_at_50%_45%,rgba(246,201,69,.12),transparent_22rem)] bg-[size:20px_20px,auto]" style={{ width: canvasSize.width, height: canvasSize.height }} role="img" aria-label="Draft proposed solar power system schematic" onDragOver={(event) => event.preventDefault()} onDrop={moveNode}>
       <svg viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`} className="absolute inset-0 h-full w-full" aria-hidden>
-        {connections.map((connection) => {
+        {visibleConnections.map((connection) => {
           if (connection.kind === "solar-dc" || connection.kind === "battery-dc") {
             const circuitCount = connection.kind === "solar-dc" && connection.from === "solar" ? Math.max(1, n(design.pvStrings, 1)) : 1;
             return <g key={`${connection.from}:${connection.to}`}>{Array.from({ length: circuitCount }, (_, index) => { const centre = (index - (circuitCount - 1) / 2) * 14; return <g key={index}><path d={pathFor(connection.from, connection.to, centre - 3, connection.kind)} fill="none" stroke="#dc4444" strokeWidth="3"/><path d={pathFor(connection.from, connection.to, centre + 3, connection.kind)} fill="none" stroke="#202d38" strokeWidth="2.5"/></g>; })}</g>;
@@ -1825,7 +1836,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
           return <path key={`${connection.from}:${connection.to}`} d={pathFor(connection.from, connection.to, earthLaneOffset(connection), connection.kind)} fill="none" stroke={colour} strokeWidth="4"/>;
         })}
       </svg>
-      {showConnectionLabels && connections.map((connection) => {
+      {showConnectionLabels && visibleConnections.map((connection) => {
         const from = byId.get(connection.from);
         const to = byId.get(connection.to);
         if (!from || !to) return null;

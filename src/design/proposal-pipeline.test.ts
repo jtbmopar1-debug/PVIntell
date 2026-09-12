@@ -7,7 +7,7 @@ import { deterministicProposalActions } from "./proposal-action";
 import { siteDiscoveryActions } from "@/discovery/site-actions";
 import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { PUT } from "@/app/api/design-calculator/route";
-import { createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, ensureSupplementaryMicroinverterRouting, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, repairCustomEquipmentDraft, schematicCanvasSize, schematicCardDetail, tidySchematicNodes, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
+import { createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, ensureSupplementaryMicroinverterRouting, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, repairCustomEquipmentDraft, schematicCanvasSize, schematicCardDetail, schematicConnectionsForView, tidySchematicNodes, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
 import type { DesignCalculatorState, Project } from "@/domain/models";
 
 const auth = vi.hoisted(() => ({ client: undefined as unknown }));
@@ -415,6 +415,19 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(tidy[12]).toMatchObject({ x: 35, y: 600 });
     expect(size.height).toBeGreaterThanOrEqual(tidy[12].y + 128 + 80);
     expect(size.width).toBeGreaterThanOrEqual(1120);
+  });
+
+  it("filters only displayed schematic connections by electrical family", () => {
+    const connections = [
+      { from: "a", to: "b", label: "PV", kind: "solar-dc" as const },
+      { from: "b", to: "c", label: "Battery", kind: "battery-dc" as const },
+      { from: "c", to: "d", label: "AC", kind: "ac" as const },
+      { from: "d", to: "e", label: "Earth", kind: "earth" as const },
+    ];
+    expect(schematicConnectionsForView(connections, "all")).toHaveLength(4);
+    expect(schematicConnectionsForView(connections, "ac").map((item) => item.kind)).toEqual(["ac"]);
+    expect(schematicConnectionsForView(connections, "dc").map((item) => item.kind)).toEqual(["solar-dc", "battery-dc"]);
+    expect(schematicConnectionsForView(connections, "earth").map((item) => item.kind)).toEqual(["earth"]);
   });
 
   it("does not repeatedly prepend the inverter rating while reconciling a draft", () => {
