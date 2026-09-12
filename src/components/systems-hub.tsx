@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, ArrowRight, CheckCircle2, ClipboardCheck, FileSearch, LayoutDashboard, MapPin, Menu, Network, Package, Ruler, ShoppingCart, Sparkles, Trash2, WalletCards, Wrench, X } from "lucide-react";
+import { Activity, ArrowRight, CheckCircle2, ChevronDown, ClipboardCheck, FileSearch, LayoutDashboard, MapPin, Menu, Network, Package, Ruler, ShoppingCart, Sparkles, Trash2, WalletCards, Wrench, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -90,7 +90,7 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
     <header className="sticky top-0 z-40 border-b border-line bg-white/98 shadow-sm">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-3 px-4 md:px-6">
         <Link href={`/dashboard${siteQuery}`} className="shrink-0"><BrandLogo/></Link>
-        {sites.length ? <details className="relative hidden shrink-0 md:block"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-[#f6f9fc] px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-36 truncate">{selectedSite?.name}</span></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl">{sites.map((site) => <Link key={site.id} href={`/systems?site=${site.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === selectedSite?.id ? "bg-[#fff2b8] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{site.name}</Link>)}</div></details> : null}
+        {sites.length ? <details key={selectedSite?.id} className="relative hidden shrink-0 md:block"><summary aria-label="Choose Site" className="flex cursor-pointer list-none items-center gap-2 rounded-xl border-2 border-[#8db5d8] bg-[#eef6fd] px-3 py-1.5 text-brand shadow-sm transition hover:border-[#1768a6] hover:bg-white"><MapPin size={14}/><span className="leading-tight"><span className="block text-[8px] font-extrabold uppercase tracking-[.14em] text-muted">Site</span><span className="block max-w-36 truncate text-[11px] font-extrabold">{selectedSite?.name}</span></span><ChevronDown size={14} className="ml-1"/></summary><div className="absolute left-0 top-12 z-50 w-64 rounded-2xl border border-line bg-white p-2 shadow-xl"><div className="px-3 pb-2 pt-1 text-[9px] font-extrabold uppercase tracking-[.14em] text-muted">Switch Site</div>{sites.map((site) => <Link key={site.id} href={`/systems?site=${site.id}`} onClick={(event) => event.currentTarget.closest("details")?.removeAttribute("open")} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === selectedSite?.id ? "bg-[#fff2b8] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{site.name}</Link>)}</div></details> : null}
         <div className="hidden min-w-0 flex-1 md:block"><div className="truncate text-xs font-extrabold">{selectedSite?.location ?? "Your systems"}</div><div className="mt-0.5 text-[9px] font-semibold text-muted">{localDate}</div></div>
         <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation">
           <Link href={`/dashboard${siteQuery}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link>
@@ -105,7 +105,7 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
 
     <main className="mx-auto max-w-[1180px] p-4 pb-20 md:p-5">
       <div className="overflow-hidden rounded-2xl bg-cover bg-center p-5 text-white shadow-[0_12px_30px_rgba(12,39,65,.16)] sm:p-7" style={{ backgroundImage: "linear-gradient(90deg, rgba(8,35,58,.95), rgba(8,35,58,.68)), url('/backgrounds/royburi-solar-5333073_1920.jpg')" }}>
-        <div className="eyebrow text-[#ffd44f]">{selectedSite ? `Systems at ${selectedSite.name}` : "Your power systems"}</div><h1 className="mt-2 font-display text-3xl font-extrabold tracking-[-.05em]">Systems</h1><p className="mt-2 max-w-2xl text-xs font-medium leading-5 text-white/90">Open the tools that belong to each system. Installed systems stay focused on records and operation; active projects retain their discovery, design and build path.</p>
+        <div className="eyebrow text-[#ffd44f]">{selectedSite ? `Systems at ${selectedSite.name}` : "Your power systems"}</div><h1 className="mt-2 font-display text-3xl font-extrabold tracking-[-.05em]">{selectedSite ? `${selectedSite.name} systems` : "Systems"}</h1><p className="mt-2 max-w-2xl text-xs font-medium leading-5 text-white/90">Open the tools that belong to each system. Installed systems stay focused on records and operation; active projects retain their discovery, design and build path.</p>
       </div>
 
       <section className="systems-card-list mt-5 grid gap-3">

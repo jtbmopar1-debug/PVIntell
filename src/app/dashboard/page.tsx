@@ -4,6 +4,7 @@ import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { createClient } from "@/lib/supabase/server";
 import type { SolarArrayForecastInput } from "@/weather/forecast";
+import { conversationKind } from "@/ai/conversation-kind";
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ site?: string; conversation?: string; start?: string; wattson?: string; welcome?: string }> }) {
   const supabase = await createClient();
@@ -17,7 +18,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     supabase.from("projects").select("id,site_id,name,mode,phase").eq("owner_id", userId).order("created_at"),
     requestedConversationId
       ? supabase.from("user_conversations").select("id,site_id,project_id").eq("id", requestedConversationId).eq("owner_id", userId).maybeSingle()
-      : supabase.from("user_conversations").select("id,site_id,project_id").eq("owner_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      : supabase.from("user_conversations").select("id,site_id,project_id,title").eq("owner_id", userId).order("created_at", { ascending: false }).limit(100),
     supabase.from("discovery_drafts").select("id,status,question_id,answers,updated_at").eq("owner_id", userId).order("updated_at", { ascending: false }),
   ]);
   if (profile.error) throw profile.error;
@@ -25,6 +26,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   if (siteRows.error) throw siteRows.error;
   if (systemRows.error) throw systemRows.error;
   if (discoveryDraftRows.error) throw discoveryDraftRows.error;
+  const activeConversation = requestedConversationId
+    ? conversation.data && !Array.isArray(conversation.data) ? conversation.data : undefined
+    : Array.isArray(conversation.data) ? conversation.data.find((item) => conversationKind(item.title) === "dashboard") : undefined;
   const sites: Site[] = (siteRows.data ?? []).map((site) => ({
     id: site.id, name: site.name, location: site.location || "Location not set",
     latitude: site.latitude == null ? undefined : Number(site.latitude), longitude: site.longitude == null ? undefined : Number(site.longitude),
@@ -55,8 +59,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   })]));
   const solarBySite = Object.fromEntries(Object.entries(solarArraysBySite).map(([siteId, siteArrays]) => [siteId, siteArrays.reduce((sum, array) => sum + array.capacityKw, 0)]));
   let messages: ChatMessage[] = [];
-  if (conversation.data?.id) {
-    const rows = await supabase.from("user_chat_messages").select("id,role,content,created_at,structured_context").eq("conversation_id", conversation.data.id).order("created_at").limit(30);
+  if (activeConversation?.id) {
+    const rows = await supabase.from("user_chat_messages").select("id,role,content,created_at,structured_context").eq("conversation_id", activeConversation.id).order("created_at").limit(30);
     if (rows.error) throw rows.error;
     messages = (rows.data ?? []).filter((message) => String(message.content).trim()).map((message) => ({ id: message.id, role: message.role as ChatMessage["role"], content: message.content, createdAt: message.created_at, citations: Array.isArray(message.structured_context?.citations) ? message.structured_context.citations : undefined, actionUrl: typeof message.structured_context?.actionUrl === "string" ? message.structured_context.actionUrl : undefined, actionLabel: typeof message.structured_context?.actionLabel === "string" ? message.structured_context.actionLabel : undefined }));
   }
@@ -66,6 +70,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     return [system.id, href];
   }));
   const defaultSystemSiteId = systems.find((system) => system.id === profile.data.dashboard_default_system_id)?.siteId;
-  const initialSiteId = requestedSiteId ?? (requestedConversationId ? conversation.data?.site_id ?? undefined : undefined) ?? defaultSystemSiteId ?? profile.data.dashboard_default_site_id ?? conversation.data?.site_id ?? undefined;
-  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} discoveryDrafts={(discoveryDraftRows.data ?? []).map((draft) => ({ id: draft.id, status: draft.status, questionId: draft.question_id, answers: (draft.answers ?? {}) as Record<string, string | number | string[]>, updatedAt: draft.updated_at }))} connectedSystemIds={(activeConnections.data ?? []).map((connection) => connection.project_id)} resumeHrefs={resumeHrefs} solarBySite={solarBySite} solarArraysBySite={solarArraysBySite} initialMessages={messages} conversationId={conversation.data?.id} initialSiteId={initialSiteId} autoStartProposal={start === "proposal" || wattson === "open"} showWelcome={welcome === "1"} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
+  const initialSiteId = requestedSiteId ?? (requestedConversationId ? activeConversation?.site_id ?? undefined : undefined) ?? defaultSystemSiteId ?? profile.data.dashboard_default_site_id ?? activeConversation?.site_id ?? undefined;
+  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} discoveryDrafts={(discoveryDraftRows.data ?? []).map((draft) => ({ id: draft.id, status: draft.status, questionId: draft.question_id, answers: (draft.answers ?? {}) as Record<string, string | number | string[]>, updatedAt: draft.updated_at }))} connectedSystemIds={(activeConnections.data ?? []).map((connection) => connection.project_id)} resumeHrefs={resumeHrefs} solarBySite={solarBySite} solarArraysBySite={solarArraysBySite} initialMessages={messages} conversationId={activeConversation?.id} initialSiteId={initialSiteId} autoStartProposal={start === "proposal" || wattson === "open"} showWelcome={welcome === "1"} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
 }

@@ -66,6 +66,7 @@ export async function POST(request: Request) {
     if (existing.error) return Response.json({ error: existing.error.message }, { status: 400 });
     const normalizedName = discoveryName.toLocaleLowerCase();
     conversationId = (existing.data ?? []).find((item) => {
+      if (helpContext !== "discovery") return item.title === conversationTitle && (!parsed.data.projectId || item.project_id === parsed.data.projectId) && (!parsed.data.siteId || item.site_id === parsed.data.siteId);
       if (!/discovery/i.test(item.title ?? "")) return false;
       if (parsed.data.projectId && item.project_id === parsed.data.projectId) return true;
       if (parsed.data.siteId && item.site_id === parsed.data.siteId) return true;

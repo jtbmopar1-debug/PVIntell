@@ -12,7 +12,7 @@ import type { DesignCalculatorState } from "@/domain/models";
 // Bump whenever persisted proposal semantics or downstream rendering contracts
 // change. Version 3 forces records already stamped by the incomplete v2 repair
 // back through canonical array/inverter reconciliation.
-export const PROPOSAL_ENGINE_VERSION = 4;
+export const PROPOSAL_ENGINE_VERSION = 5;
 
 const componentType = z.enum([
   "panel",
@@ -35,6 +35,14 @@ const addComponentSchema = z.object({
   component_type: componentType,
   quantity: z.number().int().min(1).max(100),
   component_name: z.string().trim().min(1).max(120).optional(),
+  manufacturer: z.string().trim().min(1).max(120).optional(),
+  model: z.string().trim().min(1).max(160).optional(),
+  installation_location: z.string().trim().min(1).max(240).optional(),
+  notes: z.string().trim().min(1).max(2000).optional(),
+  specifications: z.array(z.object({
+    name: z.string().trim().min(1).max(100),
+    value: z.string().trim().min(1).max(500),
+  })).max(30).optional(),
 });
 const proposedComponentSchema = z.object({
   component_type: componentType,
@@ -283,6 +291,7 @@ export function reconcileStoredProposal(
       siteLocation: site.location,
       timezone: site.timezone,
       connectionType,
+      projectType: mode as "off-grid" | "grid-tied" | "hybrid",
     });
     const surfaceAssessment = assessPanelSurfaces(
       discovery,
@@ -351,6 +360,7 @@ export function reconcileStoredProposal(
     siteLocation: site.location,
     timezone: site.timezone,
     connectionType,
+    projectType: mode as "off-grid" | "grid-tied" | "hybrid",
   });
   const surfaceAssessment = assessPanelSurfaces(
     discovery,
@@ -632,6 +642,22 @@ export interface AppliedWattsonAction {
 export const wattsonActionTools = [
   {
     type: "function",
+    name: "resolve_installed_import_destination",
+    description: "Interpret the user's natural-language reply while arranging a structured installed-system import. This is a routing decision only and does not create or alter records. Use it whenever the user accepts or declines the import, identifies an existing Site/system, says the destination is a new Site, or supplies any of those names across one or more conversational turns.",
+    parameters: {
+      type: "object",
+      properties: {
+        authorised: { type: "boolean" },
+        destination: { type: "string", enum: ["existing", "new", "unknown"] },
+        site_name: { type: "string" },
+        system_name: { type: "string" },
+      },
+      required: ["authorised", "destination"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
     name: "create_power_system_workspace",
     description:
       "Dashboard only: create the user's first empty place and power-system workspace after the public-electricity relationship and primary goal have both been confirmed in plain language. This creates a discovery workspace only; it does not select architecture or equipment. Use onboarding location and do not ask for coordinates again. Do not call when connectedSiteSystems already contains a system.",
@@ -757,7 +783,7 @@ export const wattsonActionTools = [
     type: "function",
     name: "record_added_component",
     description:
-      "Update the current PVIntell system inventory only when the user explicitly says that physical equipment has been added or installed. Do not call for hypothetical plans, recommendations, or questions.",
+      "Create structured inventory records only after the user explicitly asks Wattson to record/add the installed equipment, or explicitly accepts Wattson's immediately preceding offer to do so. Merely describing an installed system is not permission to mutate its records. Emit one action per distinct make/model/role; quantity may group identical units. Preserve every stated manufacturer, model, rating, voltage, capacity, phase or role in the dedicated fields/specifications. Do not call for hypothetical or uncertain equipment, and do not duplicate equipment already present in the supplied system record.",
     parameters: {
       type: "object",
       properties: {
@@ -777,6 +803,19 @@ export const wattsonActionTools = [
           description:
             "Manufacturer/model or user-facing name, only if stated.",
         },
+        manufacturer: { type: "string" },
+        model: { type: "string" },
+        installation_location: { type: "string" },
+        notes: { type: "string" },
+        specifications: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { name: { type: "string" }, value: { type: "string" } },
+            required: ["name", "value"],
+            additionalProperties: false,
+          },
+        },
       },
       required: ["component_type", "quantity"],
       additionalProperties: false,
@@ -786,7 +825,7 @@ export const wattsonActionTools = [
     type: "function",
     name: "record_system_knowledge",
     description:
-      "Save one confirmed fact about an already installed or commissioned system for future monitoring, diagnostics or fault finding. Use this in monitor/as-built mode for operating behaviour, controls, smart devices, maintenance notes, known quirks, fault history or confirmed as-built context. This is not design discovery and must not create proposed equipment.",
+      "Save one confirmed fact about an already installed or commissioned system for future monitoring, diagnostics or fault finding. Use this for operating behaviour, controls, smart devices, maintenance notes, known quirks or fault history. Never use it instead of record_added_component, record_or_update_pv_array or record_or_update_system_connection when the fact describes physical equipment or topology.",
     parameters: {
       type: "object",
       properties: {
@@ -1151,6 +1190,7 @@ export async function applyWattsonActions(
         siteLocation: input.site_location,
         timezone: input.site_timezone,
         connectionType,
+        projectType: String(current.data.mode) as "off-grid" | "grid-tied" | "hybrid",
       });
       const batteryVoltage = sizing.batteryUsableKwh
         ? (Number(previous.batteryVoltage) || (nominalDcVoltage === 48 && !isLeadAcid ? 51.2 : nominalDcVoltage || 51.2))
@@ -1366,6 +1406,7 @@ export async function applyWattsonActions(
         requiredKw: dependentSizing.inverterKw,
         siteLocation: priorInverterPlan?.jurisdiction === "nz" ? "New Zealand" : undefined,
         connectionType: calculator.connectionType as DesignCalculatorState["connectionType"],
+        projectType: String(current.data.mode) as "off-grid" | "grid-tied" | "hybrid",
       });
       const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
         ? settings.designDiscovery as Record<string, { value?: unknown }>
@@ -1512,6 +1553,9 @@ export async function applyWattsonActions(
         (input.component_type === "inverter"
           ? "Inverter"
           : labelFor(input.component_type, input.quantity));
+      const specifications = Object.fromEntries(
+        (input.specifications ?? []).map((item) => [item.name, item.value]),
+      );
       const rows =
         input.component_type === "inverter"
           ? Array.from({ length: input.quantity }, (_, index) => ({
@@ -1519,20 +1563,26 @@ export async function applyWattsonActions(
               type: input.component_type,
               display_name:
                 input.quantity === 1 ? baseName : `${baseName} ${index + 1}`,
-              model: input.component_name ?? null,
+              manufacturer: input.manufacturer ?? null,
+              model: input.model ?? input.component_name ?? null,
               quantity: 1,
+              installation_location: input.installation_location ?? null,
+              specifications,
               confidence: "confirmed",
-              notes: "Recorded through Wattson",
+              notes: input.notes ?? "Recorded through Wattson as installed equipment",
             }))
           : [
               {
                 project_id: projectId,
                 type: input.component_type,
                 display_name: baseName,
-                model: input.component_name ?? null,
+                manufacturer: input.manufacturer ?? null,
+                model: input.model ?? input.component_name ?? null,
                 quantity: input.quantity,
+                installation_location: input.installation_location ?? null,
+                specifications,
                 confidence: "confirmed",
-                notes: "Recorded through Wattson",
+                notes: input.notes ?? "Recorded through Wattson as installed equipment",
               },
             ];
       const inserted = await supabase.from("system_components").insert(rows);

@@ -29,7 +29,7 @@ export async function POST(request: Request) {
       const project = await supabase.from("projects").select("id").eq("id", parsed.data.projectId).eq("owner_id", userId).maybeSingle();
       if (!project.data) return Response.json({ error: "System not found." }, { status: 404 });
     }
-    const created = await supabase.from("user_conversations").insert({ owner_id: userId, site_id: parsed.data.siteId, project_id: parsed.data.projectId }).select("id").single();
+    const created = await supabase.from("user_conversations").insert({ owner_id: userId, site_id: parsed.data.siteId, project_id: parsed.data.projectId, title: "Dashboard — New chat" }).select("id").single();
     if (created.error) return Response.json({ error: created.error.message }, { status: 400 });
     return Response.json({ id: created.data.id }, { status: 201 });
   }

@@ -21,12 +21,24 @@ describe("inverter arrangement advice", () => {
 
   it("selects three capped 10 kW units for a 25 kW requirement", () => {
     expect(inverterArrangementAdvice({ requiredKw: 25, siteLocation: "Unknown", connectionType: "ac_three" }))
-      .toMatchObject({ jurisdiction: "local_review", unitRatingsKw: [10, 10, 10], preferredPhase: "three" });
+      .toMatchObject({ jurisdiction: "local_review", unitRatingsKw: [25], preferredPhase: "three" });
   });
 
   it("does not apply New Zealand limits to an unknown market", () => {
     const advice = inverterArrangementAdvice({ requiredKw: 14, siteLocation: "Unknown", connectionType: "ac_single" });
-    expect(advice).toMatchObject({ jurisdiction: "local_review", selectionStatus: "candidate_selected_pending_local_approval", unitRatingsKw: [8, 8], preferredPhase: "three" });
-    expect(advice?.message).toContain("local rules may require a different arrangement");
+    expect(advice).toMatchObject({ jurisdiction: "local_review", selectionStatus: "candidate_selected_pending_local_approval", unitRatingsKw: [14], preferredPhase: "three" });
+    expect(advice?.message).toContain("Site's country");
+  });
+
+  it("allows a larger provisional inverter outside a verified jurisdiction profile", () => {
+    const advice = inverterArrangementAdvice({ requiredKw: 30, siteLocation: "Berlin, Germany", connectionType: "ac_three" });
+    expect(advice).toMatchObject({ unitRatingsKw: [30], selectionStatus: "candidate_selected_pending_local_approval" });
+    expect(advice?.message).toContain("one suitable larger inverter");
+  });
+
+  it("does not apply New Zealand grid thresholds to an off-grid system", () => {
+    const advice = inverterArrangementAdvice({ requiredKw: 30, siteLocation: "Auckland, New Zealand", projectType: "off-grid", connectionType: "ac_single" });
+    expect(advice).toMatchObject({ jurisdiction: "nz", unitRatingsKw: [30], preferredPhase: "single" });
+    expect(advice?.message).toContain("Public-grid generation and export thresholds do not apply");
   });
 });

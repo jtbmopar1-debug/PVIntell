@@ -9,6 +9,8 @@ import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/
 import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
 import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
 import { dashboardMessageAllowsActions } from "@/ai/dashboard-intent";
+import { createSystem } from "@/data/cloud-project";
+import { confirmedDestinationNames, conversationKind } from "@/ai/conversation-kind";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -16,6 +18,12 @@ const schema = z.object({
   siteId: z.uuid().optional(),
   conversationId: z.uuid().optional(),
   weatherContext: z.string().max(100000).optional(),
+});
+const installedImportRouteSchema = z.object({
+  authorised: z.boolean(),
+  destination: z.enum(["existing", "new", "unknown"]),
+  site_name: z.string().trim().min(1).max(120).optional(),
+  system_name: z.string().trim().min(1).max(120).optional(),
 });
 const questionToDiscoveryKey: Record<string, string> = {
   panel_location: "proposed_panel_location",
@@ -231,9 +239,12 @@ export async function POST(request: Request) {
       mimeType: imageFile.type,
     });
   }
-  let conversation = parsed.data.conversationId
-    ? await supabase.from("user_conversations").select("id,title").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle()
-    : await supabase.from("user_conversations").select("id,title").eq("owner_id", userId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  let conversation;
+  if (parsed.data.conversationId) conversation = await supabase.from("user_conversations").select("id,title").eq("id", parsed.data.conversationId).eq("owner_id", userId).maybeSingle();
+  else {
+    const candidates = await supabase.from("user_conversations").select("id,title").eq("owner_id", userId).order("created_at", { ascending: false }).limit(100);
+    conversation = { ...candidates, data: (candidates.data ?? []).find((item) => conversationKind(item.title) === "dashboard") ?? null };
+  }
   if (conversation.error) return Response.json({ error: conversation.error.message }, { status: 400 });
   if (parsed.data.conversationId && !conversation.data) return Response.json({ error: "That Wattson conversation was not found." }, { status: 404 });
   if (!conversation.data) {
@@ -252,11 +263,101 @@ export async function POST(request: Request) {
   if (inserted.error) return Response.json({ error: inserted.error.message }, { status: 400 });
   if (!conversation.data?.title || conversation.data.title === "Wattson dashboard")
     await supabase.from("user_conversations").update({ title: conversationTitle(parsed.data.message) }).eq("id", conversationId).eq("owner_id", userId);
-  const recent = await supabase.from("user_chat_messages").select("role,content").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(12);
+  const recent = await supabase.from("user_chat_messages").select("role,content,structured_context").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(12);
   const history = (recent.data ?? []).reverse();
   const prior = history.at(-1)?.content === userContent ? history.slice(0, -1) : history;
   const dailyMonitorLog = await loadDailyLogContext(supabase, userId, { systemId: parsed.data.projectId, siteId: conversationSiteId ?? undefined });
-  const priorAssistantMessage = [...prior].reverse().find((item) => item.role === "assistant")?.content;
+  const priorAssistant = [...prior].reverse().find((item) => item.role === "assistant");
+  const priorAssistantMessage = priorAssistant?.content;
+  const priorStructuredContext = priorAssistant?.structured_context && typeof priorAssistant.structured_context === "object"
+    ? priorAssistant.structured_context as Record<string, unknown> : {};
+  const pendingInstalledImport = priorStructuredContext.pendingInstalledImport && typeof priorStructuredContext.pendingInstalledImport === "object"
+    ? priorStructuredContext.pendingInstalledImport as { step?: string; siteName?: string; systemName?: string } : undefined;
+  const offeredInstalledImport = /(?:map|add|record|structure|set (?:this|that) up)[\s\S]*(?:as-built|installed system|installed-system|system record|inventory|schematic)/i.test(priorAssistantMessage ?? "");
+  const destinationNames = confirmedDestinationNames(parsed.data.message);
+  const namedSite = destinationNames
+    ? (sites.data ?? []).find((site) => site.name.trim().toLocaleLowerCase() === destinationNames.siteName.toLocaleLowerCase())
+    : undefined;
+  const namedSystem = namedSite
+    ? connectedSystems.find((system) => system.site_id === namedSite.id && system.name.trim().toLocaleLowerCase() === destinationNames!.systemName.toLocaleLowerCase())
+    : undefined;
+  if (offeredInstalledImport && namedSite && namedSystem) {
+    const extraction = await askGemini({
+      message: `The user has explicitly authorised the earlier installed equipment/topology description to be added to ${namedSite.name} / ${namedSystem.name}. Create every supported structured record now using exact project_id ${namedSystem.id}. Do not create proposed-design records, invent missing values, duplicate existing records, or store physical inventory only as system knowledge.`,
+      project: dashboardProject(profile.data.home_location ?? ""),
+      recentConversation: prior,
+      questionnaireContext: { userAssessment: profile.data.onboarding_assessment ?? {}, userTimezone: profile.data.timezone, sites: sites.data ?? [], connectedSiteSystems: connectedSystems },
+      allowActions: true,
+    });
+    const safeActions = extraction.actions.filter((action) => actionProjectId(action) === namedSystem.id && action.name !== "record_or_update_system_connection"
+      && !["create_power_system_workspace", "record_design_discovery", "record_design_preference", "record_preliminary_design", "record_proposed_component", "update_proposed_design"].includes(action.name));
+    const applied = await applyWattsonActions(supabase, namedSystem.id, safeActions);
+    const summary = applied.map((action) => action.summary).join("; ");
+    const responseMessage = summary
+      ? `Added the confirmed installed records to ${namedSystem.name} at ${namedSite.name}. ${summary}.`
+      : `I found ${namedSystem.name} at ${namedSite.name}, but I couldn’t safely extract any new structured records from the earlier description, so nothing was changed.`;
+    await supabase.from("user_conversations").update({ site_id: namedSite.id, project_id: namedSystem.id }).eq("id", conversationId).eq("owner_id", userId);
+    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: { actions: applied, actionUrl: `/sites/${namedSite.id}/systems/${namedSystem.id}?view=system`, actionLabel: "Open installed system" } });
+    if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+    return Response.json({ message: responseMessage, actions: applied, conversationId, actionUrl: `/sites/${namedSite.id}/systems/${namedSystem.id}?view=system`, actionLabel: "Open installed system" });
+  }
+  const pendingNewSite = priorAssistantMessage?.match(/this belongs to a new Site, and I(?:â€™|’)ll call the system (.+?)\. What shall I call the new Site\?/i);
+  const pendingSystemAtNamedSite = priorAssistantMessage?.match(/new site named ["“']?(.+?)["”']?\.[\s\S]*plain-name of the first power system/i);
+  const directNewSiteNames = pendingInstalledImport?.step === "site_and_system"
+    ? parsed.data.message.match(/^\s*([^,;]+?)\s*[,;]\s*([^,;]+?)\s*$/i)
+    : offeredInstalledImport
+      ? parsed.data.message.match(/^\s*(?:(?:yes|sure|okay?|please)\s*[,;]\s*)?new\s+site\s*[,;]\s*([^,;]+?)\s*[,;]\s*([^,;]+?)\s*$/i)
+    : null;
+  const validPlainName = /^\s*[\p{L}\p{N}][\p{L}\p{N}' .&-]{0,119}\s*$/u.test(parsed.data.message);
+  if (directNewSiteNames || ((pendingInstalledImport?.step === "site_name" || pendingInstalledImport?.step === "system_name" || pendingNewSite || pendingSystemAtNamedSite) && validPlainName)) {
+    const siteName = directNewSiteNames?.[1].trim() ?? pendingInstalledImport?.siteName ?? pendingSystemAtNamedSite?.[1].trim() ?? parsed.data.message.trim();
+    const systemName = directNewSiteNames?.[2].trim() ?? pendingInstalledImport?.systemName ?? pendingNewSite?.[1].trim() ?? parsed.data.message.trim();
+    const createdSite = await supabase.from("sites").insert({
+      owner_id: userId,
+      name: siteName,
+      location: profile.data.home_location || null,
+      timezone: profile.data.timezone || "UTC",
+      location_source: "imported",
+      location_confirmed: false,
+    }).select("id").single();
+    if (createdSite.error) return Response.json({ error: createdSite.error.message }, { status: 400 });
+    let createdSystemId: string | undefined;
+    try {
+      const priorText = prior.map((item) => item.content).join("\n");
+      const mode = /\bgrid[- ]?tied|\bgrid\b/i.test(priorText) && /\bbatter/i.test(priorText) ? "hybrid"
+        : /\bgrid[- ]?tied|\bgrid\b/i.test(priorText) ? "grid-tied" : "off-grid";
+      createdSystemId = await createSystem(supabase, userId, createdSite.data.id, systemName, mode, "Record equipment that is already installed");
+      const phase = await supabase.from("projects").update({ phase: "monitor" }).eq("id", createdSystemId).eq("owner_id", userId);
+      if (phase.error) throw phase.error;
+      await supabase.from("user_conversations").update({ site_id: createdSite.data.id, project_id: createdSystemId }).eq("id", conversationId).eq("owner_id", userId);
+      const extraction = await askGemini({
+        message: `The user explicitly authorised the installed equipment and topology described earlier to be added. Create all supported structured records now for project_id ${createdSystemId}. Do not create proposed-design records, do not invent missing values, and do not save physical equipment only as system knowledge.`,
+        project: dashboardProject(profile.data.home_location ?? ""),
+        recentConversation: prior,
+        questionnaireContext: {
+          userAssessment: profile.data.onboarding_assessment ?? {},
+          userTimezone: profile.data.timezone,
+          sites: [...(sites.data ?? []), { id: createdSite.data.id, name: siteName, location: profile.data.home_location, timezone: profile.data.timezone }],
+          connectedSiteSystems: [{ id: createdSystemId, site_id: createdSite.data.id, name: systemName, mode, phase: "monitor", settings: {}, components: [], pvStrings: [], connections: [], site: { id: createdSite.data.id, name: siteName } }],
+        },
+        allowActions: true,
+      });
+      const safeActions = extraction.actions.filter((action) => actionProjectId(action) === createdSystemId && action.name !== "record_or_update_system_connection"
+        && !["create_power_system_workspace", "record_design_discovery", "record_design_preference", "record_preliminary_design", "record_proposed_component", "update_proposed_design"].includes(action.name));
+      const applied = await applyWattsonActions(supabase, createdSystemId, safeActions);
+      const summary = applied.map((action) => action.summary).join("; ");
+      const responseMessage = summary
+        ? `Created ${siteName} with the installed system ${systemName}. ${summary}.`
+        : `Created ${siteName} with the installed system ${systemName}. I couldn’t safely extract structured equipment from the earlier description, so I haven’t invented any records.`;
+      const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: { actions: applied, actionUrl: `/sites/${createdSite.data.id}/systems/${createdSystemId}?view=system`, actionLabel: "Open installed system" } });
+      if (saved.error) throw saved.error;
+      return Response.json({ message: responseMessage, actions: applied, actionUrl: `/sites/${createdSite.data.id}/systems/${createdSystemId}?view=system`, actionLabel: "Open installed system" });
+    } catch (problem) {
+      if (createdSystemId) await supabase.from("projects").delete().eq("id", createdSystemId).eq("owner_id", userId);
+      await supabase.from("sites").delete().eq("id", createdSite.data.id).eq("owner_id", userId);
+      return Response.json({ error: problem instanceof Error ? problem.message : "Could not create the installed system." }, { status: 400 });
+    }
+  }
   const allowDashboardActions = dashboardMessageAllowsActions(
     parsed.data.message,
     Boolean(discoveryKeyFromAssistantQuestion(priorAssistantMessage)),
@@ -275,17 +376,24 @@ export async function POST(request: Request) {
         inventoryLabelCapture: inventoryCapture,
         sites: (sites.data ?? []).map((site) => ({ ...site, unassignedEquipment: (siteEquipment.data ?? []).filter((item) => item.site_id === site.id && !item.assigned_project_id) })),
         connectedSiteSystems: connectedSystems,
-        scope: "Dashboard Wattson is a general solar and electrical assistant with selected-Site awareness. Answer the user's actual question directly first, whether it is general, educational, comparative, diagnostic or specific to a recorded Site/system. selectedSiteWeather is the exact full five-day hourly forecast currently available to PVIntell, including timestamps, timezone, irradiance, cloud cover, precipitation, wind, temperature and UV. For weather, solar-yield, charge-timing or day-specific questions such as ‘on Wednesday’, filter those timestamped hours in the supplied site timezone and use them rather than inventing a general weather narrative. Mention when the forecast was fetched when freshness matters. Explicitly distinguish measured monitoring readings from forecast values. Use the selected Site and its complete installed component, PV-array/string, load, assumption and connection records whenever the question concerns that Site, performance or improvement; do not make the user remind you what is already mounted. connectedSiteSystems may include map_latitude, map_longitude, location_mode and map_location_updated_at. A static system position is installation context. A mobile system position is only the user's last saved guide position: state that limitation when location materially affects the answer and never imply that a boat, vehicle or movable system is permanently there. For azimuth, tilt, yield or expansion questions, explicitly compare the recorded existing arrays with the location-based ideal and distinguish improving the existing installation from proposing a separate new array. Do not force an unrelated Site context onto a genuinely general question. A hypothetical design question is not a request to create a system. Never start system discovery, create a workspace, or redirect to Start here from dashboard chat; the dedicated Start a new system flow owns that job. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update an existing system record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If a requested Site-specific action has an unclear target only after checking the records, ask one focused question instead of taking an action.",
+        scope: "Dashboard Wattson is a general solar and electrical assistant with selected-Site awareness. Answer the user's actual question directly first, whether it is general, educational, comparative, diagnostic or specific to a recorded Site/system. selectedSiteWeather is the exact full five-day hourly forecast currently available to PVIntell, including timestamps, timezone, irradiance, cloud cover, precipitation, wind, temperature and UV. For weather, solar-yield, charge-timing or day-specific questions such as ‘on Wednesday’, filter those timestamped hours in the supplied site timezone and use them rather than inventing a general weather narrative. Mention when the forecast was fetched when freshness matters. Explicitly distinguish measured monitoring readings from forecast values. Use the selected Site and its complete installed component, PV-array/string, load, assumption and connection records whenever the question concerns that Site, performance or improvement; do not make the user remind you what is already mounted. connectedSiteSystems may include map_latitude, map_longitude, location_mode and map_location_updated_at. A static system position is installation context. A mobile system position is only the user's last saved guide position: state that limitation when location materially affects the answer and never imply that a boat, vehicle or movable system is permanently there. For azimuth, tilt, yield or expansion questions, explicitly compare the recorded existing arrays with the location-based ideal and distinguish improving the existing installation from proposing a separate new array. Do not force an unrelated Site context onto a genuinely general question. A hypothetical design question is not a request to create a system. Never start system discovery, create a workspace, or redirect to Start here from dashboard chat; the dedicated Start a new system flow owns that job. Do not say technical records are unavailable merely because the synthetic dashboard project is empty. You may update an existing system record after a clear user correction or confirmation. Every dashboard action must include the exact project_id from connectedSiteSystems. If Wattson asks which Site should receive a record, recognise 'new site' as a request for a new Site rather than repeatedly asking for an existing system; retain any system name supplied after it and ask only for the missing new-Site name. If a requested Site-specific action otherwise has an unclear target after checking the records, ask one focused question instead of taking an action.",
       },
       image,
       allowActions: allowDashboardActions,
     });
+    const installedImportRoute = result.actions
+      .filter((action) => action.name === "resolve_installed_import_destination")
+      .map((action) => installedImportRouteSchema.safeParse(action.arguments))
+      .find((candidate) => candidate.success)?.data;
+    const dashboardTargetIsExplicit = Boolean(parsed.data.projectId || parsed.data.siteId);
+    const dashboardTargetIsAmbiguous = !dashboardTargetIsExplicit && connectedSystems.length > 1;
     const ownedSystemIds = new Set(systemIds);
     const appliedActions: AppliedWattsonAction[] = [];
     const actionsBySystem = new Map<string, WattsonActionRequest[]>();
     for (const action of result.actions) {
       const projectId = actionProjectId(action);
       if (!projectId || !ownedSystemIds.has(projectId)) continue;
+      if (dashboardTargetIsAmbiguous && ["record_added_component", "update_system_component", "record_or_update_pv_array", "record_or_update_system_connection", "record_or_update_load", "record_system_knowledge"].includes(action.name)) continue;
       actionsBySystem.set(projectId, [...(actionsBySystem.get(projectId) ?? []), action]);
     }
     let blockedArchitectureQuestion: string | undefined;
@@ -453,6 +561,15 @@ export async function POST(request: Request) {
       autonomousContinuation = continuation.message.trim() || undefined;
     }
     let message = friendlyMonitoringReferences(autonomousContinuation ?? result.message.trim(), connectedSystems);
+    if (installedImportRoute?.authorised && installedImportRoute.destination === "new" && (!installedImportRoute.site_name || !installedImportRoute.system_name))
+      message = !installedImportRoute.site_name && !installedImportRoute.system_name
+        ? "Understood—this is a new Site. What shall I call the new Site and its installed system?"
+        : !installedImportRoute.site_name
+          ? `Understood—this is a new Site and I’ll call its installed system ${installedImportRoute.system_name}. What shall I call the Site?`
+          : `Understood—I’ll call the new Site ${installedImportRoute.site_name}. What shall I call its installed system?`;
+    if (dashboardTargetIsAmbiguous && /would you like me to add[\s\S]*(?:installed-system|structured)[\s\S]*records/i.test(message)) {
+      message = message.replace(/Would you like me to add[\s\S]*?\?\s*$/i, "Would you like me to add that to your structured installed-system records? If so, which Site and system should I use?");
+    }
     const architectureReply = appliedActions.some((action) => action.type === "design_preference_updated")
       ? proposedArchitectureReply(result.actions)
       : null;
@@ -487,9 +604,20 @@ export async function POST(request: Request) {
       message = message
         ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`
         : `Done — ${updateSummary}.`;
+    const answeringAttachmentQuestion = pendingInstalledImport?.step === "destination"
+      || /Which site shall I attach that to and what shall I call it\?/i.test(lastAssistantMessage ?? "");
+    const newSiteAnswer = answeringAttachmentQuestion
+      ? parsed.data.message.match(/^\s*new\s+site(?:\s*[,;:\-]\s*(.+?))?\s*$/i)
+      : null;
+    if (newSiteAnswer) {
+      const suppliedSystemName = newSiteAnswer[1]?.trim();
+      message = suppliedSystemName
+        ? `Understood—this belongs to a new Site, and I’ll call the system ${suppliedSystemName}. What shall I call the new Site?`
+        : "Understood—this belongs to a new Site. What shall I call the Site and the system?";
+    }
     if (!message)
       message = result.actions.length
-        ? "I couldn’t safely attach that change to a specific system. Tell me which system it belongs to."
+        ? "Which site shall I attach that to and what shall I call it?"
         : "I didn’t produce a useful reply. Please send that once more.";
     const answeredPlaceName = /what name.*(?:property|place)|name.*(?:home|farm|cabin)/i.test(lastAssistantMessage ?? "")
       && /^\s*[\p{L}\p{N}][\p{L}\p{N}' -]{0,59}\s*$/u.test(parsed.data.message);
@@ -513,7 +641,20 @@ export async function POST(request: Request) {
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
       : undefined;
     const startSystemLink = startFirstSystem ? "/discovery/new-system" : undefined;
-    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, actionUrl: proposedDesignLink ?? monitorModeLink ?? startSystemLink, actionLabel: proposedDesignLink ? "Open proposed design" : monitorModeLink ? "Open monitor" : startSystemLink ? "Start guided setup" : undefined } });
+    const pendingInstalledImportState = installedImportRoute?.authorised && installedImportRoute.destination === "new" && (!installedImportRoute.site_name || !installedImportRoute.system_name)
+      ? !installedImportRoute.site_name && !installedImportRoute.system_name
+        ? { step: "site_and_system" }
+        : !installedImportRoute.site_name
+          ? { step: "site_name", systemName: installedImportRoute.system_name }
+          : { step: "system_name", siteName: installedImportRoute.site_name }
+      : newSiteAnswer
+      ? { step: "site_name", systemName: newSiteAnswer[1]?.trim() }
+      : !message && result.actions.length
+        ? { step: "destination" }
+        : message === "Which site shall I attach that to and what shall I call it?"
+          ? { step: "destination" }
+          : undefined;
+    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, pendingInstalledImport: pendingInstalledImportState, actionUrl: proposedDesignLink ?? monitorModeLink ?? startSystemLink, actionLabel: proposedDesignLink ? "Open proposed design" : monitorModeLink ? "Open monitor" : startSystemLink ? "Start guided setup" : undefined } });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
     const proposedDesignUrl = (proposedDesignUpdated || (existingProposedDesign && asksToContinueProposal)) && activeSystem
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`

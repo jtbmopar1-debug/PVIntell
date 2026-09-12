@@ -113,7 +113,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
     systems.filter((system) => resumeHrefs[system.id]).reverse().forEach((system) => {
       steps.unshift({ title: `Continue System Build — ${system.name}`, detail: "Return to this proposal's saved discovery, design or build stage.", href: resumeHrefs[system.id] });
     });
-    steps.push({ title: steps.length ? "Start another system" : "Start a new system", detail: "Build and design a separate system with Wattson’s help.", href: "/discovery/new-system?new=1" });
+    steps.push({ title: steps.length ? "Plan another new system" : "Plan a new system", detail: "Design a new solar or battery system for a site without one installed.", href: "/discovery/new-system?new=1" });
     steps.push({ title: "Record installed equipment", detail: "Create an as-built system, then add the equipment and connections that are already there.", href: installedHref });
     return steps;
   }, [discoveryDrafts, profile.assessment.guidedNewSystem, selectedSite, systems, resumeHrefs]);

@@ -26,18 +26,28 @@ export function inverterArrangementAdvice(input: {
   siteLocation?: string;
   timezone?: string;
   connectionType?: "dc" | "ac_single" | "ac_three";
+  projectType?: "off-grid" | "grid-tied" | "hybrid";
 }): InverterArrangementAdvice | undefined {
   const requiredKw = Number(input.requiredKw);
   if (!Number.isFinite(requiredKw) || requiredKw <= 0) return undefined;
   const location = `${input.siteLocation ?? ""} ${input.timezone ?? ""}`.toLowerCase();
   const isNz = location.includes("new zealand") || input.timezone === "Pacific/Auckland";
+  const offGrid = input.projectType === "off-grid";
+
+  if (offGrid) return {
+    jurisdiction: isNz ? "nz" : "local_review",
+    selectionStatus: isNz ? "candidate_selected" : "candidate_selected_pending_local_approval",
+    unitRatingsKw: [rounded(requiredKw)],
+    preferredPhase: input.connectionType === "ac_three" ? "three" : input.connectionType === "ac_single" ? "single" : "confirm",
+    message: `${rounded(requiredKw)} kW is the required off-grid inverter capacity and may be supplied by one suitable larger inverter or a documented parallel arrangement. Public-grid generation and export thresholds do not apply to a genuinely standalone system; confirm the selected equipment's parallel-operation, phase, battery, surge and protection limits, plus any electrical, building, fire, inspection or sign-off requirements at the Site.`,
+  };
 
   if (!isNz) return {
     jurisdiction: "local_review",
     selectionStatus: "candidate_selected_pending_local_approval",
-    unitRatingsKw: repeatedResidentialUnits(requiredKw),
+    unitRatingsKw: [rounded(requiredKw)],
     preferredPhase: input.connectionType === "ac_three" ? "three" : requiredKw > 10 ? "three" : input.connectionType === "ac_single" ? "single" : "confirm",
-    message: `${rounded(requiredKw)} kW total is provisionally arranged as ${repeatedResidentialUnits(requiredKw).join(" + ")} kW inverter unit${repeatedResidentialUnits(requiredKw).length === 1 ? "" : "s"}, keeping each unit at or below the global 10 kW planning cap. Confirm the site's local connection-capacity, export, phase-balance, approved-equipment and application requirements; local rules may require a different arrangement.`,
+    message: `${rounded(requiredKw)} kW is the total grid-connected inverter requirement, not a confirmed single-inverter model or a legal capacity determination. Wattson may assess one suitable larger inverter, multiple coordinated units or a three-phase option after applying the Site's country, network, export, phase-balance, approved-equipment, inspection and sign-off requirements.`,
   };
 
   if (requiredKw <= 10) return {
