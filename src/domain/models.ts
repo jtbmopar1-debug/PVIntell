@@ -198,6 +198,25 @@ export interface DesignCalculatorState {
   energyTargetPanelCount?: number;
   planningPanelCapacity?: number;
   fitLimited?: boolean;
+  pvArrayPlan?: {
+    status: "surface_allocation_required" | "topology_unresolved" | "resolved";
+    arrays: Array<{
+      id: string;
+      name: string;
+      capacity?: number;
+      mounting?: string;
+      direction?: string;
+      pitch?: string;
+      allocatedPanelCount?: number;
+      topology: {
+        kind: "series" | "parallel" | "series_parallel";
+        status: "pending_surface_allocation_and_equipment" | "resolved";
+        strings: Array<{ id: string; panelsInSeries: number; parallelGroup?: string; mpptInput?: string }>;
+        combinerRequirement: "pending" | "not_required" | "required";
+        reason?: string;
+      };
+    }>;
+  };
   pvStrings?: number;
   panelsPerString?: number;
   stringDesign?: {
@@ -231,6 +250,13 @@ export interface DesignCalculatorState {
   peakSunHours?: number;
   systemEfficiencyPercent?: number;
   inverterKw?: number;
+  inverterPlan?: {
+    jurisdiction: "nz" | "local_review";
+    selectionStatus: "candidate_selected" | "candidate_selected_pending_local_approval";
+    unitRatingsKw: number[];
+    preferredPhase: "single" | "three" | "confirm";
+    message: string;
+  };
   batteryChemistry?: string;
   batteryVoltage?: number;
   batteryAh?: number;

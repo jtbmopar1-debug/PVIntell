@@ -53,6 +53,8 @@ export function deterministicProposalActions(answers: DiscoveryAnswers): Wattson
         next_validation: "Resolve the first warning shown in Deterministic sizing evidence before selecting equipment.",
         panel_type: panelType,
         inverter_arrangement: String(answers.architecture_preference ?? "combined"),
+        site_location: typeof answers.site_location === "string" ? answers.site_location : undefined,
+        site_timezone: typeof answers.site_timezone === "string" ? answers.site_timezone : undefined,
         ...(includeExistingPanels ? {
           representative_panel_watts: Number(existingPanels.watts),
           existing_panel_name: existingPanels.name || "Existing panels",

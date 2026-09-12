@@ -13,7 +13,6 @@ import { recommendedPanelOrientation } from "@/design/panel-orientation";
 import { generatorFromDiscovery, proposalIncludesSolar } from "@/design/proposal-inputs";
 import { assessPanelSurfaces } from "@/design/panel-surfaces";
 import { suggestPvDcStringCable } from "@/design/pv-dc-cable-sizing";
-import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
 import type { DesignCalculatorState, Project, Site } from "@/domain/models";
 
 const n = (value: unknown, fallback = 0) => {
@@ -139,7 +138,7 @@ function systemScopeSummary(project: Project, design?: DesignCalculatorState) {
   return `Wattson has arranged ${arrayText} ${inverterText} ${gridRelationship}${outcome ? `, with the goal of helping you ${outcome}` : " from the confirmed Site, load and future-use requirements"}. ${batteryText}${generatorText}`;
 }
 
-export function ProposalScopeOverview({ project, design, site }: { project: Project; design: DesignCalculatorState; site?: Site }) {
+export function ProposalScopeOverview({ project, design }: { project: Project; design: DesignCalculatorState; site?: Site }) {
   const surfaces = assessPanelSurfaces(project.designDiscovery ?? {}, design, project.solarResource?.latitude);
   const value = (key: string) => project.designDiscovery?.[key]?.value ?? "";
   const panelCount = n(design.panelCount);
@@ -195,12 +194,6 @@ export function ProposalScopeOverview({ project, design, site }: { project: Proj
   const powerConversionText = mixedMicroinverterRetrofit
     ? `Power conversion follows two paths: the existing ${existingPanelCount}-panel array retains its microinverters, while the separate ${round(supplementary?.targetPvKw ?? 0, 2)} kW minimum additional array feeds ${batteryInverterName} through a DC-isolated MPPT input. The saved ${design.inverterKw ?? "unconfirmed"} kW sizing value is not treated as the confirmed nameplate rating of either inverter path.`
     : `Power conversion is through ${design.inverterKw ? `${inverterArticle} ${design.inverterKw} kW ` : "a "}${architecture}.`;
-  const inverterAdvice = inverterArrangementAdvice({
-    requiredKw: design.inverterKw,
-    siteLocation: site?.location,
-    timezone: site?.timezone,
-    connectionType: design.connectionType,
-  });
   const solarFirstAlternative = !proposalUsesPublicGrid(project) && !proposalIncludesBattery(project)
     ? solarFirstPowerAlternative({ panelCount, panelWatts: n(design.panelWatts), inverterKw: n(design.inverterKw), startupPeakKw: startupEnvelopeKw })
     : undefined;
@@ -258,7 +251,7 @@ export function ProposalScopeOverview({ project, design, site }: { project: Proj
     <p className="mt-3 text-xs leading-5 text-[#31465c]">{moduleAreaM2 ? `${round(moduleAreaM2, 1)} m² of known panel face area` : "Panel dimensions still need confirming"}{recordedAreaM2 ? `; ${round(recordedAreaM2, 1)} m² of recorded ${areaType} before the listed exclusions.` : "; usable mounting area still needs confirming."} The location-based starting recommendation is {azimuthText(design.azimuthDegrees)} azimuth and {design.tiltDegrees !== undefined ? `${round(design.tiltDegrees, 0)}° tilt` : "tilt to confirm"}. Roof-mounted panels normally follow the recorded roof face and pitch; these target angles do not describe an unmeasured roof. Mounting basis: {mountingApproach}.{shadePlanningText}</p>
     {surfaces.faces.length ? <div className="mt-3 space-y-2 text-xs leading-5 text-[#31465c]">{surfaces.faces.map((face) => <p key={face.id}><strong>{face.name}:</strong> {face.direction ? face.direction.replaceAll("_", " ") : "Direction unconfirmed"}{face.pitch ? `, ${face.pitch} surface pitch` : ", pitch unconfirmed"}. {face.capacity !== undefined ? `About ${face.capacity} modules in the preliminary rectangular layout. ` : "Module fit awaits dimensions. "}{face.mountingDescription} {face.aspect}</p>)}{surfaces.warnings.map((warning) => <p key={warning} className="rounded-lg border border-[#e2c765] bg-[#fff8d8] p-3">{warning}</p>)}</div> : null}
     <p className="mt-3 text-xs leading-5 text-[#31465c]">{powerConversionText} {gridRelationship} {proposalIncludesBattery(project) ? `The proposed ${[batteryVoltageText, design.batteryUsableKwh ? `${round(design.batteryUsableKwh, 1)} kWh usable` : "", chemistry].filter(Boolean).join(", ")} battery supports the recorded backup or energy-shifting goal.` : "No battery is included."}{generatorText}</p>
-    {inverterAdvice ? <p className="mt-3 rounded-xl border border-[#e2c765] bg-[#fff8d8] p-3 text-xs leading-5 text-[#6a5110]"><strong>Inverter capacity and phase check:</strong> {inverterAdvice.message}</p> : null}
+    {design.inverterPlan ? <p className="mt-3 rounded-xl border border-[#e2c765] bg-[#fff8d8] p-3 text-xs leading-5 text-[#6a5110]"><strong>Inverter capacity and phase check:</strong> {design.inverterPlan.message}</p> : null}
     {bifacialModulesIncluded ? <p className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 text-xs leading-5 text-[#31465c]"><strong>Bifacial design check:</strong> Panel wattage is treated as front-side nameplate capacity. Rear-side gain varies with mounting height, ground reflectance, spacing, shade and season, so it is not assumed as guaranteed output. The selected inverter and MPPT inputs must be checked against the module datasheet&apos;s bifacial current allowance, maximum voltage and the chosen DC oversizing or clipping strategy.</p> : null}
     {topologyNote ? <p className="mt-3 rounded-xl border border-[#e2c765] bg-[#fff8d8] p-3 text-xs leading-5 text-[#6a5110]"><strong>Inverter arrangement check:</strong> {topologyNote}</p> : null}
     {proposalUsesPublicGrid(project) && directSolarLoadKw ? <p className="mt-3 rounded-xl border border-[#9bcdb2] bg-[#effaf4] p-3 text-xs font-semibold leading-5 text-[#245c3e]"><strong>Solar-first daylight sizing:</strong> The array and inverter are sized to serve about {round(directSolarLoadKw, 2)} kW of overlapping loads explicitly scheduled for daylight in adequate sun. The public grid remains the fallback for motor starts, cloud and production shortfalls.</p> : null}
@@ -415,6 +408,11 @@ export function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculato
           : `${design.inverterKw} kW combined AC capacity proposed across all microinverters; exact unit count, model and branch ratings to confirm`,
       };
     }
+    if (design.inverterPlan && design.inverterPlan.unitRatingsKw.length > 1) return {
+      ...node,
+      label: "Inverter arrangement to assess",
+      detail: `${design.inverterKw} kW total requirement; proposal options: ${design.inverterPlan.unitRatingsKw.join(" + ")} kW units or ${design.inverterPlan.preferredPhase === "three" ? "a three-phase arrangement" : "the confirmed site phase"}`,
+    };
     const baseDetail = node.detail.replace(/^(?:\s*\d+(?:\.\d+)?\s*kW continuous rating proposed(?:\s*;\s*|\s*$))+/i, "");
     return { ...node, detail: `${design.inverterKw} kW continuous rating proposed${node.id === "pv-inverter" && baseDetail ? `; ${baseDetail}` : ""}` };
   }
@@ -825,32 +823,14 @@ export function recoverRecordedStringLayout(design: DesignCalculatorState, panel
   const iscA = n(design.panelIscA);
   const coefficient = Number(design.panelVocTemperatureCoefficientPercentPerC);
   if (!vmpV || !vocV || !impA || !iscA || !Number.isFinite(coefficient)) return undefined;
-  const profile = {
+  return defaultProposalPanelStringLayout(panelCount, {
     ...proposalPanelProfile(design.panelType),
     vmpV,
     vocV,
     impA,
     iscA,
     vocTemperatureCoefficientPercentPerC: coefficient,
-  };
-  const strings = Math.round(n(design.pvStrings));
-  const panelsPerString = Math.round(n(design.panelsPerString));
-  const recordedIsConsistent = strings > 0 && panelsPerString > 0
-    && strings * panelsPerString === panelCount;
-  const layout = recordedIsConsistent
-    ? { strings, panelsPerString }
-    : defaultProposalPanelStringLayout(panelCount, profile);
-  if (!layout) return undefined;
-  const coldVocPerPanel = vocV * (1 + Math.abs(coefficient) / 100 * 35);
-  return {
-    ...layout,
-    stringVmpV: Number((layout.panelsPerString * vmpV).toFixed(1)),
-    stringVocV: Number((layout.panelsPerString * vocV).toFixed(1)),
-    coldStringVocV: Number((layout.panelsPerString * coldVocPerPanel).toFixed(1)),
-    minimumMpptCurrentA: impA,
-    minimumInputShortCircuitCurrentA: iscA,
-    planningMinimumTemperatureC: -10,
-  };
+  });
 }
 
 function discoveredAcSupply(project: Project) {
@@ -928,9 +908,9 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       panelThicknessMm: saved.panelThicknessMm,
       panelWeightKg: saved.panelWeightKg,
       panelWeightBasis: saved.panelWeightBasis,
-      pvStrings: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.strings,
-      panelsPerString: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.panelsPerString,
-      stringDesign: rejectWattsonPanelSizing ? undefined : recoveredStringLayout,
+      pvStrings: rejectWattsonPanelSizing ? undefined : saved.pvStrings ?? recoveredStringLayout?.strings,
+      panelsPerString: rejectWattsonPanelSizing ? undefined : saved.panelsPerString ?? recoveredStringLayout?.panelsPerString,
+      stringDesign: rejectWattsonPanelSizing ? undefined : saved.stringDesign ?? recoveredStringLayout,
       panelVmpV: saved.panelVmpV,
       panelVocV: saved.panelVocV,
       panelImpA: saved.panelImpA,

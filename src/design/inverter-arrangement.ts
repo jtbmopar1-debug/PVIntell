@@ -1,11 +1,20 @@
 export type InverterArrangementAdvice = {
   jurisdiction: "nz" | "local_review";
+  selectionStatus: "candidate_selected" | "candidate_selected_pending_local_approval";
   unitRatingsKw: number[];
   preferredPhase: "single" | "three" | "confirm";
   message: string;
 };
 
 const rounded = (value: number) => Number(value.toFixed(1));
+const residentialUnitRatingsKw = [.5, .8, 1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10] as const;
+
+function repeatedResidentialUnits(requiredKw: number, maximumUnitKw = 10) {
+  const quantity = Math.max(1, Math.ceil(requiredKw / maximumUnitKw));
+  const minimumPerUnitKw = requiredKw / quantity;
+  const unitKw = residentialUnitRatingsKw.find((rating) => rating >= minimumPerUnitKw - 1e-9);
+  return unitKw ? Array.from({ length: quantity }, () => unitKw) : [];
+}
 
 /**
  * Converts a calculated total AC requirement into a market-aware equipment
@@ -25,21 +34,21 @@ export function inverterArrangementAdvice(input: {
 
   if (!isNz) return {
     jurisdiction: "local_review",
-    unitRatingsKw: [rounded(requiredKw)],
-    preferredPhase: input.connectionType === "ac_three" ? "three" : input.connectionType === "ac_single" ? "single" : "confirm",
-    message: `${rounded(requiredKw)} kW is a total AC requirement, not a confirmed single-inverter model. Confirm the country's small-generation threshold, distributor export limit, phase-balance rules, approved inverter standard, and each model's MPPT/string limits before selecting one or more units.`,
+    selectionStatus: "candidate_selected_pending_local_approval",
+    unitRatingsKw: repeatedResidentialUnits(requiredKw),
+    preferredPhase: input.connectionType === "ac_three" ? "three" : requiredKw > 10 ? "three" : input.connectionType === "ac_single" ? "single" : "confirm",
+    message: `${rounded(requiredKw)} kW total is provisionally arranged as ${repeatedResidentialUnits(requiredKw).join(" + ")} kW inverter unit${repeatedResidentialUnits(requiredKw).length === 1 ? "" : "s"}, keeping each unit at or below the global 10 kW planning cap. Confirm the site's local connection-capacity, export, phase-balance, approved-equipment and application requirements; local rules may require a different arrangement.`,
   };
 
   if (requiredKw <= 10) return {
     jurisdiction: "nz",
+    selectionStatus: "candidate_selected",
     unitRatingsKw: [rounded(requiredKw)],
     preferredPhase: input.connectionType === "ac_three" ? "three" : input.connectionType === "ac_single" ? "single" : "confirm",
     message: `${rounded(requiredKw)} kW total is within New Zealand's up-to-10 kW small distributed-generation application class. Confirm the local distributor's export limit, phase rules, approved inverter and MPPT/input limits.`,
   };
 
-  const firstUnit = Math.min(10, rounded(Math.ceil(requiredKw / 2)));
-  const secondUnit = rounded(requiredKw - firstUnit);
-  const unitRatingsKw = secondUnit > 0 ? [firstUnit, secondUnit] : [firstUnit];
+  const unitRatingsKw = repeatedResidentialUnits(requiredKw);
   const phaseMessage = input.connectionType === "ac_three"
     ? `Prefer a ${rounded(requiredKw)} kW-class three-phase arrangement, or ${unitRatingsKw.join(" + ")} kW units where the selected equipment and distributor permit it.`
     : input.connectionType === "ac_single"
@@ -47,6 +56,7 @@ export function inverterArrangementAdvice(input: {
       : `Compare a 10 kW capped option, ${unitRatingsKw.join(" + ")} kW units, and a three-phase arrangement after confirming the site's phase supply.`;
   return {
     jurisdiction: "nz",
+    selectionStatus: "candidate_selected",
     unitRatingsKw,
     preferredPhase: "three",
     message: `${phaseMessage} More than 10 kW total nameplate capacity follows New Zealand's larger Part 2 distributed-generation application process; splitting it across two units does not avoid that threshold.`,

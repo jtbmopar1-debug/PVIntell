@@ -194,7 +194,7 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(Number(design.targetPvKw)).toBeGreaterThan(7.2);
   });
 
-  it("retains a newly calculated representative string layout when sizing changes", () => {
+  it("invalidates string topology when proposal sizing changes", () => {
     const settings: Record<string, unknown> = {
       peakSunHours: 4,
       solarResource: { source: "Test solar resource", basis: "annual_average" },
@@ -215,7 +215,9 @@ describe("discovery → stored proposal → calculator save", () => {
 
     refreshProposalAfterSizingInput(settings, "grid_tied");
 
-    expect(settings.designCalculator).toMatchObject({ panelCount: 11, pvStrings: 1, panelsPerString: 11 });
+    expect(settings.designCalculator).toMatchObject({ panelCount: 11 });
+    expect(settings.designCalculator).not.toHaveProperty("pvStrings");
+    expect(settings.designCalculator).not.toHaveProperty("panelsPerString");
   });
 
   it("recovers a missing string layout from complete recorded module electrical values", () => {
@@ -234,39 +236,18 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(layout).toMatchObject({ strings: 1, panelsPerString: 10, stringVmpV: 330, stringVocV: 395 });
   });
 
-  it("repairs a globally inconsistent saved string count instead of drawing phantom panels", () => {
-    const layout = recoverRecordedStringLayout({
-      panelType: "monofacial",
-      panelCount: 16,
-      panelWatts: 460,
-      pvStrings: 3,
-      panelsPerString: 8,
-      panelVmpV: 33.17,
-      panelVocV: 39.7,
-      panelImpA: 13.87,
-      panelIscA: 14.64,
-      panelVocTemperatureCoefficientPercentPerC: -.25,
-    }, 16);
-
-    expect(layout).toMatchObject({ strings: 2, panelsPerString: 8 });
-    expect((layout?.strings ?? 0) * (layout?.panelsPerString ?? 0)).toBe(16);
-  });
-
-  it("preserves a valid recorded string topology", () => {
-    const layout = recoverRecordedStringLayout({
-      panelType: "monofacial",
-      panelCount: 24,
-      panelWatts: 460,
-      pvStrings: 3,
-      panelsPerString: 8,
-      panelVmpV: 33.17,
-      panelVocV: 39.7,
-      panelImpA: 13.87,
-      panelIscA: 14.64,
-      panelVocTemperatureCoefficientPercentPerC: -.25,
-    }, 24);
-
-    expect(layout).toMatchObject({ strings: 3, panelsPerString: 8 });
+  it("does not invent strings in a preliminary proposal from panel count alone", async () => {
+    const built = await build({
+      ...workshop,
+      panel_construction_interest: ["monofacial"],
+      existing_panel_selection: "",
+      site_location: "Auckland, New Zealand",
+      site_timezone: "Pacific/Auckland",
+    } as DiscoveryAnswers);
+    expect(built.design).not.toHaveProperty("pvStrings");
+    expect(built.design).not.toHaveProperty("panelsPerString");
+    expect(built.design.sizingWarnings).toContain("PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.");
+    expect(built.design.pvArrayPlan).toMatchObject({ status: "surface_allocation_required" });
   });
 
   it("does not repeatedly prepend the inverter rating while reconciling a draft", () => {

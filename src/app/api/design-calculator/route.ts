@@ -28,6 +28,20 @@ const calculatorSchema = z.object({
     panelSupplier: z.string().max(200).optional(), panelProductUrl: z.url().max(1000).optional(),
     panelDatasheetUrl: z.url().max(1000).optional(), panelDatasheetVersion: z.string().max(100).optional(),
     mountingLocations: z.array(z.string().max(80)).max(12).optional(),
+    pvArrayPlan: z.object({
+      status: z.enum(["surface_allocation_required", "topology_unresolved", "resolved"]),
+      arrays: z.array(z.object({
+        id: z.string().max(100), name: z.string().max(200), capacity: finite.optional(), mounting: z.string().max(100).optional(),
+        direction: z.string().max(100).optional(), pitch: z.string().max(100).optional(), allocatedPanelCount: finite.optional(),
+        topology: z.object({
+          kind: z.enum(["series", "parallel", "series_parallel"]),
+          status: z.enum(["pending_surface_allocation_and_equipment", "resolved"]),
+          strings: z.array(z.object({ id: z.string().max(100), panelsInSeries: finite, parallelGroup: z.string().max(100).optional(), mpptInput: z.string().max(100).optional() })).max(100),
+          combinerRequirement: z.enum(["pending", "not_required", "required"]),
+          reason: z.string().max(2000).optional(),
+        }),
+      })).min(1).max(20),
+    }).optional(),
     panelWatts: finite.optional(), panelCount: finite.optional(), pvStrings: finite.optional(), panelsPerString: finite.optional(),
     existingPanelGroup: z.object({
       name: z.string().max(160), availableCount: finite, maximumAvailableToProposal: finite.optional(), proposedUseCount: finite.optional(),
@@ -51,6 +65,13 @@ const calculatorSchema = z.object({
     azimuthDegrees: finite.max(360).optional(), tiltDegrees: finite.max(90).optional(),
     peakSunHours: finite.max(24).optional(), systemEfficiencyPercent: finite.max(100).optional(),
     inverterKw: finite.optional(), batteryChemistry: z.string().max(100).optional(), batteryVoltage: finite.optional(),
+    inverterPlan: z.object({
+      jurisdiction: z.enum(["nz", "local_review"]),
+      selectionStatus: z.enum(["candidate_selected", "candidate_selected_pending_local_approval"]),
+      unitRatingsKw: z.array(finite).max(20),
+      preferredPhase: z.enum(["single", "three", "confirm"]),
+      message: z.string().max(2000),
+    }).optional(),
     batteryAh: finite.optional(), batteryQuantity: finite.optional(), usableBatteryPercent: finite.max(100).optional(),
     batteryUsableKwh: finite.optional(),
     sizingMethod: z.enum(["deterministic-v1", "user-adjusted"]).optional(),
