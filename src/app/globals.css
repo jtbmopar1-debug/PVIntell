@@ -256,11 +256,13 @@ html[data-theme="dark"] .mobile-nav-item:hover{background:#22364b;color:var(--bl
   .proposed-schematic-shell>section{padding:8px!important}
   .proposed-schematic-shell>section>div:first-child{display:none}
   .proposed-schematic-canvas{margin-top:0!important;border-radius:9px!important}
-  .schematic-canvas-toolbar{gap:5px!important;padding:5px 7px!important}
-  .schematic-canvas-toolbar{overflow:visible!important}
-  .schematic-canvas-toolbar>.relative>button,.schematic-canvas-toolbar>.schematic-zoom-controls>button{width:30px!important;height:30px!important;min-width:30px!important;min-height:30px!important;padding:0!important;justify-content:center}
-  .schematic-canvas-toolbar .schematic-column-labels,.schematic-canvas-toolbar .schematic-tool-label,.schematic-canvas-toolbar .schematic-zoom-controls>span{display:none}
-  .schematic-canvas-toolbar .schematic-zoom-controls{margin-left:auto}
+  .schematic-canvas-toolbar{gap:8px!important;padding:8px!important;overflow-x:auto!important}
+  .schematic-canvas-toolbar>.relative>button{width:auto!important;height:44px!important;min-width:max-content!important;min-height:44px!important;padding:0 12px!important;justify-content:center;font-size:11px!important}
+  .schematic-canvas-toolbar>.relative>select{height:44px!important;min-width:max-content!important;font-size:11px!important}
+  .schematic-canvas-toolbar>.schematic-zoom-controls>button{width:40px!important;height:40px!important;min-width:40px!important;min-height:40px!important;padding:0!important;justify-content:center}
+  .schematic-canvas-toolbar .schematic-column-labels,.schematic-canvas-toolbar .schematic-zoom-controls>span{display:none}
+  .schematic-canvas-toolbar .schematic-tool-label{display:inline}
+  .schematic-canvas-toolbar .schematic-zoom-controls{margin-left:0}
   .schematic-canvas-toolbar .schematic-zoom-controls button:nth-of-type(2){width:48px!important}
 }
 /* System navigation now lives on the Systems hub rather than in a second header. */

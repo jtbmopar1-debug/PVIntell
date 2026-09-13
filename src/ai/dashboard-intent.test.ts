@@ -5,14 +5,13 @@ describe("dashboardMessageAllowsActions", () => {
   it("keeps general sizing questions read-only", () => {
     expect(dashboardMessageAllowsActions("how many panels can I get on a roof 3x17m?")).toBe(false);
     expect(dashboardMessageAllowsActions("what size inverter would that need?")).toBe(false);
-    expect(dashboardMessageAllowsActions("Can you build me a schematic?")).toBe(false);
-    expect(dashboardMessageAllowsActions("Could you create a wiring diagram for this setup?")).toBe(false);
-    expect(dashboardMessageAllowsActions("Can you build me a schematic?", true)).toBe(false);
   });
 
   it("allows explicit change requests even when phrased as questions", () => {
     expect(dashboardMessageAllowsActions("can you update my panel count to 8?")).toBe(true);
     expect(dashboardMessageAllowsActions("could you save that roof size?")).toBe(true);
+    expect(dashboardMessageAllowsActions("Can you build me a schematic?")).toBe(true);
+    expect(dashboardMessageAllowsActions("Could you create a wiring diagram for this setup?")).toBe(true);
   });
 
   it("allows a direct answer to an established structured question", () => {

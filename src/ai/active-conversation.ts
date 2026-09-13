@@ -393,7 +393,7 @@ export function conceptualSchematicForActiveSetup(state: ActiveConversationState
     `\`${panelLabel} → PV-side isolation/protection (rating TBD) → solar charge controller (shown in the image; exact model/rating unknown) → battery-side fuse/breaker (rating TBD) → ${batteryLabel}\``,
     "",
     `Confirmed: ${[panelWatts ? `${panelWatts} W panel` : undefined, batteryVoltage || batteryAh || chemistry ? batteryLabel : undefined, controller ? "the pictured controller" : undefined, state.currentSite?.name ? `Site: ${state.currentSite.name}` : undefined].filter(Boolean).join("; ")}.`,
-    "This is a conceptual connection flow, not an exact wiring schematic or compatibility approval. Controller rating and panel Voc, Vmp, Isc and Imp are still unknown, so cable and protection ratings—and whether that panel/controller/battery combination is electrically compatible—cannot yet be confirmed. Any controller display codes such as b01–b04 are model-specific and cannot be decoded reliably until the exact controller model or manual is known.",
+    "This is a conceptual connection flow, not an exact wiring schematic or compatibility approval. Controller rating and panel Voc, Vmp, Isc and Imp are still unknown, so cable and protection ratings—and whether that panel/controller/battery combination is electrically compatible—cannot yet be confirmed.",
   ].join("\n");
 }
 

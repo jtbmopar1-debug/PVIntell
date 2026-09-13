@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Bot, Cloud, ImagePlus, Menu as MenuIcon, RotateCcw, Send, Sun, Thermometer, Wind, X, Zap } from "lucide-react";
+import { ArrowRight, Bot, CheckCircle2, Cloud, ImagePlus, Menu as MenuIcon, RotateCcw, Send, Sun, Thermometer, Wind, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -23,7 +23,7 @@ type GuidedDiscoveryDraft = {
   updatedAt?: string;
 };
 type Profile = { displayName: string; location: string; timezone: string; assessment: OnboardingAnswers & { guidedNewSystem?: GuidedDiscoveryDraft } };
-type DashboardProps = { profile: Profile; sites: Site[]; systems: SystemSummary[]; discoveryDrafts?: GuidedDiscoveryDraft[]; connectedSystemIds?: string[]; resumeHrefs?: Record<string, string>; solarBySite: Record<string, number>; solarArraysBySite?: Record<string, SolarArrayForecastInput[]>; initialMessages: ChatMessage[]; conversationId?: string; initialSiteId?: string; autoStartProposal?: boolean; showWelcome?: boolean; email: string };
+type DashboardProps = { profile: Profile; sites: Site[]; systems: SystemSummary[]; discoveryDrafts?: GuidedDiscoveryDraft[]; connectedSystemIds?: string[]; resumeHrefs?: Record<string, string>; solarBySite: Record<string, number>; solarArraysBySite?: Record<string, SolarArrayForecastInput[]>; initialMessages: ChatMessage[]; conversationId?: string; initialSiteId?: string; initialWattsonOpen?: boolean; autoStartProposal?: boolean; showWelcome?: boolean; email: string };
 
 function useCloseFloatingMenus() {
   useEffect(() => {
@@ -50,7 +50,7 @@ function useCloseFloatingMenus() {
   }, []);
 }
 
-export function Dashboard({ profile, sites, systems, discoveryDrafts = [], connectedSystemIds = [], resumeHrefs = {}, solarBySite, solarArraysBySite = {}, initialMessages, conversationId, initialSiteId, autoStartProposal = false, showWelcome = false, email }: DashboardProps) {
+export function Dashboard({ profile, sites, systems, discoveryDrafts = [], connectedSystemIds = [], resumeHrefs = {}, solarBySite, solarArraysBySite = {}, initialMessages, conversationId, initialSiteId, initialWattsonOpen = false, autoStartProposal = false, showWelcome = false, email }: DashboardProps) {
   useCloseFloatingMenus();
   const router = useRouter();
   const [siteId, setSiteId] = useState(initialSiteId && sites.some((site) => site.id === initialSiteId) ? initialSiteId : sites[0]?.id ?? "");
@@ -59,7 +59,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
   const [input, setInput] = useState("");
   const [attachment, setAttachment] = useState<File>();
   const [sending, setSending] = useState(false);
-  const [wattsonOpen, setWattsonOpen] = useState(autoStartProposal);
+  const [wattsonOpen, setWattsonOpen] = useState(initialWattsonOpen || autoStartProposal);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [choosingView, setChoosingView] = useState<string>();
   const [welcomeOpen, setWelcomeOpen] = useState(showWelcome);
@@ -330,7 +330,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             {sending ? <div className="text-xs text-muted">Wattson is thinking…</div> : null}
           </div>
           <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="border-t border-line p-3">
-            {attachment ? <div className="mb-2 flex items-center gap-2 rounded-xl bg-[#edf2f7] px-3 py-2 text-[10px] font-semibold text-muted"><ImagePlus size={14} /><span className="min-w-0 flex-1 truncate">{attachment.name}</span><button type="button" onClick={() => setAttachment(undefined)} aria-label="Remove attached image"><X size={13} /></button></div> : null}
+            {attachment ? <div className="mb-2 flex items-center gap-2 rounded-xl border border-[#9bd2ad] bg-[#f2fbf5] px-3 py-2 text-xs font-semibold text-[#17603b]" role="status"><CheckCircle2 size={16}/><span className="min-w-0 flex-1"><strong className="block">Photo attached — ready to send</strong><span className="block truncate text-[10px] font-normal text-muted">{attachment.name}</span></span><button type="button" onClick={() => setAttachment(undefined)} className="grid size-7 place-items-center rounded-lg hover:bg-white" aria-label="Remove attached image"><X size={14}/></button></div> : null}
             <div className="grid grid-cols-[max-content_minmax(0,1fr)_2.75rem] items-end gap-2 sm:flex">
               <label className="col-start-1 row-start-2 inline-flex h-11 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-line bg-white px-3 text-[11px] font-bold text-brand sm:row-start-1" title="Add a photo from your camera, gallery or files"><ImagePlus size={17} /><span>Add photo</span><input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={sending} onChange={(event) => setAttachment(event.target.files?.[0])} /></label>
               <textarea rows={3} value={input} onChange={(event) => setInput(event.target.value)} className="field wattson-composer-input col-span-3 row-start-1 mt-0 min-h-16 w-full resize-none py-3 leading-6 sm:col-span-1 sm:min-h-[44px] sm:flex-1 sm:leading-5" placeholder="Ask Wattson…" />

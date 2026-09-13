@@ -361,7 +361,7 @@ export function PVIntellWorkspace({
       }),
     [],
   );
-  const monitorOnly = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
+  const monitorOnly = ["check", "monitor", "diagnose", "maintain", "explain"].includes(project.phase);
   const hasProjectHistory = project.goal !== "Record equipment that is already installed";
   const viewingProjectHistory = monitorOnly && hasProjectHistory && ["design", "proposed-schematic", "build", "commission"].includes(view);
   function persist(p: Project) {
@@ -848,7 +848,7 @@ function Wattson({
   inverter,
 }: any) {
   const conversationRef = useRef<HTMLDivElement>(null);
-  const installed = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
+  const installed = ["check", "monitor", "diagnose", "maintain", "explain"].includes(project.phase);
   const installedPvWatts = project.pvArrays.reduce((total: number, array: { panelWatts?: number; panelCount?: number }) => total + Number(array.panelWatts ?? 0) * Number(array.panelCount ?? 0), 0);
   const installedBatteryCount = project.components.filter((component: { kind?: string; name?: string }) => component.kind === "battery" || /\bbatter(?:y|ies)\b/i.test(component.name ?? "")).reduce((total: number, component: { quantity?: number }) => total + Number(component.quantity ?? 1), 0);
   const installedInverterCount = project.components.filter((component: { kind?: string; name?: string }) => component.kind === "inverter" || /\binverter\b/i.test(component.name ?? "")).reduce((total: number, component: { quantity?: number }) => total + Number(component.quantity ?? 1), 0);
@@ -1990,7 +1990,7 @@ function Commission({
   const handoverModules = Object.entries(completedModules).filter(([, complete]) => complete).map(([id]) => ({ id, title: completedModuleLabels[id] ?? id }));
   const buildComplete = handoverModules.length > 0;
   const handoverComplete = handoverModules.length > 0 && handoverModules.every((module) => handoverRecords[module.id]?.complete);
-  const installed = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
+  const installed = ["check", "monitor", "diagnose", "maintain", "explain"].includes(project.phase);
   const selectedHandover = handoverModules.find((module) => module.id === selectedHandoverId) ?? handoverModules[0];
   const selectedRecord = selectedHandover ? handoverRecords[selectedHandover.id] ?? emptyHandoverRecord : emptyHandoverRecord;
   function updateHandover(moduleId: string, patch: Partial<HandoverRecord>) {

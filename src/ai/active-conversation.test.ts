@@ -115,7 +115,7 @@ describe("Wattson active conversation regression", () => {
     expect(schematic).toContain("Site: River Views");
     expect(schematic).toContain("exact model/rating unknown");
     expect(schematic).toContain("panel Voc, Vmp, Isc and Imp are still unknown");
-    expect(schematic).toContain("b01–b04 are model-specific");
+    expect(schematic).not.toMatch(/b01|b04|display codes/i);
     expect(schematic).not.toMatch(/Main House|Studio battery|NOARK/i);
   });
 

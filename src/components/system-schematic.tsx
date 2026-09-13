@@ -9,6 +9,7 @@ import {
   EyeOff,
   Fuel,
   Home,
+  Link2,
   MapPin,
   Menu,
   Plus,
@@ -87,6 +88,21 @@ function componentHref(base: string, component?: ComponentSpec) {
   return component
     ? `${base}/equipment/${component.id}?returnTo=${encodeURIComponent(`${base}/schematic`)}`
     : undefined;
+}
+
+function componentRating(component: ComponentSpec) {
+  const rawRating = text(
+    component.specs[component.kind === "panel" ? "Panel wattage" : "Rated power"] ??
+      component.specs["Rated output"] ??
+      component.specs.continuousW,
+  );
+  const rating = rawRating && /^\d+(?:\.\d+)?$/.test(rawRating) ? `${rawRating} W` : rawRating;
+  const quantity = component.quantity > 1 ? `${component.quantity} × ` : "";
+  return rating
+    ? `${quantity}${rating}`
+    : component.quantity > 1
+      ? `Qty ${component.quantity}`
+      : undefined;
 }
 
 const imageBase = "/schematic-components";
@@ -193,6 +209,7 @@ function NodeCard({
   x,
   y,
   connectingFrom,
+  connectionMode,
   onConnectionStart,
   onConnectionDrop,
   onMoveStart,
@@ -202,6 +219,7 @@ function NodeCard({
   x: number;
   y: number;
   connectingFrom?: string;
+  connectionMode: boolean;
   onConnectionStart: (node: DiagramNode) => void;
   onConnectionDrop: (node: DiagramNode) => void;
   onMoveStart: (node: DiagramNode) => void;
@@ -238,6 +256,11 @@ function NodeCard({
         }}
         onClick={(event) => {
           if (suppressClick.current) { event.preventDefault(); suppressClick.current = false; return; }
+          if (connectionMode) {
+            event.preventDefault();
+            connectingFrom ? onConnectionDrop(node) : onConnectionStart(node);
+            return;
+          }
           if (node.href) router.push(node.href);
         }}
         onDragOver={(event) => event.preventDefault()}
@@ -253,14 +276,17 @@ function NodeCard({
         <span
           draggable
           title="Drag to another item to connect"
-          onClick={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            connectingFrom ? onConnectionDrop(node) : onConnectionStart(node);
+          }}
           onDragStart={(event) => {
             event.stopPropagation();
             event.dataTransfer.effectAllowed = "link";
             event.dataTransfer.setData("text/pvintell-node", node.id);
             onConnectionStart(node);
           }}
-          className="absolute right-0 top-[66px] grid size-6 cursor-crosshair place-items-center rounded-full border-2 border-white bg-brand text-[11px] text-white shadow-md"
+          className="absolute right-0 top-[58px] grid size-10 cursor-crosshair place-items-center rounded-full border-2 border-white bg-brand text-base text-white shadow-md md:top-[66px] md:size-6 md:text-[11px]"
         >
           +
         </span>
@@ -379,6 +405,8 @@ function seriesPanelCount(array: PVArray) {
 }
 
 function pvArrangement(array: PVArray) {
+  const recordedArrangement = text(array.specifications["Wiring arrangement"]);
+  if (recordedArrangement && /^(?:series|parallel)$/i.test(recordedArrangement)) return recordedArrangement.toLowerCase();
   const panelsInSeries = seriesPanelCount(array);
   if (array.strings && panelsInSeries)
     return `${array.strings} parallel string${array.strings === 1 ? "" : "s"} x ${panelsInSeries} panels in series`;
@@ -489,6 +517,7 @@ export function SystemSchematic({
   }
   const [selected, setSelected] = useState<ConnectionDetail>();
   const [connectingFrom, setConnectingFrom] = useState<DiagramNode>();
+  const [connectionMode, setConnectionMode] = useState(false);
   const [draftEnds, setDraftEnds] = useState<{
     source: DiagramNode;
     target: DiagramNode;
@@ -597,7 +626,7 @@ export function SystemSchematic({
       ...project.pvArrays.map((array) => ({
         id: `pv:${array.id}`,
         label: array.name,
-        subtitle: `${array.panelCount ?? "?"} x ${array.panelWatts ?? "?"} W; ${pvArrangement(array)}`,
+        subtitle: `${array.panelCount ?? "?"} × ${array.panelWatts ?? "?"} W · ${pvArrangement(array)}`,
         kind: "pv" as const,
         href: `${base}/pv-strings/${array.id}`,
         imageSrc: `${imageBase}/solar-panel-pv-module.jpg`,
@@ -615,7 +644,7 @@ export function SystemSchematic({
       ...generators.map((generator) => ({
         id: `component:${generator.id}`,
         label: generator.name,
-        subtitle: [generator.manufacturer, generator.model].filter(Boolean).join(" · ") || "Generator input",
+        subtitle: [componentRating(generator), generator.manufacturer, generator.model].filter(Boolean).join(" · ") || "Generator input",
         kind: "generator" as const,
         href: componentHref(base, generator),
         imageSrc: componentImage(generator),
@@ -648,14 +677,7 @@ export function SystemSchematic({
     const inverterNodes: DiagramNode[] = inverters.map((inverter) => ({
           id: `component:${inverter.id}`,
           label: inverter.name,
-          subtitle:
-            text(inverter.specs["Role / purpose"]) ??
-            text(
-              [inverter.manufacturer, inverter.model]
-                .filter(Boolean)
-                .join(" · "),
-            ) ??
-            "Inverter / charger",
+          subtitle: [componentRating(inverter), text(inverter.specs["Role / purpose"]), inverter.manufacturer, inverter.model].filter(Boolean).join(" · ") || "Inverter / charger",
           kind: "inverter" as const,
           href: componentHref(base, inverter),
           imageSrc: componentImage(inverter),
@@ -687,9 +709,7 @@ export function SystemSchematic({
       return {
         id: `component:${component.id}`,
         label: component.name,
-        subtitle:
-          [component.manufacturer, component.model].filter(Boolean).join(" · ") ||
-          component.kind,
+        subtitle: [componentRating(component), component.manufacturer, component.model].filter(Boolean).join(" · ") || component.kind,
         kind: "accessory",
         href: componentHref(base, component),
         imageSrc: componentImage(component),
@@ -1064,6 +1084,9 @@ export function SystemSchematic({
       ),
     );
     setLayoutMessage("Saving tidy layout…");
+    window.requestAnimationFrame(() => {
+      canvasViewportRef.current?.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+    });
     try {
       const response = await fetch("/api/schematic-positions", {
         method: "POST",
@@ -1083,6 +1106,7 @@ export function SystemSchematic({
   function completeConnection(target: DiagramNode) {
     if (!connectingFrom || connectingFrom.id === target.id) {
       setConnectingFrom(undefined);
+      if (connectingFrom?.id === target.id) setConnectionMode(false);
       return;
     }
     const existing = diagram.connections.find((connection) =>
@@ -1095,11 +1119,13 @@ export function SystemSchematic({
       setSelected(existing);
       setDraftEnds(undefined);
       setConnectingFrom(undefined);
+      setConnectionMode(false);
       setError("");
       return;
     }
     setDraftEnds({ source: connectingFrom, target });
     setConnectingFrom(undefined);
+    setConnectionMode(false);
     setError("");
   }
 
@@ -1330,7 +1356,7 @@ export function SystemSchematic({
           </p>
           {project.designCalculator?.proposedAsBuiltDraft && <p className="mt-3 max-w-3xl rounded-xl border border-[#8ab0d2] bg-[#f2f8fe] px-3 py-2 text-xs leading-5 text-[#143c63]"><strong>Planning draft available:</strong> the reviewed proposed schematic is saved as a reference. This as-built map still shows only equipment and connections you have confirmed.</p>}
           <p className="mt-2 text-xs font-semibold text-brand">
-            Drag a card to arrange the system; it snaps to the grid when dropped. Drag its blue + handle onto another item to create a saved connection.
+            Drag a card to arrange it. To connect equipment, select Connect items and tap the two cards; desktop users can also drag a blue + handle.
           </p>
           {layoutMessage && (
             <p className="mt-2 text-[10px] font-semibold text-muted">{layoutMessage}</p>
@@ -1346,10 +1372,12 @@ export function SystemSchematic({
               <button type="button" onClick={() => void tidyLayout()} aria-label="Tidy schematic layout" title="Tidy layout" className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><WandSparkles size={13}/><span className="schematic-tool-label">Tidy layout</span></button>
               <button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-label={showConnectionLabels ? "Hide connection labels" : "Show connection labels"} title={showConnectionLabels ? "Hide labels" : "Show labels"} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>}<span className="schematic-tool-label">{showConnectionLabels ? "Hide labels" : "Show labels"}</span></button>
               <button type="button" onClick={() => setAdding((value) => !value)} aria-label="Add schematic item" title="Add item" className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/><span className="schematic-tool-label">Add item</span></button>
+              <button type="button" onClick={() => { setConnectionMode((value) => !value); setConnectingFrom(undefined); }} aria-pressed={connectionMode} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-[10px] font-bold ${connectionMode ? "border-brand bg-brand text-white" : "border-line bg-white text-brand"}`}><Link2 size={13}/><span>{connectionMode ? "Cancel connect" : "Connect items"}</span></button>
               {adding && <div className="component-library-modal fixed inset-0 z-[80] flex items-center justify-center p-2 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="component-library-title"><button type="button" className="absolute inset-0 bg-[#071b2d]/55 backdrop-blur-[2px]" onClick={() => setAdding(false)} aria-label="Close component library"/><div className="relative flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-white text-left normal-case tracking-normal shadow-2xl sm:max-h-[min(86dvh,760px)]"><div className="shrink-0 border-b border-line p-3 sm:p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div id="component-library-title" className="eyebrow">Component library</div><input autoFocus value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search pictures and equipment" className="field mt-2"/></div><button type="button" onClick={() => setAdding(false)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-line text-muted hover:bg-[#eef3f8]" aria-label="Close component library"><X size={16}/></button></div><div className="thin-scrollbar mt-3 flex gap-1.5 overflow-x-auto pb-1" aria-label="Component groups">{assetGroups.map((group) => <button key={group.id} type="button" onClick={() => setAssetGroup(group.id)} aria-pressed={assetGroup === group.id} className={`shrink-0 rounded-full border px-3 py-1.5 text-[10px] font-bold ${assetGroup === group.id ? "border-brand bg-brand text-white" : "border-line bg-white text-brand hover:bg-[#eef3f8]"}`}>{group.label}</button>)}</div></div><div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2 sm:p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{visibleAssets.map((asset) => <button key={asset.fileName} type="button" onClick={() => router.push(`${base}/equipment/new?type=${asset.type}&name=${encodeURIComponent(asset.label)}&image=${encodeURIComponent(asset.url)}&returnTo=${schematicReturn}`)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={asset.url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-contain p-1"/><span className="line-clamp-3">{asset.label}</span></button>)}</div>{!visibleAssets.length && <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures in this group.</p>}<button type="button" onClick={() => router.push(`${base}/equipment/new?type=other&name=Other%20equipment&returnTo=${schematicReturn}`)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line py-2.5 text-xs font-bold text-brand"><Plus size={14}/>Add without a library picture</button></div></div></div>}
             </div>
             <div className="schematic-zoom-controls flex shrink-0 items-center gap-1 border-l border-line pl-2"><span className="mr-1 text-[9px] font-bold text-muted">Zoom</span><button type="button" onClick={() => setCanvasZoom((value) => Math.max(.3, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out">−</button><button type="button" onClick={() => setCanvasZoom(1)} className="h-8 min-w-12 rounded-lg border border-line bg-white px-2 text-[9px] font-bold" aria-label="Reset zoom">{Math.round(canvasZoom * 100)}%</button><button type="button" onClick={() => setCanvasZoom((value) => Math.min(1.4, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in">+</button></div>
           </div>
+          {connectionMode ? <div className="border-b border-[#e3c65a] bg-[#fff4bd] px-4 py-3 text-xs font-bold text-brand" role="status">{connectingFrom ? `Selected ${connectingFrom.label}. Tap the destination card.` : "Tap the first item you want to connect."}</div> : null}
           <div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the system map a clear postcard-sized canvas.</span></div></div>
           <div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto touch-auto bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
             <svg
@@ -1405,19 +1433,19 @@ export function SystemSchematic({
               ))}
               {diagram.sourceNodes.map((node) => {
                 const position = displayPositions.get(node.id)!;
-                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
+                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} connectionMode={connectionMode} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
               })}
               {diagram.inverterNodes.map((node) => {
                 const position = displayPositions.get(node.id)!;
-                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
+                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} connectionMode={connectionMode} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
               })}
-              {diagram.outputNode && <NodeCard node={diagram.outputNode} {...displayPositions.get(diagram.outputNode.id)!} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />}
+              {diagram.outputNode && <NodeCard node={diagram.outputNode} {...displayPositions.get(diagram.outputNode.id)!} connectingFrom={connectingFrom?.id} connectionMode={connectionMode} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />}
               {diagram.accessoryNodes.map((node) => {
                 const position = displayPositions.get(node.id)!;
-                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
+                return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} connectionMode={connectionMode} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
               })}
               {diagram.earthNode && (
-                <NodeCard node={diagram.earthNode} {...displayPositions.get(diagram.earthNode.id)!} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />
+                <NodeCard node={diagram.earthNode} {...displayPositions.get(diagram.earthNode.id)!} connectingFrom={connectingFrom?.id} connectionMode={connectionMode} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />
               )}
             </svg>
           </div>

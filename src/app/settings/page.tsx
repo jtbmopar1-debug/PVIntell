@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen, ChevronRight, CircleHelp, CloudSun, FileText, Link2, LockKeyhole, LogOut, MessageSquareText, PackageOpen, SlidersHorizontal, UserRound, Wrench } from "lucide-react";
+import { ArrowLeft, BookOpen, ChevronRight, CircleHelp, CloudSun, FileText, Images, Leaf, Link2, LockKeyhole, LogOut, MessageSquareText, PackageOpen, SlidersHorizontal, UserRound, Wrench } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -46,7 +46,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     { href: "/settings/connections", title: "Connections", detail: "Connect DeyeCloud stations or Junctek battery monitors", icon: Link2 },
     { href: weatherHref, title: "Solar weather", detail: weatherSite ? `Forecast and production outlook · ${weatherSite.name}` : "Forecast and production outlook", icon: CloudSun },
     { href: "/glossary", title: "Glossary", detail: "Plain-language solar, battery and electrical terms", icon: BookOpen },
+    { href: "/living-with-solar", title: "Living with Solar", detail: "Practical guidance for off-grid, grid-connected, hybrid and low-power living", icon: Leaf },
     { href: "/wattson-chats", title: "Wattson chats", detail: "Review, continue or delete saved conversations", icon: MessageSquareText },
+    { href: "/settings/gallery", title: "Gallery", detail: "Photos uploaded directly or shared with Wattson · 30 image limit", icon: Images },
     { href: "/faq", title: "PVIntell & Wattson FAQ", detail: "How discovery, calculations, chats, monitoring and records work", icon: CircleHelp },
     { href: "/privacy", title: "Privacy", detail: "How your account, system and conversation data is handled", icon: LockKeyhole },
     { href: "/terms", title: "Terms", detail: "Service terms, paid plans and refund conditions", icon: FileText },

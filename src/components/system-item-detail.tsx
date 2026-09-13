@@ -6,6 +6,7 @@ import {
   Cable,
   Camera,
   Gauge,
+  ImagePlus,
   Link2,
   LoaderCircle,
   Package,
@@ -478,6 +479,8 @@ export function ComponentDetail({
     component?.specs["Connection type"] === "Inverter to switchboard AC";
   const isInverter =
     (component?.kind ?? defaults?.kind ?? "other") === "inverter";
+  const isPanel =
+    (component?.kind ?? defaults?.kind ?? "other") === "panel";
   const isIsolator =
     (component?.kind ?? defaults?.kind ?? "other") === "isolator";
   const isProtection =
@@ -500,6 +503,8 @@ export function ComponentDetail({
       if (isAcConnection && Object.values(acConnectionFields).includes(name as never))
         return false;
       if (isInverter && Object.values(inverterAssignmentFields).includes(name as never))
+        return false;
+      if ((isInverter && name === "Rated power") || (isPanel && (name === "Panel wattage" || name === "Panel arrangement")))
         return false;
       if (isEarthing && Object.values(earthingFields).includes(name as never))
         return false;
@@ -614,6 +619,12 @@ export function ComponentDetail({
         ? savedSchematicImage
         : defaults?.schematicImage;
     if (schematicImage) specifications["Schematic image"] = schematicImage;
+    const ratedPower = String(form.get("ratedPower") ?? "").trim();
+    if (ratedPower) specifications[isPanel ? "Panel wattage" : "Rated power"] = `${ratedPower} W`;
+    else {
+      delete specifications["Panel wattage"];
+      delete specifications["Rated power"];
+    }
     if (isAcConnection) {
       specifications["Connection type"] = "Inverter to switchboard AC";
       for (const [key, label] of Object.entries(acConnectionFields)) {
@@ -683,6 +694,32 @@ export function ComponentDetail({
       specifications,
     };
     try {
+      if (!component && isPanel) {
+        const panelsPerArray = Number(form.get("panelsPerArray") || 1);
+        const panelConnection = String(form.get("panelConnection") || "series");
+        const response = await fetch("/api/pv-arrays", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            projectId: systemId,
+            name: form.get("name") || "PV Array",
+            arrayCount: payload.quantity,
+            manufacturer: payload.manufacturer,
+            panelModel: payload.model,
+            panelWatts: ratedPower ? Number(ratedPower) : undefined,
+            panelCount: panelsPerArray,
+            strings: panelConnection === "parallel" ? panelsPerArray : 1,
+            panelsPerString: panelConnection === "parallel" ? 1 : panelsPerArray,
+            installationNotes: payload.installationLocation ? `Installed location: ${payload.installationLocation}` : undefined,
+            specifications: { ...specifications, "Wiring arrangement": panelConnection },
+          }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Could not save PV arrays");
+        router.push(back);
+        router.refresh();
+        return;
+      }
       const response = await fetch(
         component ? `/api/components/${component.id}` : "/api/components",
         {
@@ -757,11 +794,10 @@ export function ComponentDetail({
       description={`Technical record for ${systemName}. Changes here become part of Wattson's system context.`}
       icon={icon}
     >
-      {!isAcConnection && <label className="mb-4 flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-[#91aec9] bg-[#f7fafd] p-4">
-        <span className="grid size-11 place-items-center rounded-xl bg-white text-brand">
-          <Camera size={20} />
-        </span>
-        <span className="flex-1">
+      {!isAcConnection && <div className="mb-4 rounded-2xl border border-dashed border-[#91aec9] bg-[#f7fafd] p-4">
+        <div className="flex items-start gap-3">
+        <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-white text-brand"><ScanLine size={20}/></span>
+        <span className="min-w-0 flex-1">
           <strong className="block text-xs">
             {isAcConnection
               ? "Show Wattson a breaker, switchboard or changeover label"
@@ -772,20 +808,12 @@ export function ComponentDetail({
             before saving.
           </span>
         </span>
-        {analyzing ? (
-          <LoaderCircle className="animate-spin text-brand" size={19} />
-        ) : (
-          <ScanLine className="text-brand" size={19} />
-        )}
-        <input
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          capture="environment"
-          className="hidden"
-          disabled={analyzing}
-          onChange={(event) => void analyze(event.target.files?.[0])}
-        />
-      </label>}
+        {analyzing && <LoaderCircle className="shrink-0 animate-spin text-brand" size={19}/>}</div>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <label className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xl bg-brand px-3 text-xs font-bold text-white"><Camera size={17}/>Take photo<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" disabled={analyzing} onChange={(event) => void analyze(event.target.files?.[0])}/></label>
+          <label className="flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border border-brand bg-white px-3 text-xs font-bold text-brand"><ImagePlus size={17}/>Choose gallery<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={analyzing} onChange={(event) => void analyze(event.target.files?.[0])}/></label>
+        </div>
+      </div>}
       {extraction && (
         <div className="mb-4 rounded-xl border border-line bg-[#f8fafc] p-3 text-[10px]">
           <div className="flex justify-between">
@@ -868,22 +896,24 @@ export function ComponentDetail({
                   className="field"
                 />
               </Field>
-              <Field label="Quantity">
+              <Field label={isPanel ? "Number of arrays" : "Quantity"}>
                 <input
                   name="quantity"
                   type="number"
                   min="1"
-                  max={isInverter ? 1 : undefined}
-                  readOnly={isInverter}
                   defaultValue={component?.quantity ?? 1}
                   className="field"
                 />
-                {isInverter && (
-                  <span className="mt-1 block text-[9px] font-normal text-muted">
-                    One physical inverter per card.
-                  </span>
-                )}
               </Field>
+              {(isPanel || isInverter) && <Field label={isPanel ? "Panel wattage" : "Rated output"}>
+                <div className="relative"><input name="ratedPower" type="number" min="0" step="any" defaultValue={String(component?.specs[isPanel ? "Panel wattage" : "Rated power"] ?? "").replace(/[^0-9.]/g, "")} className="field pr-12" placeholder={isPanel ? "e.g. 450" : "e.g. 5000"}/><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">W</span></div>
+              </Field>}
+              {isPanel && <Field label="Panels per array">
+                <input name="panelsPerArray" type="number" min="1" defaultValue="1" className="field" placeholder="e.g. 6"/>
+              </Field>}
+              {isPanel && <Field label="Connection within each array">
+                <select name="panelConnection" defaultValue="series" className="field"><option value="series">Series</option><option value="parallel">Parallel</option></select>
+              </Field>}
             </>
           )}
           {!isAcConnection && <Field label="Installed location">

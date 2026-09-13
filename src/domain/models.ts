@@ -30,6 +30,8 @@ export interface SystemSummary {
   projectType: ProjectType;
   phase: LifecyclePhase;
   completedAreas?: string[];
+  statusUnconfirmed?: boolean;
+  gridRelationshipUnconfirmed?: boolean;
 }
 
 export type FinancialEntryType = "purchase" | "other_cost" | "rebate" | "buyback" | "other_income";

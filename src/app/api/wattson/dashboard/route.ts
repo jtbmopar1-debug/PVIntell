@@ -12,8 +12,10 @@ import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } 
 import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
 import { dashboardMessageAllowsActions } from "@/ai/dashboard-intent";
 import { createSystem } from "@/data/cloud-project";
+import { registerGalleryImage } from "@/gallery/register";
 import { confirmedBatterySystemVoltage, mentionedExistingSite } from "@/ai/installed-import-routing";
 import { confirmedDestinationNames } from "@/ai/conversation-kind";
+import { conceptualPvArrays, explicitInverterMention, explicitPanelWattage, inverterClassFromEvidence, nextNumberedName, requestsSchematicCreation } from "@/ai/schematic-intent";
 import {
   buildActiveConversationState,
   conceptualSchematicForActiveSetup,
@@ -240,6 +242,8 @@ export async function POST(request: Request) {
     imagePath = `${userId}/${imageScope}/wattson/${crypto.randomUUID()}.${extension}`;
     const uploaded = await supabase.storage.from("project-photos").upload(imagePath, imageFile, { contentType: imageFile.type, upsert: false });
     if (uploaded.error) return Response.json({ error: `Wattson could not store the image: ${uploaded.error.message}` }, { status: 400 });
+    try { await registerGalleryImage(supabase, { ownerId: userId, storagePath: imagePath, fileName: imageFile.name, mimeType: imageFile.type, source: "wattson" }); }
+    catch (problem) { await supabase.storage.from("project-photos").remove([imagePath]); return Response.json({ error: problem instanceof Error ? problem.message : "Could not add the chat image to Gallery." }, { status: 409 }); }
   }
   const inventorySiteId = conversationSiteId ?? (systems.data ?? []).find((system) => system.id === parsed.data.projectId)?.site_id;
   let inventoryCapture: InventoryPhotoCapture | undefined;
@@ -308,6 +312,160 @@ export async function POST(request: Request) {
   const priorAssistantMessage = priorAssistant?.content;
   const priorStructuredContext = priorAssistant?.structured_context && typeof priorAssistant.structured_context === "object"
     ? priorAssistant.structured_context as Record<string, unknown> : {};
+  if (requestsSchematicCreation(parsed.data.message, priorAssistantMessage)) {
+    const existingSchematicId = typeof priorStructuredContext.schematicId === "string" ? priorStructuredContext.schematicId : undefined;
+    const existingSchematicUrl = typeof priorStructuredContext.actionUrl === "string" ? priorStructuredContext.actionUrl : undefined;
+    if (existingSchematicId && existingSchematicUrl) {
+      const responseMessage = "It is already built. Open the schematic below.";
+      const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: priorStructuredContext });
+      if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+      return Response.json({ message: responseMessage, actions: [], conversationId, schematicId: existingSchematicId, actionUrl: existingSchematicUrl, actionLabel: "Open schematic" });
+    }
+    let createdSiteId: string | undefined;
+    let createdSystemId: string | undefined;
+    try {
+      const currentSiteId = activeConversation.currentSite?.id ?? conversationSiteId ?? parsed.data.siteId;
+      if (currentSiteId) createdSiteId = currentSiteId;
+      else {
+        const siteName = nextNumberedName("Site", (sites.data ?? []).map((site) => site.name));
+        const createdSite = await supabase.from("sites").insert({ owner_id: userId, name: siteName, location: null, timezone: "UTC", location_source: "manual", location_confirmed: false }).select("id").single();
+        if (createdSite.error) throw createdSite.error;
+        createdSiteId = createdSite.data.id;
+      }
+      const associatedSystemId = activeConversation.currentSubject?.association === "explicitly-associated"
+        ? activeConversation.currentSubject.associatedSystemId
+        : undefined;
+      createdSystemId = associatedSystemId;
+      if (!createdSystemId) {
+        const systemName = nextNumberedName("System", connectedSystems.filter((system) => system.site_id === createdSiteId).map((system) => system.name));
+        createdSystemId = await createSystem(supabase, userId, createdSiteId!, systemName, "off-grid", "Installed-system schematic created by Wattson; unconfirmed specifications are TBC.");
+      }
+      const installedPhase = await supabase.from("projects").update({
+        phase: "check",
+        description: "Installed-system schematic created by Wattson; unconfirmed specifications are TBC.",
+        settings: { schematicOrigin: "wattson_conceptual", systemStatus: "unconfirmed", gridRelationship: "unconfirmed" },
+        updated_at: new Date().toISOString(),
+      }).eq("id", createdSystemId).eq("owner_id", userId);
+      if (installedPhase.error) throw installedPhase.error;
+      const conversationText = [...prior.map((item) => item.content), parsed.data.message].join("\n");
+      const userConversationText = [...prior.filter((item) => item.role === "user").map((item) => item.content), parsed.data.message].join("\n");
+      const panel = activeConversation.confirmedComponents.find((component) => component.kind === "panel");
+      const panelWatts = explicitPanelWattage(parsed.data.message)
+        ?? (Number(panel?.specifications.ratedPowerW ?? 0) || undefined)
+        ?? explicitPanelWattage(conversationText);
+      const pvLayout = conceptualPvArrays(conversationText);
+      let createdArrayRows: Array<{ id: string }> = [];
+      if (panel || pvLayout.totalPanels || panelWatts) {
+        const arrayRows = Array.from({ length: pvLayout.arrayCount }, (_, index) => ({
+          project_id: createdSystemId,
+          name: `PV${index + 1}`,
+          panel_watts: panelWatts ?? null,
+          panel_count: pvLayout.panelsPerArray ?? null,
+          strings: 1,
+          panels_per_string: pvLayout.panelsPerArray ?? null,
+          specifications: {
+            "Wiring arrangement": "series",
+            "Panel Voc": "TBC",
+            "Panel Vmp": "TBC",
+            "Panel Isc": "TBC",
+            "Panel Imp": "TBC",
+            "Design status": "Conceptual — verify ratings before installation",
+          },
+          confidence: "estimated",
+        }));
+        const createdArray = await supabase.from("pv_arrays").insert(arrayRows).select("id");
+        if (createdArray.error) throw createdArray.error;
+        createdArrayRows = createdArray.data ?? [];
+      }
+      const explicitInverter = explicitInverterMention(userConversationText);
+      const inverterClass = inverterClassFromEvidence(`${userConversationText}\n${JSON.stringify(activeConversation.confirmedComponents)}`);
+      const inverterRequested = /\binverters?\b/i.test(parsed.data.message);
+      const labelledInverter = inverterRequested
+        ? activeConversation.confirmedComponents.find((component) => component.kind === "other" && component.source === "image")
+        : undefined;
+      const componentRows: Array<Record<string, unknown>> = activeConversation.confirmedComponents.filter((component) => component.kind !== "panel" && component !== labelledInverter && !((explicitInverter || inverterRequested) && component.kind === "other" && /inverter/i.test(component.label))).map((component) => ({
+        project_id: createdSystemId,
+        type: component.kind === "controller" ? "charger" : component.kind === "battery" ? "battery" : "other",
+        display_name: component.label || (component.kind === "controller" ? "Solar charge controller" : "Equipment TBC"),
+        quantity: 1,
+        specifications: { ...component.specifications, "Unconfirmed specifications": "TBC" },
+        notes: "Conceptual schematic item; confirm exact model and ratings before installation.",
+        confidence: "estimated",
+      }));
+      if (explicitInverter || labelledInverter) componentRows.push({
+        project_id: createdSystemId,
+        type: "inverter",
+        display_name: explicitInverter ? `${explicitInverter.manufacturer} ${inverterClass ?? "inverter"}` : labelledInverter!.label,
+        quantity: 1,
+        specifications: { ...(labelledInverter?.specifications ?? {}), "Equipment class": inverterClass ?? "TBC", "Rated power": explicitInverter?.ratedPowerW ? `${explicitInverter.ratedPowerW} W` : labelledInverter?.specifications.ratedPowerW ?? "TBC", "Unconfirmed specifications": "TBC" },
+        notes: "Conceptual schematic inverter identified by the user; confirm the exact model, class and ratings before installation.",
+        confidence: "estimated",
+      });
+      else if (inverterRequested) componentRows.push({
+        project_id: createdSystemId,
+        type: "inverter",
+        display_name: inverterClass ? inverterClass.replace(/\b\w/g, (letter) => letter.toUpperCase()) : "Inverter",
+        quantity: 1,
+        specifications: { "Equipment class": inverterClass ?? "TBC", "Manufacturer": "TBC", "Model": "TBC", "Rated power": "TBC", "Unconfirmed specifications": "TBC" },
+        notes: "Conceptual schematic inverter requested by the user; confirm the label, exact model, class and ratings before installation.",
+        confidence: "estimated",
+      });
+      const requestedParts = [
+        { matches: /\bcombiner(?:\s+box)?\b/i, type: "combiner", name: "PV combiner box" },
+        { matches: /\bisolator|disconnect\b/i, type: "isolator", name: "PV DC isolator" },
+        { matches: /\bbus\s*bar\b/i, type: "connector", name: "Battery busbar" },
+        { matches: /\bfused?|\bfuse\b/i, type: "protection", name: "Battery fuse" },
+      ] as const;
+      for (const part of requestedParts) {
+        if (!part.matches.test(parsed.data.message) || componentRows.some((row) => String(row.display_name ?? "").toLowerCase().includes(part.name.toLowerCase()))) continue;
+        componentRows.push({ project_id: createdSystemId, type: part.type, display_name: part.name, quantity: 1, specifications: { "Rating": "TBC", "Unconfirmed specifications": "TBC" }, notes: "Conceptual schematic item explicitly requested by the user; confirm its rating and suitability before installation.", confidence: "estimated" });
+      }
+      let createdComponentRows: Array<{ id: string; type: string; display_name: string }> = [];
+      if (componentRows.length) {
+        const createdComponents = await supabase.from("system_components").insert(componentRows).select("id,type,display_name");
+        if (createdComponents.error) throw createdComponents.error;
+        createdComponentRows = createdComponents.data ?? [];
+      }
+      const componentRef = (pattern: RegExp) => {
+        const component = createdComponentRows.find((row) => pattern.test(`${row.type} ${row.display_name}`));
+        return component ? `component:${component.id}` : undefined;
+      };
+      const inverterRef = componentRef(/\binverter\b/i);
+      const combinerRef = componentRef(/combiner/i);
+      const isolatorRef = componentRef(/isolator|disconnect/i);
+      const batteryRef = componentRef(/\bbattery\b/i);
+      const fuseRef = componentRef(/\bfuse\b/i);
+      const busbarRef = componentRef(/busbar/i);
+      const connectionRows: Array<Record<string, unknown>> = [];
+      const link = (sourceRef: string | undefined, targetRef: string | undefined, name: string) => {
+        if (!sourceRef || !targetRef) return;
+        connectionRows.push({ project_id: createdSystemId, source_ref: sourceRef, target_ref: targetRef, name, connection_type: "dc", polarity: "pair", notes: "Conceptual connection; cable, protection and route details are TBC.", confidence: "estimated" });
+      };
+      for (const array of createdArrayRows) link(`pv:${array.id}`, combinerRef ?? isolatorRef ?? inverterRef, "PV DC");
+      link(combinerRef, isolatorRef ?? inverterRef, "Combined PV DC");
+      link(isolatorRef, inverterRef, "Isolated PV DC");
+      link(batteryRef, fuseRef ?? busbarRef ?? inverterRef, "Battery DC");
+      link(fuseRef, busbarRef ?? inverterRef, "Fused battery DC");
+      link(busbarRef, inverterRef, "Battery DC to inverter");
+      if (connectionRows.length) {
+        const createdConnections = await supabase.from("system_connections").insert(connectionRows);
+        if (createdConnections.error) throw createdConnections.error;
+      }
+      const schematicUrl = `/sites/${createdSiteId}/systems/${createdSystemId}/schematic`;
+      const responseMessage = "Built as an installed-system schematic. I marked the missing electrical ratings as TBC, so those details remain provisional until verified. Open it below.";
+      const structuredContext = { activeConversation, schematicId: createdSystemId, actionUrl: schematicUrl, actionLabel: "Open schematic" };
+      const linked = await supabase.from("user_conversations").update({ site_id: createdSiteId, project_id: createdSystemId }).eq("id", conversationId).eq("owner_id", userId);
+      if (linked.error) throw linked.error;
+      const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: structuredContext });
+      if (saved.error) throw saved.error;
+      return Response.json({ message: responseMessage, actions: [{ type: "workspace_created", summary: "Created conceptual schematic" }], conversationId, schematicId: createdSystemId, actionUrl: schematicUrl, actionLabel: "Open schematic" });
+    } catch (problem) {
+      const detail = problem instanceof Error ? problem.message : "Unknown schematic creation error";
+      const responseMessage = `I could not create the schematic because PVIntell returned this technical error: ${detail}`;
+      await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: { activeConversation, schematicCreationError: detail } });
+      return Response.json({ message: responseMessage, actions: [], conversationId });
+    }
+  }
   const pendingInstalledImport = priorStructuredContext.pendingInstalledImport && typeof priorStructuredContext.pendingInstalledImport === "object"
     ? priorStructuredContext.pendingInstalledImport as { step?: string; siteName?: string; systemName?: string } : undefined;
   const offeredInstalledImport = /(?:map|add|record|structure|set (?:this|that) up)[\s\S]*(?:as-built|installed system|installed-system|system record|inventory|schematic)/i.test(priorAssistantMessage ?? "");

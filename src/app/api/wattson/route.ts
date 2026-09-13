@@ -20,6 +20,8 @@ import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } 
 import { loadMonitoringSnapshot } from "@/monitoring/repository";
 import { buildMonitoringWattsonContext } from "@/monitoring/wattson-context";
 import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
+import { requestsSchematicCreation } from "@/ai/schematic-intent";
+import { registerGalleryImage } from "@/gallery/register";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -146,6 +148,8 @@ export async function POST(request: Request) {
         },
         { status: 400 },
       );
+    try { await registerGalleryImage(supabase, { ownerId: userId, storagePath: imagePath, fileName: imageFile.name, mimeType: imageFile.type, source: "wattson" }); }
+    catch (problem) { await supabase.storage.from("project-photos").remove([imagePath]); return Response.json({ error: problem instanceof Error ? problem.message : "Could not add the chat image to Gallery." }, { status: 409 }); }
     const signed = await supabase.storage
       .from("project-photos")
       .createSignedUrl(imagePath, 3600);
@@ -228,6 +232,21 @@ export async function POST(request: Request) {
     history.at(-1)?.content === parsed.data.message
       ? history.slice(0, -1)
       : history;
+  const priorAssistantMessage = [...priorHistory].reverse().find((item) => item.role === "assistant")?.content ?? "";
+  if (requestsSchematicCreation(parsed.data.message, priorAssistantMessage)) {
+    const schematicId = parsed.data.projectId;
+    const actionUrl = `/sites/${owned.data.site_id}/systems/${schematicId}/schematic`;
+    const installedPhase = await supabase.from("projects").update({ phase: "monitor", updated_at: new Date().toISOString() }).eq("id", schematicId).eq("owner_id", userId);
+    if (installedPhase.error) {
+      const message = `I could not create the installed-system schematic because PVIntell returned this technical error: ${installedPhase.error.message}`;
+      await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { schematicCreationError: installedPhase.error.message } });
+      return Response.json({ message, actions: [] });
+    }
+    const message = "The installed-system schematic is ready. Open it below; any missing specifications remain TBC and provisional until verified.";
+    const saved = await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { schematicId, actionUrl, actionLabel: "Open schematic" } });
+    if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+    return Response.json({ message, schematicId, actionUrl, actionLabel: "Open schematic", actions: [] });
+  }
   if (isNewSystemSetupIntent(parsed.data.message)) {
     const message = startHereMessage();
     const saved = await supabase.from("chat_messages").insert({

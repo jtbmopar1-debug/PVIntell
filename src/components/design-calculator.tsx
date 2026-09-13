@@ -1,6 +1,6 @@
 "use client";
 
-import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Eye, EyeOff, Minus, Plus, RotateCcw, Save, Smartphone, Sun, X } from "lucide-react";
+import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Eye, EyeOff, Link2, Minus, Plus, RotateCcw, Save, Smartphone, Sun, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
@@ -575,6 +575,56 @@ export function tidySchematicNodes(nodes: ProposedNode[]) {
 }
 
 type SchematicConnectionView = "all" | "ac" | "dc" | "earth";
+
+type ProposedAssetGroup = "all" | "ac" | "dc" | "switching" | "solar" | "storage" | "generation" | "metering" | "other";
+
+const proposedAssetGroups: Array<{ id: ProposedAssetGroup; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "ac", label: "AC" },
+  { id: "dc", label: "DC" },
+  { id: "switching", label: "Switches & protection" },
+  { id: "solar", label: "Solar & charging" },
+  { id: "storage", label: "Storage" },
+  { id: "generation", label: "Generation" },
+  { id: "metering", label: "Metering & monitoring" },
+  { id: "other", label: "Other" },
+];
+
+const proposedSchematicAssetFiles = [
+  "ac-circuit-breaker-mcb.jpg", "ac-disconnect-isolator.jpg", "ac-distribution-board.jpg",
+  "automatic-generator-start-controller.png", "automatic-transfer-switch-ats.jpg", "bms-battery-management-system.jpg",
+  "busbar.jpg", "current-transformer-ct-clamp.jpg", "dc-battery-cable.png", "dc-circuit-breaker-mcb.jpg",
+  "dc-combiner-box.jpg", "dc-dc-battery-charger-unbranded.png", "dc-disconnect-isolator.jpg", "dc-fuse-holder.jpg",
+  "dc-fuse.jpg", "dc-optimisers.svg", "din-rail-enclosure-unbranded.png", "earth-electrode.png",
+  "earthing-ground-bar.jpg", "energy-meter.jpg", "generator-ac-input-breaker-v2.png", "generator-inlet-box.jpg",
+  "generator.jpg", "grid-connection-v2.png", "hybrid-inverter.jpg", "lead-acid-battery.jpg",
+  "lifepo4-battery-bank.jpg", "meter-board-socket-enclosure.png", "microinverter.jpg",
+  "monitoring-device-data-logger.jpg", "mppt-charge-controller.jpg", "non-communicating-digital-meter.png",
+  "plug-in-power-meter.png", "pv-cable-dc.jpg", "rcd-rccb.jpg", "roof-mounting-system.jpg",
+  "smart-electricity-meter.png", "smart-load-relay-controller.jpg", "solar-panel-pv-module.jpg",
+  "string-inverter.jpg", "surge-protection-device-spd.jpg", "wifi-communication-module.jpg",
+] as const;
+
+const proposedAssetLabel = (fileName: string) => fileName
+  .replace(/\.[^.]+$/, "")
+  .replace(/-unbranded|-v\d+$/g, "")
+  .replaceAll("-", " ")
+  .replace(/\b(ac|dc|pv|mcb|mppt|bms|ats|ct|rcd|rccb|spd)\b/gi, (value) => value.toUpperCase())
+  .replace(/\b\w/g, (value) => value.toUpperCase());
+
+const proposedAssetGroupsFor = (fileName: string): ProposedAssetGroup[] => {
+  const name = fileName.toLowerCase();
+  const groups = new Set<ProposedAssetGroup>();
+  if (/^ac-|grid|transfer|building/.test(name)) groups.add("ac");
+  if (/^dc-|pv-|busbar|combiner|mppt|optimiser|battery-cable/.test(name)) groups.add("dc");
+  if (/switch|disconnect|isolator|breaker|fuse|rcd|rccb|surge|combiner|protection|transfer/.test(name)) groups.add("switching");
+  if (/solar|pv-|inverter|microinverter|charge-controller|optimiser|roof-mounting/.test(name)) groups.add("solar");
+  if (/battery|storage|bms/.test(name)) groups.add("storage");
+  if (/generator/.test(name)) groups.add("generation");
+  if (/meter|monitor|logger|wifi|current-transformer|ct-clamp|relay-controller/.test(name)) groups.add("metering");
+  if (!groups.size || /earth|ground|enclosure|cable/.test(name)) groups.add("other");
+  return [...groups];
+};
 
 export function schematicConnectionsForView(connections: NonNullable<ProposedDraft["connections"]>, view: SchematicConnectionView) {
   if (view === "all") return connections;
@@ -1546,6 +1596,12 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const [componentModalTarget, setComponentModalTarget] = useState<HTMLElement | null>(null);
   const [quickPanelCount, setQuickPanelCount] = useState("");
   const [quickEditMessage, setQuickEditMessage] = useState("");
+  const [addingItem, setAddingItem] = useState(false);
+  const [assetSearch, setAssetSearch] = useState("");
+  const [assetGroup, setAssetGroup] = useState<ProposedAssetGroup>("all");
+  const [customItemName, setCustomItemName] = useState("");
+  const [connectionMode, setConnectionMode] = useState(false);
+  const [connectingFromId, setConnectingFromId] = useState<string>();
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const viewport = canvasViewportRef.current;
@@ -1763,11 +1819,56 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     setMovingNodeId(undefined);
   };
   const tidyLayout = () => onChange({ ...draft, nodes: tidySchematicNodes(nodes) });
-  const addItem = () => {
-    const label = window.prompt("Name the component or item to add");
+  const addItem = (label: string, image?: string) => {
     if (!label?.trim()) return;
     const id = `custom-${Date.now()}`;
-    onChange(repairCustomEquipmentDraft({ ...draft, nodes: [...nodes, { id, label: label.trim(), detail: "Added to the working system", image: customEquipmentImage(label), x: 35 + (nodes.length % 4) * 260, y: 30 + Math.floor(nodes.length / 4) * 190 }] }));
+    onChange(repairCustomEquipmentDraft({ ...draft, nodes: [...nodes, { id, label: label.trim(), detail: "Added from the component library", image: image ?? customEquipmentImage(label), x: 35 + (nodes.length % 4) * 260, y: 30 + Math.floor(nodes.length / 4) * 190 }] }));
+    setAddingItem(false);
+    setAssetSearch("");
+    setCustomItemName("");
+  };
+  const visibleProposedAssets = proposedSchematicAssetFiles.filter((fileName) => {
+    const matchesSearch = !assetSearch.trim() || proposedAssetLabel(fileName).toLowerCase().includes(assetSearch.trim().toLowerCase());
+    return matchesSearch && (assetGroup === "all" || proposedAssetGroupsFor(fileName).includes(assetGroup));
+  });
+  const completeConnection = (targetId: string) => {
+    if (!connectingFromId) {
+      setConnectingFromId(targetId);
+      setConnectionMode(true);
+      return;
+    }
+    if (connectingFromId === targetId) {
+      setConnectingFromId(undefined);
+      setConnectionMode(false);
+      return;
+    }
+    const duplicate = connections.some((connection) =>
+      (connection.from === connectingFromId && connection.to === targetId) ||
+      (connection.from === targetId && connection.to === connectingFromId));
+    if (duplicate) {
+      setConnectingFromId(undefined);
+      setConnectionMode(false);
+      return;
+    }
+    const source = byId.get(connectingFromId);
+    const target = byId.get(targetId);
+    if (!source || !target) return;
+    const identity = `${source.id} ${source.label} ${target.id} ${target.label}`.toLowerCase();
+    const kind: "solar-dc" | "battery-dc" | "ac" | "earth" = /earth|ground/.test(identity)
+      ? "earth"
+      : /battery|storage|busbar|fuse/.test(identity)
+        ? "battery-dc"
+        : /solar|\bpv\b|panel|array|mppt|optimiser/.test(identity)
+          ? "solar-dc"
+          : "ac";
+    const label = kind === "earth" ? "Earth / bonding" : kind === "battery-dc" ? "Battery DC" : kind === "solar-dc" ? "PV DC" : "AC connection";
+    const nextConnection = { from: source.id, to: target.id, label, kind };
+    onChange({ ...draft, connections: [...connections, nextConnection] });
+    setSelectedConnectionKey(`${source.id}:${target.id}`);
+    setRouteLength(0);
+    setRouteBasis("estimated");
+    setConnectingFromId(undefined);
+    setConnectionMode(false);
   };
   const removeSelectedNode = () => {
     if (!selectedNode || !window.confirm(`Delete ${selectedNode.label} from this system schematic? Its attached connections will also be removed.`)) return;
@@ -1824,7 +1925,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const earthConnections = visibleConnections.filter((connection) => connection.kind === "earth");
   const earthLaneOffset = (connection: (typeof connections)[number]) => connection.kind === "earth" ? Math.max(0, earthConnections.indexOf(connection)) * 10 : 0;
 
-  return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><label className="sr-only" htmlFor="schematic-connection-view">Show schematic connections</label><select id="schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as SchematicConnectionView)} className="h-8 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC connections</option><option value="dc">DC connections</option><option value="earth">Earth connections</option></select><button type="button" onClick={tidyLayout} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={addItem} className="h-8 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">+ Add item</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div><div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto overscroll-contain">
+  return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><label className="sr-only" htmlFor="schematic-connection-view">Show schematic connections</label><select id="schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as SchematicConnectionView)} className="h-9 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC connections</option><option value="dc">DC connections</option><option value="earth">Earth connections</option></select><button type="button" onClick={tidyLayout} className="h-9 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={() => setAddingItem(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/>Add item</button><button type="button" onClick={() => { setConnectionMode((value) => !value); setConnectingFromId(undefined); }} aria-pressed={connectionMode} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold ${connectionMode ? "border-brand bg-brand text-white" : "border-line bg-white text-brand"}`}><Link2 size={13}/>{connectionMode ? "Cancel connect" : "Connect items"}</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div>{connectionMode ? <div className="border-b border-[#e3c65a] bg-[#fff4bd] px-4 py-3 text-xs font-bold text-brand" role="status">{connectingFromId ? `Selected ${byId.get(connectingFromId)?.label ?? "item"}. Tap the destination card.` : "Tap the first item you want to connect."}</div> : null}<div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto overscroll-contain">
     {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5">{selectedNodeIsSolar && !supplementaryArray(design) ? <div className="rounded-2xl border border-[#9fc6e7] bg-[#eef6fd] p-4"><div className="eyebrow">Quick edit</div><label className="mt-3 block text-xs font-bold">Total panel quantity<div className="mt-1.5 flex gap-2"><input type="number" min="1" max="10000" step="1" inputMode="numeric" value={quickPanelCount} onChange={(event) => { setQuickPanelCount(event.target.value); setQuickEditMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={saveQuickPanelQuantity} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">Save quantity</button></div></label><p className="mt-2 text-[10px] leading-4 text-muted">This refreshes array capacity, string layout and the dependent inverter and storage planning figures.</p>{quickEditMessage ? <p className="mt-2 text-[10px] font-semibold text-brand" role="status">{quickEditMessage}</p> : null}</div> : null}<div className="mt-5 eyebrow">Full component specification</div><dl className="mt-3 grid gap-3 sm:grid-cols-2">{selectedNodeSpecs.map(([label, value]) => <div key={label} className="rounded-xl border border-line bg-[#f7fafc] p-3"><dt className="text-[9px] font-bold uppercase tracking-[.12em] text-muted">{label}</dt><dd className="mt-1 text-xs font-extrabold">{value}</dd></div>)}</dl><button type="button" onClick={removeSelectedNode} className="mt-4 h-9 w-full rounded-lg border border-[#e7b7af] text-[10px] font-bold text-[#a7442d]">Delete this item</button></div>, componentModalTarget) : null}
     <div className="origin-top-left" style={{ zoom, width: canvasSize.width }}>
     <div className="flex items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted" style={{ minWidth: canvasSize.width }}><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery DC</span><span><b className="text-[#d99500]">Gold</b> = inverter AC to the building</span><span><b className="text-[#9b3db5]">Purple</b> = controlled public-grid AC</span><span><b className="text-[#25875a]">Green</b> = protective earth / bonding</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
@@ -1847,15 +1948,30 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         const geometry = connectionGeometry(connection.from, connection.to, earthLaneOffset(connection), connection.kind);
         return <button type="button" onClick={() => { setSelectedConnectionKey(`${connection.from}:${connection.to}`); setRouteLength(connection.lengthM ?? 0); setRouteBasis(connection.lengthBasis ?? "estimated"); setChatOpen(false); }} key={`label:${connection.from}:${connection.to}`} title={complete ? `${connectionDisplayLabel(connection)} — ${connection.cableSizeMm2} mm²${connection.protectionAmps ? `, ${connection.protectionAmps} A protection` : ""}` : `Configure ${connectionDisplayLabel(connection)}`} className={`absolute z-30 -translate-x-1/2 -translate-y-1/2 rounded-full border px-2.5 py-1 text-[8px] font-bold shadow-sm ${complete ? "border-line bg-white/95 text-[#4d6176]" : "border-[#d94a3a] bg-[#fff1ee] text-[#a52f22]"}`} style={{ left: geometry.labelX, top: geometry.labelY }}>{complete ? connectionDisplayLabel(connection) : "Configure"}</button>;
       })}
-      {nodes.map((node) => <button type="button" draggable key={node.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; setMovingNodeId(node.id); }} onClick={() => setSelectedNodeId(node.id)} className="absolute z-20 w-[105px] cursor-grab text-center active:cursor-grabbing" style={{ left: node.x, top: node.y }} title={`Drag to move or select to open ${node.label}`}>
-        <span className="block min-h-[128px] overflow-hidden rounded-xl border border-[#b8cce0] bg-white p-1.5 shadow-[0_6px_17px_rgba(20,60,99,.12)] transition hover:-translate-y-0.5 hover:border-brand">
+      {nodes.map((node) => <div draggable={!connectionMode} key={node.id} onDragStart={(event) => { if (connectionMode) { event.preventDefault(); return; } event.dataTransfer.effectAllowed = "move"; setMovingNodeId(node.id); }} className="absolute z-20 w-[105px] cursor-grab text-center active:cursor-grabbing" style={{ left: node.x, top: node.y }}>
+        <button type="button" onDragOver={(event) => { if (connectingFromId) event.preventDefault(); }} onDrop={(event) => { if (!connectingFromId) return; event.preventDefault(); event.stopPropagation(); completeConnection(node.id); }} onClick={() => connectionMode ? completeConnection(node.id) : setSelectedNodeId(node.id)} className={`block min-h-[128px] w-full overflow-hidden rounded-xl border bg-white p-1.5 shadow-[0_6px_17px_rgba(20,60,99,.12)] transition hover:-translate-y-0.5 hover:border-brand ${connectingFromId === node.id ? "border-[#f6c945] ring-2 ring-[#f6c945]/45" : "border-[#b8cce0]"}`} title={connectionMode ? `Select ${node.label} for connection` : `Drag to move or select to open ${node.label}`}>
           <span className="relative mx-auto block h-[54px] w-[93px] overflow-hidden rounded-xl bg-[#f4f7fa]"><Image src={node.image} alt="" fill sizes="93px" className="object-contain p-1.5"/></span>
           <span className="mt-1.5 block text-[10px] font-extrabold text-[#102d4d]">{node.label}</span>
           {schematicCardDetail(node, draft, design) ? <span className="mt-1 block text-[8px] leading-3 text-muted">{schematicCardDetail(node, draft, design)}</span> : null}
           <span className={`mt-1.5 inline-flex rounded-full px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-[.08em] ${node.reviewed ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#fff1cc] text-[#805d00]"}`}>{node.reviewed ? "✓ Specification accepted" : "Proposed · review"}</span>
-        </span>
-      </button>)}
+        </button>
+        <button type="button" draggable onClick={() => completeConnection(node.id)} onDragStart={(event) => { event.stopPropagation(); event.dataTransfer.effectAllowed = "link"; event.dataTransfer.setData("text/pvintell-node", node.id); setConnectingFromId(node.id); setConnectionMode(true); }} className="absolute -right-5 top-11 grid size-10 cursor-crosshair place-items-center rounded-full border-2 border-white bg-[#0867a9] text-white shadow-md md:-right-3 md:size-7" aria-label={`Connect ${node.label}`} title={`Drag to another item to connect ${node.label}`}><Plus size={15}/></button>
+      </div>)}
     </div></div></div>
+    {addingItem ? <div className="component-library-modal fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="proposed-component-library-title">
+      <button type="button" className="absolute inset-0 bg-[#071b2d]/55 backdrop-blur-[2px]" onClick={() => setAddingItem(false)} aria-label="Close component library"/>
+      <section className="relative flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl sm:max-h-[min(86dvh,760px)]">
+        <header className="shrink-0 border-b border-line p-3 sm:p-4">
+          <div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div id="proposed-component-library-title" className="eyebrow">Component library</div><input autoFocus value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search pictures and equipment" className="field mt-2"/></div><button type="button" onClick={() => setAddingItem(false)} className="grid size-10 shrink-0 place-items-center rounded-xl border border-line text-muted hover:bg-[#eef3f8]" aria-label="Close component library"><X size={18}/></button></div>
+          <div className="thin-scrollbar mt-3 flex gap-1.5 overflow-x-auto pb-1" aria-label="Component groups">{proposedAssetGroups.map((group) => <button key={group.id} type="button" onClick={() => setAssetGroup(group.id)} aria-pressed={assetGroup === group.id} className={`shrink-0 rounded-full border px-3 py-1.5 text-[10px] font-bold ${assetGroup === group.id ? "border-brand bg-brand text-white" : "border-line bg-white text-brand hover:bg-[#eef3f8]"}`}>{group.label}</button>)}</div>
+        </header>
+        <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2 sm:p-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{visibleProposedAssets.map((fileName) => { const label = proposedAssetLabel(fileName); const url = `/schematic-components/${fileName}`; return <button key={fileName} type="button" onClick={() => addItem(label, url)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-contain p-1"/><span className="line-clamp-3">{label}</span></button>; })}</div>
+          {!visibleProposedAssets.length ? <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures in this group.</p> : null}
+          <div className="mt-3 rounded-xl border border-dashed border-line p-3"><label className="text-xs font-bold text-ink">Add another item</label><div className="mt-2 flex flex-col gap-2 sm:flex-row"><input value={customItemName} onChange={(event) => setCustomItemName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && customItemName.trim()) addItem(customItemName); }} placeholder="Component or item name" className="field min-w-0 flex-1"/><button type="button" disabled={!customItemName.trim()} onClick={() => addItem(customItemName)} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-4 text-xs font-bold text-white disabled:opacity-40"><Plus size={15}/>Add custom item</button></div></div>
+        </div>
+      </section>
+    </div> : null}
     <div onClickCapture={(event) => { const anchor = (event.target as HTMLElement).closest("a"); const label = anchor?.textContent ?? ""; if (anchor && (label.includes("Ask Wattson") || label.includes("Walk through"))) { event.preventDefault(); openContextChat(label.includes("Walk through") ? "install" : "ask"); } }}>
     {(selectedNode || selectedConnection) ? <div className="fixed inset-0 z-[80] grid place-items-center bg-[#102d4d]/45 p-4" onMouseDown={(event) => { if (event.currentTarget === event.target) { setSelectedNodeId(undefined); setSelectedConnectionKey(undefined); setPendingSizing(undefined); } }}>
       <section id={selectedNode ? "schematic-component-record-modal" : undefined} className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-2xl">

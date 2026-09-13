@@ -9,7 +9,6 @@ const explicitChangeRequest = /\b(?:save|record|remember|update|change|set|renam
  */
 export function dashboardMessageAllowsActions(message: string, answeringStructuredQuestion = false) {
   const normalized = message.trim();
-  if (/\b(?:build|create|draw|make|show)\b[\s\S]{0,60}\b(?:schematic|wiring diagram|diagram)\b/i.test(normalized)) return false;
   if (answeringStructuredQuestion) return true;
   if (!informationalQuestion.test(normalized)) return true;
   return explicitChangeRequest.test(normalized);
