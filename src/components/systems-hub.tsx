@@ -1,6 +1,6 @@
 "use client";
 
-import { Activity, ArrowRight, CheckCircle2, ChevronDown, ClipboardCheck, FileSearch, LayoutDashboard, MapPin, Menu, Network, Package, Ruler, ShoppingCart, Sparkles, Trash2, WalletCards, Wrench, X } from "lucide-react";
+import { Activity, ArrowRight, CheckCircle2, ChevronDown, ClipboardCheck, FileSearch, LayoutDashboard, MapPin, Menu, Network, Package, Pencil, Ruler, ShoppingCart, Sparkles, Trash2, WalletCards, Wrench, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -53,7 +53,7 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
   const [dashboardDefaultSystemId, setDashboardDefaultSystemId] = useState(defaultSystemId);
   const [locallyCompletedBuilds, setLocallyCompletedBuilds] = useState<Record<string, boolean>>({});
   const selectedSite = sites.find((site) => site.id === selectedSiteId) ?? sites[0];
-  const visibleSystems = selectedSite ? systems.filter((system) => system.siteId === selectedSite.id) : systems;
+  const visibleSystems = (selectedSite ? systems.filter((system) => system.siteId === selectedSite.id) : systems).toSorted((a, b) => Number(b.id === dashboardDefaultSystemId) - Number(a.id === dashboardDefaultSystemId));
   const visibleDrafts = selectedSite ? drafts.filter((draft) => !draft.siteId || draft.siteId === selectedSite.id) : drafts;
   const localDate = new Intl.DateTimeFormat("en-NZ", { weekday: "long", day: "numeric", month: "long", timeZone: selectedSite?.timezone ?? "UTC" }).format(new Date());
   useEffect(() => {
@@ -86,6 +86,23 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
     setDashboardDefaultSystemId(checked ? systemId : undefined);
     router.refresh();
   }
+  async function renameSite() {
+    if (!selectedSite) return;
+    const name = window.prompt("Site name", selectedSite.name)?.trim();
+    if (!name || name === selectedSite.name) return;
+    const response = await fetch(`/api/sites/${selectedSite.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });
+    const body = await response.json();
+    if (!response.ok) { window.alert(body.error ?? "Could not rename Site."); return; }
+    router.refresh();
+  }
+  async function renameSystem(system: SystemSummary) {
+    const name = window.prompt("System name", system.name)?.trim();
+    if (!name || name === system.name) return;
+    const response = await fetch(`/api/systems/${system.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, projectType: system.projectType }) });
+    const body = await response.json();
+    if (!response.ok) { window.alert(body.error ?? "Could not rename system."); return; }
+    router.refresh();
+  }
   return <div className="min-h-screen bg-canvas text-ink">
     <header className="sticky top-0 z-40 border-b border-line bg-white/98 shadow-sm">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-3 px-4 md:px-6">
@@ -105,7 +122,7 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
 
     <main className="mx-auto max-w-[1180px] p-4 pb-20 md:p-5">
       <div className="overflow-hidden rounded-2xl bg-cover bg-center p-5 text-white shadow-[0_12px_30px_rgba(12,39,65,.16)] sm:p-7" style={{ backgroundImage: "linear-gradient(90deg, rgba(8,35,58,.95), rgba(8,35,58,.68)), url('/backgrounds/royburi-solar-5333073_1920.jpg')" }}>
-        <div className="eyebrow text-[#ffd44f]">{selectedSite ? `Systems at ${selectedSite.name}` : "Your power systems"}</div><h1 className="mt-2 font-display text-3xl font-extrabold tracking-[-.05em]">{selectedSite ? `${selectedSite.name} systems` : "Systems"}</h1><p className="mt-2 max-w-2xl text-xs font-medium leading-5 text-white/90">Open the tools that belong to each system. Installed systems stay focused on records and operation; active projects retain their discovery, design and build path.</p>
+        <div className="eyebrow text-[#ffd44f]">{selectedSite ? `Systems at ${selectedSite.name}` : "Your power systems"}</div><div className="mt-2 flex flex-wrap items-center gap-3"><h1 className="font-display text-3xl font-extrabold tracking-[-.05em]">{selectedSite ? `${selectedSite.name} systems` : "Systems"}</h1>{selectedSite ? <button type="button" onClick={() => void renameSite()} className="flex items-center gap-1.5 rounded-lg border border-white/50 px-2.5 py-1.5 text-[10px] font-bold text-white"><Pencil size={12}/>Rename Site</button> : null}</div><p className="mt-2 max-w-2xl text-xs font-medium leading-5 text-white/90">Open the tools that belong to each system. Installed systems stay focused on records and operation; active projects retain their discovery, design and build path.</p>
       </div>
 
       <section className="systems-card-list mt-5 grid gap-3">
@@ -115,7 +132,7 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
           const actions = installed ? installedActions : discoveryActions;
           return <article key={system.id} className="card overflow-hidden">
             <div className={`flex flex-wrap items-center justify-between gap-2 border-b border-line p-3 ${installed ? "bg-[linear-gradient(105deg,#eef7f2,#ffffff)]" : "bg-[linear-gradient(105deg,#eef5fc,#fff8d9)]"}`}>
-              <div className="flex items-center gap-3"><span className={`grid size-11 place-items-center rounded-2xl ${installed ? "bg-[#dff3e8] text-[#20724b]" : "bg-[#fff0a9] text-brand"}`}>{installed ? <Activity size={20}/> : <Sparkles size={20}/>}</span><div><h2 className="font-display text-lg font-extrabold">{system.name}</h2><p className="mt-1 text-[10px] font-bold uppercase tracking-[.1em] text-muted">{installed ? "Installed · commissioned" : `Active project · ${system.phase}`} · {system.projectType}</p></div></div>
+              <div className="flex items-center gap-3"><span className={`grid size-11 place-items-center rounded-2xl ${installed ? "bg-[#dff3e8] text-[#20724b]" : "bg-[#fff0a9] text-brand"}`}>{installed ? <Activity size={20}/> : <Sparkles size={20}/>}</span><div><div className="flex items-center gap-2"><h2 className="font-display text-lg font-extrabold">{system.name}</h2><button type="button" onClick={() => void renameSystem(system)} className="grid size-7 place-items-center rounded-lg border border-line bg-white text-brand" aria-label={`Rename ${system.name}`}><Pencil size={12}/></button></div><p className="mt-1 text-[10px] font-bold uppercase tracking-[.1em] text-muted">{installed ? "Installed · commissioned" : `Active project · ${system.phase}`} · {system.projectType}</p></div></div>
               <div className="flex flex-wrap items-center justify-end gap-2"><label className="flex min-h-8 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-muted"><input type="checkbox" checked={dashboardDefaultSystemId === system.id} disabled={savingDefault} onChange={(event) => void setDashboardDefault(system.id, event.target.checked)} className="size-3.5 accent-[#1768a6]"/>Dashboard default</label><Link href={actionHref(system, installed ? "overview" : system.phase === "discover" ? "setup" : "proposed-schematic")} className="flex items-center gap-2 text-[11px] font-bold text-brand">Open system <ArrowRight size={14}/></Link><button type="button" onClick={() => void remove("system", system.id, system.name)} className="grid size-8 place-items-center rounded-lg border border-[#e7b7af] text-[#a7442d]" aria-label={`Delete ${system.name}`}><Trash2 size={14}/></button></div>
             </div>
             <div className={`grid gap-2 p-2 sm:grid-cols-2 ${installed ? "lg:grid-cols-5" : "lg:grid-cols-3"}`}>

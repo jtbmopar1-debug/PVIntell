@@ -33,8 +33,10 @@ import type {
   Site,
   SystemConnection,
 } from "@/domain/models";
+import { DC_CABLE_IMAGE, METER_BOARD_IMAGE, NON_COMMUNICATING_DIGITAL_METER_IMAGE, PLUG_IN_POWER_METER_IMAGE, POOL_CIRCULATION_PUMP_IMAGE, SMART_ELECTRICITY_METER_IMAGE } from "@/ui/assets";
 import { BrandLogo } from "@/components/brand-logo";
 import { allHowToGuides } from "@/components/pvintell-workspace";
+import { GRID_CONNECTION_IMAGE } from "@/ui/assets";
 
 type DiagramNode = {
   id: string;
@@ -131,18 +133,28 @@ function componentImage(component: ComponentSpec) {
       ? `${imageBase}/ac-circuit-breaker-mcb.jpg`
       : `${imageBase}/dc-circuit-breaker-mcb.jpg`;
   }
-  if (component.kind === "meter") return `${imageBase}/energy-meter.jpg`;
+  if (component.kind === "meter") {
+    if (identity.includes("plug-in") || identity.includes("plug in") || identity.includes("kill a watt")) return PLUG_IN_POWER_METER_IMAGE;
+    if (identity.includes("meter board") || identity.includes("meter enclosure")) return METER_BOARD_IMAGE;
+    if (identity.includes("non-communicating") || identity.includes("non communicating")) return NON_COMMUNICATING_DIGITAL_METER_IMAGE;
+    if (identity.includes("smart")) return SMART_ELECTRICITY_METER_IMAGE;
+    return `${imageBase}/energy-meter.jpg`;
+  }
   if (component.kind === "monitoring")
     return identity.includes("wifi")
       ? `${imageBase}/wifi-communication-module.jpg`
       : `${imageBase}/monitoring-device-data-logger.jpg`;
+  if (component.kind === "cable")
+    return identity.includes("pv") || identity.includes("solar")
+      ? `${imageBase}/pv-cable-dc.jpg`
+      : DC_CABLE_IMAGE;
   if (identity.includes("busbar")) return `${imageBase}/busbar.jpg`;
   if (
     identity.includes("grid connection") ||
     identity.includes("utility supply") ||
     identity.includes("mains connection")
   )
-    return `${imageBase}/grid-connection.svg`;
+    return GRID_CONNECTION_IMAGE;
   if (
     identity.includes("earth electrode") ||
     identity.includes("earth peg") ||
@@ -155,6 +167,8 @@ function componentImage(component: ComponentSpec) {
     return `${imageBase}/ac-distribution-board.jpg`;
   if (identity.includes("relay"))
     return `${imageBase}/smart-load-relay-controller.jpg`;
+  if (identity.includes("pool") && (identity.includes("pump") || identity.includes("circulation") || identity.includes("filtration")))
+    return POOL_CIRCULATION_PUMP_IMAGE;
   if (identity.includes("bms"))
     return `${imageBase}/bms-battery-management-system.jpg`;
   return undefined;
@@ -255,7 +269,7 @@ function NodeCard({
               width={160}
               height={120}
               draggable={false}
-              className="h-full w-full object-cover"
+              className={node.imageSrc === GRID_CONNECTION_IMAGE ? "h-full w-full object-contain p-2" : "h-full w-full object-cover"}
             />
           </span>
         ) : (
@@ -512,6 +526,7 @@ export function SystemSchematic({
     const upstreamAcName =
       text(acLinks[0]?.specs["Alternate / bypass source"]) ??
       text(acLinks[0]?.specs["Normal supply source"]);
+    const isLowVoltageDcSystem = Boolean(project.systemVoltage && project.systemVoltage <= 24 && !inverters.length && !acLinks.length && !gridComponents.length);
     const earth = project.components.find(
       (item) =>
         item.specs["Equipment record"] === "System earthing and bonding" ||
@@ -536,15 +551,15 @@ export function SystemSchematic({
         imageSrc: `${imageBase}/solar-panel-pv-module.jpg`,
         proposed: array.confidence !== "confirmed",
       })),
-      ...batteries.map((battery) => ({
-        id: `component:${battery.id}`,
-        label: battery.name,
-        subtitle: [battery.manufacturer, battery.model].filter(Boolean).join(" · ") || "Battery bank",
+      ...batteries.flatMap((battery) => Array.from({ length: Math.max(1, battery.quantity) }, (_, index) => ({
+        id: index ? `component:${battery.id}:unit-${index + 1}` : `component:${battery.id}`,
+        label: battery.quantity > 1 ? `${battery.name} ${index + 1}` : battery.name,
+        subtitle: [battery.manufacturer, battery.model].filter(Boolean).join(" · ") || "Battery",
         kind: "battery" as const,
         href: componentHref(base, battery),
         imageSrc: componentImage(battery),
         proposed: battery.status !== "confirmed",
-      })),
+      }))),
       ...generators.map((generator) => ({
         id: `component:${generator.id}`,
         label: generator.name,
@@ -562,7 +577,7 @@ export function SystemSchematic({
           "Grid / utility AC source",
         kind: "grid" as const,
         href: componentHref(base, grid),
-        imageSrc: `${imageBase}/grid-connection.svg`,
+        imageSrc: GRID_CONNECTION_IMAGE,
         proposed: grid.status !== "confirmed",
       })),
       ...(upstreamAcName && !gridComponents.length
@@ -595,7 +610,7 @@ export function SystemSchematic({
           imageSrc: componentImage(inverter),
           proposed: inverter.status !== "confirmed",
         }))
-      : [
+      : isLowVoltageDcSystem ? [] : [
           {
             id: "inverter:unrecorded",
             label: "Inverter not recorded",
@@ -604,7 +619,7 @@ export function SystemSchematic({
             href: `${base}/equipment/new?type=inverter&name=Inverter%201&returnTo=${schematicReturn}`,
           },
         ];
-    const outputNode: DiagramNode = {
+    const outputNode: DiagramNode | undefined = isLowVoltageDcSystem ? undefined : {
       id: "output:switchboard",
       label: "Switchboard and loads",
       subtitle: acLinks.length
@@ -703,7 +718,7 @@ export function SystemSchematic({
     );
     for (const node of inverterNodes)
       positions.set(node.id, { x: columnX.inverter, y: inverterY.get(node.id)! });
-    positions.set(outputNode.id, { x: columnX.output, y: outputY });
+    if (outputNode) positions.set(outputNode.id, { x: columnX.output, y: outputY });
     busbarNodes.forEach((node, index) =>
       positions.set(node.id, {
         x: 270,
@@ -1118,7 +1133,7 @@ export function SystemSchematic({
   const allNodes = [
     ...diagram.sourceNodes,
     ...diagram.inverterNodes,
-    diagram.outputNode,
+    ...(diagram.outputNode ? [diagram.outputNode] : []),
     ...diagram.accessoryNodes,
     ...(diagram.earthNode ? [diagram.earthNode] : []),
   ];
@@ -1211,7 +1226,7 @@ export function SystemSchematic({
                         alt=""
                         width={70}
                         height={56}
-                        className="h-14 w-[70px] shrink-0 rounded-lg object-cover"
+                        className="h-14 w-[70px] shrink-0 rounded-lg object-contain p-1"
                       />
                       <span className="line-clamp-3">{asset.label}</span>
                     </button>
@@ -1326,7 +1341,7 @@ export function SystemSchematic({
                 const position = displayPositions.get(node.id)!;
                 return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
               })}
-              <NodeCard node={diagram.outputNode} {...displayPositions.get(diagram.outputNode.id)!} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />
+              {diagram.outputNode && <NodeCard node={diagram.outputNode} {...displayPositions.get(diagram.outputNode.id)!} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />}
               {diagram.accessoryNodes.map((node) => {
                 const position = displayPositions.get(node.id)!;
                 return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;

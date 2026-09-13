@@ -16,6 +16,7 @@ import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
 import { buildPvArrayPlan } from "@/design/pv-array-plan";
 import { suggestPvDcStringCable } from "@/design/pv-dc-cable-sizing";
 import type { DesignCalculatorState, Project, Site } from "@/domain/models";
+import { GRID_CONNECTION_IMAGE } from "@/ui/assets";
 
 const n = (value: unknown, fallback = 0) => {
   const direct = Number(value);
@@ -2138,7 +2139,7 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
   }
   if (gridConnected) {
     nodes.push(
-      { id: "grid-supply", label: "Public grid supply", detail: "Existing utility or network supply to this Site", image: "/schematic-components/grid-connection.svg", x: 575, y: 445, authorityCheck: true },
+      { id: "grid-supply", label: "Public grid supply", detail: "Existing utility or network supply to this Site", image: GRID_CONNECTION_IMAGE, x: 575, y: 445, authorityCheck: true },
       { id: "grid-changeover", label: "Grid changeover and isolation", detail: "Possible electrician job: check the Site's local authority and network-operator requirements", image: "/schematic-components/automatic-transfer-switch-ats.jpg", x: 765, y: 445, authorityCheck: true },
     );
     connections.push(
@@ -2225,7 +2226,7 @@ function ensureGridSupply(draft: NonNullable<DesignCalculatorState["proposedAsBu
     ...normalisedDraft,
     nodes: [
       ...(normalisedDraft.nodes ?? []),
-      { id: "grid-supply", label: "Public grid supply", detail: "Existing utility or network supply to this Site", image: "/schematic-components/grid-connection.svg", x: 575, y: 445, authorityCheck: true },
+      { id: "grid-supply", label: "Public grid supply", detail: "Existing utility or network supply to this Site", image: GRID_CONNECTION_IMAGE, x: 575, y: 445, authorityCheck: true },
       { id: "grid-changeover", label: "Grid changeover and isolation", detail: "Possible electrician job: check the Site's local authority and network-operator requirements", image: "/schematic-components/automatic-transfer-switch-ats.jpg", x: 765, y: 445, authorityCheck: true },
     ],
     connections: [

@@ -677,7 +677,7 @@ export function ComponentDetail({
       description={`Technical record for ${systemName}. Changes here become part of Wattson's system context.`}
       icon={icon}
     >
-      <label className="mb-4 flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-[#91aec9] bg-[#f7fafd] p-4">
+      {!isAcConnection && <label className="mb-4 flex cursor-pointer items-center gap-4 rounded-2xl border border-dashed border-[#91aec9] bg-[#f7fafd] p-4">
         <span className="grid size-11 place-items-center rounded-xl bg-white text-brand">
           <Camera size={20} />
         </span>
@@ -705,7 +705,7 @@ export function ComponentDetail({
           disabled={analyzing}
           onChange={(event) => void analyze(event.target.files?.[0])}
         />
-      </label>
+      </label>}
       {extraction && (
         <div className="mb-4 rounded-xl border border-line bg-[#f8fafc] p-3 text-[10px]">
           <div className="flex justify-between">
@@ -747,8 +747,9 @@ export function ComponentDetail({
         </div>
       )}
       <form action={save} className="card p-6">
+        {isAcConnection && <><input type="hidden" name="type" value={component?.kind ?? defaults?.kind ?? "other"}/><input type="hidden" name="name" value={component?.name ?? defaults?.name ?? "Grid connection"}/><input type="hidden" name="quantity" value={component?.quantity ?? 1}/></>}
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Equipment type">
+          {!isAcConnection && <Field label="Equipment type">
             <select
               name="type"
               defaultValue={component?.kind ?? defaults?.kind ?? "other"}
@@ -760,15 +761,15 @@ export function ComponentDetail({
                 </option>
               ))}
             </select>
-          </Field>
-          <Field label="Equipment name">
+          </Field>}
+          {!isAcConnection && <Field label="Equipment name">
             <input
               name="name"
               required
               defaultValue={component?.name ?? defaults?.name}
               className="field"
             />
-          </Field>
+          </Field>}
           {!isAcConnection && (
             <>
               <Field label="Manufacturer">
@@ -803,14 +804,14 @@ export function ComponentDetail({
               </Field>
             </>
           )}
-          <Field label="Installed location">
+          {!isAcConnection && <Field label="Installed location">
             <input
               name="installationLocation"
               defaultValue={component?.location}
               className="field"
               placeholder="e.g. Studio utility wall"
             />
-          </Field>
+          </Field>}
           {!isAcConnection && !isIsolator && (
             <>
               <Field label="Serial number">
@@ -837,7 +838,7 @@ export function ComponentDetail({
               </Field>
             </>
           )}
-          <Field
+          {!isAcConnection && <Field
             label={
               isAcConnection
                 ? "Additional connection information"
@@ -863,7 +864,7 @@ export function ComponentDetail({
               className="field py-3 font-mono"
               placeholder="Rated voltage: from equipment label&#10;Breaker rating: from design&#10;Cable size: from design"
             />
-          </Field>
+          </Field>}
           <Field label="Installation and identification notes" wide>
             <textarea
               name="notes"

@@ -74,6 +74,8 @@ import { practicalBasicsHowToGuides } from "@/guides/how-to-practical-basics";
 import { evChargingHowToGuides } from "@/guides/how-to-ev-charging";
 import { windGenerationHowToGuides } from "@/guides/how-to-wind-generation";
 import { solarHotWaterHowToGuides } from "@/guides/how-to-solar-hot-water";
+import { lowVoltageDcHowToGuides } from "@/guides/how-to-low-voltage-dc";
+import { acCableHowToGuides } from "@/guides/how-to-ac-cable";
 import { SolarWeather } from "@/components/solar-weather";
 import { BrandLogo } from "@/components/brand-logo";
 import { WattsonHeaderAction } from "@/components/wattson-header-action";
@@ -1335,7 +1337,7 @@ const supersededHowToGuideIds = new Set([
   "dc-strings-combiners",
   "earthing-bonding",
 ]);
-const rawHowToGuides: readonly NoviceHowToGuide[] = [...noviceHowToGuides, ...additionalHowToGuides, ...compatibilityHowToGuides, ...componentPlanningHowToGuides, ...expandedHowToGuides, ...componentHowToGuides, ...batteryHardwareHowToGuides, ...coreHardwareHowToGuides, ...practicalBasicsHowToGuides, ...evChargingHowToGuides, ...solarHotWaterHowToGuides, ...windGenerationHowToGuides].filter((guide) => !supersededHowToGuideIds.has(guide.id));
+const rawHowToGuides: readonly NoviceHowToGuide[] = [...noviceHowToGuides, ...additionalHowToGuides, ...compatibilityHowToGuides, ...componentPlanningHowToGuides, ...expandedHowToGuides, ...componentHowToGuides, ...batteryHardwareHowToGuides, ...coreHardwareHowToGuides, ...practicalBasicsHowToGuides, ...evChargingHowToGuides, ...solarHotWaterHowToGuides, ...windGenerationHowToGuides, ...lowVoltageDcHowToGuides, ...acCableHowToGuides].filter((guide) => !supersededHowToGuideIds.has(guide.id));
 export const allHowToGuides: readonly NoviceHowToGuide[] = rawHowToGuides.map((guide) => {
   const detail = howToGuideDetails[guide.id as keyof typeof howToGuideDetails];
   const enriched: NoviceHowToGuide = detail ? { ...guide, ...detail } : guide;

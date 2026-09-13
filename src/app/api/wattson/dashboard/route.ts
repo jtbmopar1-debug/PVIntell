@@ -12,6 +12,7 @@ import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } 
 import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
 import { dashboardMessageAllowsActions } from "@/ai/dashboard-intent";
 import { createSystem } from "@/data/cloud-project";
+import { confirmedBatterySystemVoltage, mentionedExistingSite } from "@/ai/installed-import-routing";
 import { confirmedDestinationNames } from "@/ai/conversation-kind";
 import {
   buildActiveConversationState,
@@ -333,9 +334,10 @@ export async function POST(request: Request) {
       ? `Added the confirmed installed records to ${namedSystem.name} at ${namedSite.name}. ${summary}.`
       : `I found ${namedSystem.name} at ${namedSite.name}, but I couldn’t safely extract any new structured records from the earlier description, so nothing was changed.`;
     await supabase.from("user_conversations").update({ site_id: namedSite.id, project_id: namedSystem.id }).eq("id", conversationId).eq("owner_id", userId);
-    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: { actions: applied, actionUrl: `/sites/${namedSite.id}/systems/${namedSystem.id}?view=system`, actionLabel: "Open installed system" } });
+    const actionUrl = `/sites/${namedSite.id}/systems/${namedSystem.id}/schematic`;
+    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: { actions: applied, actionUrl, actionLabel: "Open schematic" } });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-    return Response.json({ message: responseMessage, actions: applied, conversationId, actionUrl: `/sites/${namedSite.id}/systems/${namedSystem.id}?view=system`, actionLabel: "Open installed system" });
+    return Response.json({ message: responseMessage, actions: applied, conversationId, actionUrl, actionLabel: "Open schematic" });
   }
   const pendingNewSite = priorAssistantMessage?.match(/this belongs to a new Site, and I(?:â€™|’)ll call the system (.+?)\. What shall I call the new Site\?/i);
   const pendingSystemAtNamedSite = priorAssistantMessage?.match(/new site named ["“']?(.+?)["”']?\.[\s\S]*plain-name of the first power system/i);
@@ -345,10 +347,13 @@ export async function POST(request: Request) {
       ? parsed.data.message.match(/^\s*(?:(?:yes|sure|okay?|please)\s*[,;]\s*)?new\s+site\s*[,;]\s*([^,;]+?)\s*[,;]\s*([^,;]+?)\s*$/i)
     : null;
   const validPlainName = /^\s*[\p{L}\p{N}][\p{L}\p{N}' .&-]{0,119}\s*$/u.test(parsed.data.message);
-  if (directNewSiteNames || ((pendingInstalledImport?.step === "site_name" || pendingInstalledImport?.step === "system_name" || pendingNewSite || pendingSystemAtNamedSite) && validPlainName)) {
-    const siteName = directNewSiteNames?.[1].trim() ?? pendingInstalledImport?.siteName ?? pendingSystemAtNamedSite?.[1].trim() ?? parsed.data.message.trim();
+  const existingSiteReply = (pendingInstalledImport?.step === "site_name" || pendingNewSite)
+    ? mentionedExistingSite(parsed.data.message, sites.data ?? [])
+    : undefined;
+  if (directNewSiteNames || existingSiteReply || ((pendingInstalledImport?.step === "site_name" || pendingInstalledImport?.step === "system_name" || pendingNewSite || pendingSystemAtNamedSite) && validPlainName)) {
+    const siteName = existingSiteReply?.name ?? directNewSiteNames?.[1].trim() ?? pendingInstalledImport?.siteName ?? pendingSystemAtNamedSite?.[1].trim() ?? parsed.data.message.trim();
     const systemName = directNewSiteNames?.[2].trim() ?? pendingInstalledImport?.systemName ?? pendingNewSite?.[1].trim() ?? parsed.data.message.trim();
-    const createdSite = await supabase.from("sites").insert({
+    const createdSite = existingSiteReply ? { data: { id: existingSiteReply.id }, error: null } : await supabase.from("sites").insert({
       owner_id: userId,
       name: siteName,
       location: profile.data.home_location || null,
@@ -362,7 +367,7 @@ export async function POST(request: Request) {
       const priorText = prior.map((item) => item.content).join("\n");
       const mode = /\bgrid[- ]?tied|\bgrid\b/i.test(priorText) && /\bbatter/i.test(priorText) ? "hybrid"
         : /\bgrid[- ]?tied|\bgrid\b/i.test(priorText) ? "grid-tied" : "off-grid";
-      createdSystemId = await createSystem(supabase, userId, createdSite.data.id, systemName, mode, "Record equipment that is already installed");
+      createdSystemId = await createSystem(supabase, userId, createdSite.data.id, systemName, mode, "Record equipment that is already installed", confirmedBatterySystemVoltage(priorText));
       const phase = await supabase.from("projects").update({ phase: "monitor" }).eq("id", createdSystemId).eq("owner_id", userId);
       if (phase.error) throw phase.error;
       await supabase.from("user_conversations").update({ site_id: createdSite.data.id, project_id: createdSystemId }).eq("id", conversationId).eq("owner_id", userId);
@@ -383,14 +388,15 @@ export async function POST(request: Request) {
       const applied = await applyWattsonActions(supabase, createdSystemId, safeActions);
       const summary = applied.map((action) => action.summary).join("; ");
       const responseMessage = summary
-        ? `Created ${siteName} with the installed system ${systemName}. ${summary}.`
+        ? `${existingSiteReply ? `Created the installed system ${systemName} at ${siteName}` : `Created ${siteName} with the installed system ${systemName}`}. ${summary}. Open the schematic to review the recorded equipment; unconfirmed wiring remains unconnected.`
         : `Created ${siteName} with the installed system ${systemName}. I couldn’t safely extract structured equipment from the earlier description, so I haven’t invented any records.`;
-      const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: { actions: applied, actionUrl: `/sites/${createdSite.data.id}/systems/${createdSystemId}?view=system`, actionLabel: "Open installed system" } });
+      const actionUrl = `/sites/${createdSite.data.id}/systems/${createdSystemId}/schematic`;
+      const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: { actions: applied, actionUrl, actionLabel: "Open schematic" } });
       if (saved.error) throw saved.error;
-      return Response.json({ message: responseMessage, actions: applied, actionUrl: `/sites/${createdSite.data.id}/systems/${createdSystemId}?view=system`, actionLabel: "Open installed system" });
+      return Response.json({ message: responseMessage, actions: applied, actionUrl, actionLabel: "Open schematic" });
     } catch (problem) {
       if (createdSystemId) await supabase.from("projects").delete().eq("id", createdSystemId).eq("owner_id", userId);
-      await supabase.from("sites").delete().eq("id", createdSite.data.id).eq("owner_id", userId);
+      if (!existingSiteReply) await supabase.from("sites").delete().eq("id", createdSite.data.id).eq("owner_id", userId);
       return Response.json({ error: problem instanceof Error ? problem.message : "Could not create the installed system." }, { status: 400 });
     }
   }
@@ -399,9 +405,10 @@ export async function POST(request: Request) {
     Boolean(discoveryKeyFromAssistantQuestion(priorAssistantMessage)),
   );
   try {
+    const confirmedSiteLocation = (sites.data ?? []).find((site) => site.id === conversationSiteId && site.location_confirmed)?.location ?? "";
     const result = await askGemini({
       message: parsed.data.message,
-      project: dashboardProject(profile.data.home_location ?? ""),
+      project: dashboardProject(confirmedSiteLocation),
       recentConversation: prior,
       questionnaireContext: {
         activeConversation,

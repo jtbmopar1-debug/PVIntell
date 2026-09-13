@@ -54,6 +54,7 @@ export function SiteInventoryPage({
   const router = useRouter();
   const [systems, setSystems] = useState(initialSystems);
   const [editing, setEditing] = useState<SystemSummary | "new">();
+  const [editingSite, setEditingSite] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [menu, setMenu] = useState(false);
@@ -101,6 +102,17 @@ export function SiteInventoryPage({
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveSiteName(formData: FormData) {
+    setSaving(true); setError("");
+    try {
+      const response = await fetch(`/api/sites/${site.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: formData.get("name") }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not rename Site");
+      setEditingSite(false); router.refresh();
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Could not rename Site"); }
+    finally { setSaving(false); }
   }
 
   async function removeSystem(system: SystemSummary) {
@@ -216,7 +228,7 @@ export function SiteInventoryPage({
           <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-4 px-4 md:px-6">
             <Link href="/dashboard" className="shrink-0"><Logo/></Link>
             <div className={weatherMode ? "hidden sm:block" : "hidden min-[390px]:block"}><WattsonHeaderAction siteId={site.id}/></div>
-            <details className="relative min-w-0 shrink"><summary className="flex min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-2 text-[11px] font-bold text-brand sm:gap-2 sm:px-3"><MapPin size={13} className="shrink-0"/><span className="max-w-20 truncate sm:max-w-36">{site.name}</span><ChevronDown size={13} className="shrink-0"/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div>{sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{item.name}</Link>)}<Link href="/discovery/new-system" className="mt-3 block rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]">New independent Site</Link></div></details>
+            <details className="relative min-w-0 shrink"><summary className="flex min-w-0 cursor-pointer list-none items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-2 text-[11px] font-bold text-brand sm:gap-2 sm:px-3"><MapPin size={13} className="shrink-0"/><span className="max-w-20 truncate sm:max-w-36">{site.name}</span><ChevronDown size={13} className="shrink-0"/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div>{sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{item.name}</Link>)}<button type="button" onClick={() => setEditingSite(true)} className="mt-2 w-full rounded-xl border border-line px-3 py-2 text-left text-[11px] font-bold text-brand">Rename this Site</button><Link href="/discovery/new-system" className="mt-3 block rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]">New independent Site</Link></div></details>
             <div className="hidden min-w-0 flex-1 md:block"><div className="eyebrow text-[8px]">{weatherMode ? "Solar weather" : "Site workspace"}</div><div className="mt-1 truncate text-xs font-extrabold">{site.name} <span className="font-medium text-muted">· {site.location}</span></div></div>
             <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${site.id}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${site.id}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><Link href={`/how-to?site=${site.id}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link><Link href={`/monitor?site=${site.id}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Monitor</Link><Link href={`/tools?site=${site.id}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Tools</Link><Link href={`/settings?site=${site.id}`} className="shrink-0 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>
             <button type="button" onClick={() => setMenu((open) => !open)} className="ml-auto grid size-9 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={menu ? "Close navigation" : "Open navigation"} aria-expanded={menu}>{menu ? <X size={17}/> : <Menu size={18}/>}</button>
@@ -461,6 +473,7 @@ export function SiteInventoryPage({
           </form>
         </div>
       )}
+      {editingSite && <div className="fixed inset-0 z-[60] grid place-items-center bg-[#0b2740]/45 p-4 backdrop-blur-sm"><form action={saveSiteName} className="card w-full max-w-md bg-white p-6 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><div className="eyebrow">Site</div><h2 className="mt-2 text-xl font-extrabold">Rename Site</h2></div><button type="button" onClick={() => setEditingSite(false)} aria-label="Close"><X size={18}/></button></div>{error ? <div className="mt-4 rounded-xl bg-[#fff0eb] p-3 text-xs text-[#913e31]">{error}</div> : null}<label className="mt-5 block text-xs font-bold">Site name<input name="name" required defaultValue={site.name} className="field"/></label><button disabled={saving} className="mt-6 h-11 w-full rounded-xl bg-brand text-xs font-bold text-white disabled:opacity-50">{saving ? "Saving…" : "Save Site name"}</button></form></div>}
     </div>
   );
 }

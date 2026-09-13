@@ -9,13 +9,21 @@ const locationSchema = z.object({
   timezone: z.string().trim().min(1).max(100),
   locationSource: z.enum(["manual", "device"]),
 });
+const nameSchema = z.object({ name: z.string().trim().min(1).max(120) });
+const updateSchema = z.union([locationSchema, nameSchema]);
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const parsed = locationSchema.safeParse(await request.json());
-  if (!parsed.success) return Response.json({ error: "Enter a valid site location and coordinates." }, { status: 400 });
+  const parsed = updateSchema.safeParse(await request.json());
+  if (!parsed.success) return Response.json({ error: "Enter valid Site details." }, { status: 400 });
   const supabase = await createClient(); const claims = await supabase.auth.getClaims();
-  if (claims.error || typeof claims.data?.claims?.sub !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = claims.data?.claims?.sub;
+  if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params; const input = parsed.data;
+  if ("name" in input) {
+    const updated = await supabase.from("sites").update({ name: input.name }).eq("id", id).eq("owner_id", userId).select("id").single();
+    if (updated.error) return Response.json({ error: updated.error.message }, { status: 400 });
+    return Response.json({ ok: true });
+  }
   let timezone = input.timezone;
   try { timezone = tzLookup(input.latitude, input.longitude); } catch { /* Retain the supplied IANA timezone if lookup fails. */ }
   const updated = await supabase.from("sites").update({ location: input.location, latitude: input.latitude, longitude: input.longitude, timezone, location_source: input.locationSource, location_confirmed: true }).eq("id", id).select("id,timezone").single();

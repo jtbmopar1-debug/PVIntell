@@ -5,6 +5,7 @@ import { SystemSchematic } from "@/components/system-schematic";
 import { loadSiteWorkspace } from "@/data/cloud-project";
 import { createClient } from "@/lib/supabase/server";
 import type { ComponentSpec } from "@/domain/models";
+import { METER_BOARD_IMAGE, NON_COMMUNICATING_DIGITAL_METER_IMAGE, SMART_ELECTRICITY_METER_IMAGE } from "@/ui/assets";
 
 const supportedImages = /\.(?:jpe?g|png|webp|svg)$/i;
 const acronyms = new Set(["ac", "dc", "pv", "bms", "mppt", "rcd", "rccb", "ats", "ct", "spd", "wifi"]);
@@ -60,7 +61,7 @@ export default async function SchematicPage({
   } catch {
     files = [];
   }
-  const schematicAssets = files
+  const fileAssets = files
     .filter((fileName) => supportedImages.test(fileName))
     .sort((a, b) => a.localeCompare(b))
     .map((fileName) => ({
@@ -69,5 +70,12 @@ export default async function SchematicPage({
       type: assetType(fileName),
       url: `/schematic-components/${encodeURIComponent(fileName)}`,
     }));
+  const meterAssets = [
+    { label: "Meter board or meter enclosure", url: METER_BOARD_IMAGE },
+    { label: "Smart electricity meter", url: SMART_ELECTRICITY_METER_IMAGE },
+    { label: "Non-communicating digital meter", url: NON_COMMUNICATING_DIGITAL_METER_IMAGE },
+    { label: "Standard or accumulation electricity meter", url: "/schematic-components/energy-meter.jpg" },
+  ].map(({ label, url }) => ({ fileName: `meter:${label}`, label, type: "meter" as const, url }));
+  const schematicAssets = [...meterAssets, ...fileAssets];
   return <SystemSchematic project={workspace.project} site={workspace.site} sites={workspace.sites} schematicAssets={schematicAssets} />;
 }
