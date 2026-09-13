@@ -49,14 +49,17 @@ function assetType(fileName: string): ComponentSpec["kind"] {
 
 export default async function SchematicPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string; systemId: string }>;
+  searchParams: Promise<{ add?: string }>;
 }) {
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   if (claims.error || typeof claims.data?.claims?.sub !== "string")
     redirect("/login");
   const { id, systemId } = await params;
+  const query = await searchParams;
   let workspace;
   try {
     workspace = await loadSiteWorkspace(supabase, id, systemId);
@@ -106,5 +109,5 @@ export default async function SchematicPage({
   const schematicAssets = [...new Map(
     [...fileAssets, ...guideAssets, ...meterAssets].map((asset) => [asset.url, asset]),
   ).values()].sort((a, b) => a.label.localeCompare(b.label));
-  return <SystemSchematic project={workspace.project} site={workspace.site} sites={workspace.sites} schematicAssets={schematicAssets} />;
+  return <SystemSchematic project={workspace.project} site={workspace.site} sites={workspace.sites} schematicAssets={schematicAssets} initiallyAdding={query.add === "1"} />;
 }

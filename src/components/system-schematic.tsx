@@ -474,11 +474,13 @@ export function SystemSchematic({
   site,
   sites,
   schematicAssets = [],
+  initiallyAdding = false,
 }: {
   project: Project;
   site: Site;
   sites: Site[];
   schematicAssets?: SchematicAsset[];
+  initiallyAdding?: boolean;
 }) {
   const router = useRouter();
   async function askGuide(guide: (typeof allHowToGuides)[number], question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) {
@@ -491,7 +493,7 @@ export function SystemSchematic({
     source: DiagramNode;
     target: DiagramNode;
   }>();
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState(initiallyAdding);
   const [assetSearch, setAssetSearch] = useState("");
   const [assetGroup, setAssetGroup] = useState<AssetGroup>("all");
   const [saving, setSaving] = useState(false);
@@ -505,21 +507,34 @@ export function SystemSchematic({
   const [canvasFrameWidth, setCanvasFrameWidth] = useState(1100);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const initialCanvasFitDone = useRef(false);
   useEffect(() => {
     const viewport = canvasViewportRef.current;
     if (!viewport) return;
-    const fit = () => {
+    const measureFrame = () => {
       setCanvasFrameWidth(Math.max(1, viewport.clientWidth));
-      if (window.innerWidth < 768) setCanvasZoom(Math.max(.45, Math.min(1, viewport.clientWidth / 1100)));
     };
-    const frame = window.requestAnimationFrame(fit);
-    const observer = new ResizeObserver(fit);
+    const fitOnce = () => {
+      measureFrame();
+      if (!initialCanvasFitDone.current && window.innerWidth < 768) {
+        setCanvasZoom(Math.max(.35, Math.min(1, viewport.clientWidth / 1100)));
+        initialCanvasFitDone.current = true;
+      }
+    };
+    const handleOrientationChange = () => {
+      window.requestAnimationFrame(() => {
+        measureFrame();
+        if (window.innerWidth < 768) setCanvasZoom(Math.max(.35, Math.min(1, viewport.clientWidth / 1100)));
+      });
+    };
+    const frame = window.requestAnimationFrame(fitOnce);
+    const observer = new ResizeObserver(measureFrame);
     observer.observe(viewport);
-    window.addEventListener("orientationchange", fit);
+    window.addEventListener("orientationchange", handleOrientationChange);
     return () => {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
-      window.removeEventListener("orientationchange", fit);
+      window.removeEventListener("orientationchange", handleOrientationChange);
     };
   }, []);
   const [positionOverrides, setPositionOverrides] = useState<
@@ -564,7 +579,6 @@ export function SystemSchematic({
     const upstreamAcName =
       text(acLinks[0]?.specs["Alternate / bypass source"]) ??
       text(acLinks[0]?.specs["Normal supply source"]);
-    const isLowVoltageDcSystem = Boolean(project.systemVoltage && project.systemVoltage <= 24 && !inverters.length && !acLinks.length && !gridComponents.length);
     const earth = project.components.find(
       (item) =>
         item.specs["Equipment record"] === "System earthing and bonding" ||
@@ -631,8 +645,7 @@ export function SystemSchematic({
           ]
         : []),
     ];
-    const inverterNodes: DiagramNode[] = inverters.length
-      ? inverters.map((inverter) => ({
+    const inverterNodes: DiagramNode[] = inverters.map((inverter) => ({
           id: `component:${inverter.id}`,
           label: inverter.name,
           subtitle:
@@ -647,28 +660,8 @@ export function SystemSchematic({
           href: componentHref(base, inverter),
           imageSrc: componentImage(inverter),
           proposed: inverter.status !== "confirmed",
-        }))
-      : isLowVoltageDcSystem ? [] : [
-          {
-            id: "inverter:unrecorded",
-            label: "Inverter not recorded",
-            subtitle: "Add the system inverter to complete this path",
-            kind: "inverter" as const,
-            href: `${base}/equipment/new?type=inverter&name=Inverter%201&returnTo=${schematicReturn}`,
-          },
-        ];
-    const outputNode: DiagramNode | undefined = isLowVoltageDcSystem ? undefined : {
-      id: "output:switchboard",
-      label: "Switchboard and loads",
-      subtitle: acLinks.length
-        ? text(acLinks[0].specs["Destination switchboard / breaker panel"]) ?? "AC distribution"
-        : "AC output connection not confirmed",
-      kind: "output",
-      href:
-        componentHref(base, acLinks[0]) ??
-        `${base}/equipment/new?type=other&name=${encodeURIComponent("Switchboard and loads")}&returnTo=${schematicReturn}`,
-      imageSrc: `${imageBase}/ac-distribution-board.jpg`,
-    };
+        }));
+    const outputNode = undefined as DiagramNode | undefined;
     const earthNode: DiagramNode | undefined = earth
       ? {
           id: `component:${earth.id}`,
@@ -970,6 +963,13 @@ export function SystemSchematic({
         (connection) => `${connection.sourceId}:${connection.targetId}`,
       ),
     );
+    const unmatchedInferredConnections = connections.filter(
+      (connection) =>
+        !explicitPairs.has(`${connection.sourceId}:${connection.targetId}`),
+    );
+    const firstConnectionGuide = project.connections.length
+      ? undefined
+      : unmatchedInferredConnections.find((connection) => connection.unconfirmed);
     return {
       sourceNodes,
       inverterNodes,
@@ -978,12 +978,8 @@ export function SystemSchematic({
       earthNode,
       positions,
       connections: [
-        ...connections.filter(
-          (connection) =>
-            !explicitPairs.has(
-              `${connection.sourceId}:${connection.targetId}`,
-            ),
-        ),
+        ...unmatchedInferredConnections.filter((connection) => !connection.unconfirmed),
+        ...(firstConnectionGuide ? [firstConnectionGuide] : []),
         ...explicitConnections,
       ],
       height,
@@ -1350,12 +1346,12 @@ export function SystemSchematic({
               <button type="button" onClick={() => void tidyLayout()} aria-label="Tidy schematic layout" title="Tidy layout" className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><WandSparkles size={13}/><span className="schematic-tool-label">Tidy layout</span></button>
               <button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-label={showConnectionLabels ? "Hide connection labels" : "Show connection labels"} title={showConnectionLabels ? "Hide labels" : "Show labels"} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>}<span className="schematic-tool-label">{showConnectionLabels ? "Hide labels" : "Show labels"}</span></button>
               <button type="button" onClick={() => setAdding((value) => !value)} aria-label="Add schematic item" title="Add item" className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/><span className="schematic-tool-label">Add item</span></button>
-              {adding && <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="component-library-title"><button type="button" className="absolute inset-0 bg-[#071b2d]/55 backdrop-blur-[2px]" onClick={() => setAdding(false)} aria-label="Close component library"/><div className="relative flex max-h-[min(86dvh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-white text-left normal-case tracking-normal shadow-2xl"><div className="shrink-0 border-b border-line p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div id="component-library-title" className="eyebrow">Component library</div><input autoFocus value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search pictures and equipment" className="field mt-2"/></div><button type="button" onClick={() => setAdding(false)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-line text-muted hover:bg-[#eef3f8]" aria-label="Close component library"><X size={16}/></button></div><div className="thin-scrollbar mt-3 flex gap-1.5 overflow-x-auto pb-1" aria-label="Component groups">{assetGroups.map((group) => <button key={group.id} type="button" onClick={() => setAssetGroup(group.id)} aria-pressed={assetGroup === group.id} className={`shrink-0 rounded-full border px-3 py-1.5 text-[10px] font-bold ${assetGroup === group.id ? "border-brand bg-brand text-white" : "border-line bg-white text-brand hover:bg-[#eef3f8]"}`}>{group.label}</button>)}</div></div><div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{visibleAssets.map((asset) => <button key={asset.fileName} type="button" onClick={() => router.push(`${base}/equipment/new?type=${asset.type}&name=${encodeURIComponent(asset.label)}&image=${encodeURIComponent(asset.url)}&returnTo=${schematicReturn}`)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={asset.url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-contain p-1"/><span className="line-clamp-3">{asset.label}</span></button>)}</div>{!visibleAssets.length && <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures in this group.</p>}<button type="button" onClick={() => router.push(`${base}/equipment/new?type=other&name=Other%20equipment&returnTo=${schematicReturn}`)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line py-2.5 text-xs font-bold text-brand"><Plus size={14}/>Add without a library picture</button></div></div></div>}
+              {adding && <div className="component-library-modal fixed inset-0 z-[80] flex items-center justify-center p-2 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="component-library-title"><button type="button" className="absolute inset-0 bg-[#071b2d]/55 backdrop-blur-[2px]" onClick={() => setAdding(false)} aria-label="Close component library"/><div className="relative flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-white text-left normal-case tracking-normal shadow-2xl sm:max-h-[min(86dvh,760px)]"><div className="shrink-0 border-b border-line p-3 sm:p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div id="component-library-title" className="eyebrow">Component library</div><input autoFocus value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search pictures and equipment" className="field mt-2"/></div><button type="button" onClick={() => setAdding(false)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-line text-muted hover:bg-[#eef3f8]" aria-label="Close component library"><X size={16}/></button></div><div className="thin-scrollbar mt-3 flex gap-1.5 overflow-x-auto pb-1" aria-label="Component groups">{assetGroups.map((group) => <button key={group.id} type="button" onClick={() => setAssetGroup(group.id)} aria-pressed={assetGroup === group.id} className={`shrink-0 rounded-full border px-3 py-1.5 text-[10px] font-bold ${assetGroup === group.id ? "border-brand bg-brand text-white" : "border-line bg-white text-brand hover:bg-[#eef3f8]"}`}>{group.label}</button>)}</div></div><div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2 sm:p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{visibleAssets.map((asset) => <button key={asset.fileName} type="button" onClick={() => router.push(`${base}/equipment/new?type=${asset.type}&name=${encodeURIComponent(asset.label)}&image=${encodeURIComponent(asset.url)}&returnTo=${schematicReturn}`)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={asset.url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-contain p-1"/><span className="line-clamp-3">{asset.label}</span></button>)}</div>{!visibleAssets.length && <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures in this group.</p>}<button type="button" onClick={() => router.push(`${base}/equipment/new?type=other&name=Other%20equipment&returnTo=${schematicReturn}`)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line py-2.5 text-xs font-bold text-brand"><Plus size={14}/>Add without a library picture</button></div></div></div>}
             </div>
-            <div className="schematic-zoom-controls flex shrink-0 items-center gap-1 border-l border-line pl-2"><span className="mr-1 text-[9px] font-bold text-muted">Zoom</span><button type="button" onClick={() => setCanvasZoom((value) => Math.max(.45, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out">−</button><button type="button" onClick={() => setCanvasZoom(1)} className="h-8 min-w-12 rounded-lg border border-line bg-white px-2 text-[9px] font-bold" aria-label="Reset zoom">{Math.round(canvasZoom * 100)}%</button><button type="button" onClick={() => setCanvasZoom((value) => Math.min(1.4, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in">+</button></div>
+            <div className="schematic-zoom-controls flex shrink-0 items-center gap-1 border-l border-line pl-2"><span className="mr-1 text-[9px] font-bold text-muted">Zoom</span><button type="button" onClick={() => setCanvasZoom((value) => Math.max(.3, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out">−</button><button type="button" onClick={() => setCanvasZoom(1)} className="h-8 min-w-12 rounded-lg border border-line bg-white px-2 text-[9px] font-bold" aria-label="Reset zoom">{Math.round(canvasZoom * 100)}%</button><button type="button" onClick={() => setCanvasZoom((value) => Math.min(1.4, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in">+</button></div>
           </div>
           <div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the system map a clear postcard-sized canvas.</span></div></div>
-          <div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto touch-pan-x bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
+          <div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto touch-auto bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
             <svg
               viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
               style={{ width: canvasWidth * canvasZoom, height: canvasHeight * canvasZoom }}

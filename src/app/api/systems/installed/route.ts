@@ -1,20 +1,11 @@
-import { z } from "zod";
 import { createSystem } from "@/data/cloud-project";
 import { installedSystemCreationReplay } from "@/data/installed-system-idempotency";
+import { installedSystemInputSchema } from "@/data/installed-system-input";
 import { createClient } from "@/lib/supabase/server";
 
-const schema = z.object({
-  idempotencyKey: z.uuid(),
-  siteId: z.string().min(1),
-  siteName: z.string().trim().max(120).optional(),
-  systemName: z.string().trim().min(1).max(120),
-  projectType: z.enum(["off-grid", "hybrid", "grid-tied"]),
-  systemVoltage: z.number().int().positive().max(1000).optional(),
-}).refine((value) => value.siteId !== "__new__" || Boolean(value.siteName), { message: "Enter a name for the Site.", path: ["siteName"] });
-
 export async function POST(request: Request) {
-  const parsed = schema.safeParse(await request.json());
-  if (!parsed.success) return Response.json({ error: "Check the Site and system details." }, { status: 400 });
+  const parsed = installedSystemInputSchema.safeParse(await request.json());
+  if (!parsed.success) return Response.json({ error: parsed.error.issues[0]?.message ?? "Check the Site and system details." }, { status: 400 });
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
@@ -44,7 +35,7 @@ export async function POST(request: Request) {
     if (replay.kind === "conflict")
       return Response.json({ error: "That creation request was already used for different system details." }, { status: 409 });
     if (replay.kind === "completed")
-      return Response.json({ siteId: replay.siteId, systemId: replay.projectId, url: `/sites/${replay.siteId}/systems/${replay.projectId}?view=system`, replayed: true });
+      return Response.json({ siteId: replay.siteId, systemId: replay.projectId, url: `/sites/${replay.siteId}/systems/${replay.projectId}/schematic?add=1`, replayed: true });
     return Response.json({ error: "This installed system is already being created." }, { status: 409, headers: { "retry-after": "2" } });
   }
   const releaseReservation = () => supabase.from("installed_system_creation_requests").delete().eq("owner_id", userId).eq("idempotency_key", parsed.data.idempotencyKey);
@@ -79,7 +70,7 @@ export async function POST(request: Request) {
     if (installed.error) throw installed.error;
     const completed = await supabase.from("installed_system_creation_requests").update({ status: "completed", site_id: siteId, project_id: systemId, completed_at: new Date().toISOString() }).eq("owner_id", userId).eq("idempotency_key", parsed.data.idempotencyKey);
     if (completed.error) throw completed.error;
-    return Response.json({ siteId, systemId, url: `/sites/${siteId}/systems/${systemId}?view=system` }, { status: 201 });
+    return Response.json({ siteId, systemId, url: `/sites/${siteId}/systems/${systemId}/schematic?add=1` }, { status: 201 });
   } catch (problem) {
     if (systemId) await supabase.from("projects").delete().eq("id", systemId).eq("owner_id", userId);
     if (createdSiteId) await supabase.from("sites").delete().eq("id", createdSiteId).eq("owner_id", userId);
