@@ -3,6 +3,7 @@ import { ComponentDetail } from "@/components/system-item-detail";
 import { loadSiteWorkspace } from "@/data/cloud-project";
 import type { ComponentSpec } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
+import { isCanonicalEquipmentImage } from "@/ui/assets";
 
 const kinds = new Set<ComponentSpec["kind"]>(["panel","pv_string","battery","inverter","charger","generator","protection","isolator","cable","connector","combiner","meter","monitoring","load","other"]);
 
@@ -17,9 +18,7 @@ export default async function EquipmentPage({ params, searchParams }: { params: 
   const schematicPath = `/sites/${id}/systems/${systemId}/schematic`;
   const returnTo = query.returnTo === schematicPath ? schematicPath : undefined;
   const schematicImage =
-    query.image &&
-    /^\/schematic-components\/[A-Za-z0-9._%()-]+$/.test(query.image) &&
-    !query.image.includes("..")
+    isCanonicalEquipmentImage(query.image)
       ? query.image
       : undefined;
   return <ComponentDetail siteId={id} systemId={systemId} systemName={workspace.project.name} component={component} defaults={component ? undefined : { kind, name: query.name?.slice(0,120) || "New equipment", schematicImage }} returnTo={returnTo}/>;

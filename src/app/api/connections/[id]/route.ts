@@ -33,7 +33,7 @@ export async function PATCH(
     .update({
       name: input.name,
       connection_type: input.connectionType,
-      polarity: input.polarity,
+      polarity: input.connectionType === "dc" ? input.polarity : "na",
       cable_size: input.cableSize || null,
       cable_length: input.cableLength || null,
       breaker_size: input.breakerSize || null,

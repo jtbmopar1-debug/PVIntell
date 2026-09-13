@@ -28,6 +28,20 @@ export async function POST(request: Request) {
   const input = parsed.data;
   if (input.sourceRef === input.targetRef)
     return Response.json({ error: "Connect two different items." }, { status: 400 });
+  const existing = await supabase
+    .from("system_connections")
+    .select("id")
+    .eq("project_id", input.projectId)
+    .eq("source_ref", input.sourceRef)
+    .eq("target_ref", input.targetRef)
+    .maybeSingle();
+  if (existing.error)
+    return Response.json({ error: existing.error.message }, { status: 400 });
+  if (existing.data)
+    return Response.json(
+      { error: "A connection between these two items already exists. Open its connection label to review or update it." },
+      { status: 409 },
+    );
   const created = await supabase
     .from("system_connections")
     .insert({
@@ -36,7 +50,7 @@ export async function POST(request: Request) {
       target_ref: input.targetRef,
       name: input.name,
       connection_type: input.connectionType,
-      polarity: input.polarity,
+      polarity: input.connectionType === "dc" ? input.polarity : "na",
       cable_size: input.cableSize || null,
       cable_length: input.cableLength || null,
       breaker_size: input.breakerSize || null,

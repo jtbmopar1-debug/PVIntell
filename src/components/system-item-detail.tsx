@@ -202,6 +202,33 @@ const isolatorFields = {
   testedBy: "Installed / tested by",
   testDate: "Test date",
 } as const;
+const protectionFields = {
+  currentType: "AC / DC type",
+  ratedCurrent: "Rated current",
+  ratedVoltage: "Rated operational voltage",
+  poles: "Number of poles",
+  breakingCapacity: "Breaking / interrupt capacity",
+  tripCurve: "Trip curve / characteristic",
+  fuseClass: "Fuse class / family",
+  fuseHolder: "Fuse holder / format",
+  rcdType: "RCD / RCBO type",
+  residualCurrent: "Residual-current sensitivity",
+  spdType: "SPD type / class",
+  maximumContinuousVoltage: "Maximum continuous voltage (Uc / MCOV)",
+  surgeRating: "Surge / discharge-current rating",
+  circuitProtected: "Circuit / equipment protected",
+  cableTerminalCapacity: "Cable / terminal capacity",
+  standard: "Standard / certification",
+} as const;
+
+function protectionFieldKeys(identity: string): Array<keyof typeof protectionFields> {
+  const base: Array<keyof typeof protectionFields> = ["currentType", "ratedCurrent", "ratedVoltage", "poles"];
+  if (/\brcd\b|\brcbo\b|\brccb\b|residual/.test(identity)) base.push("rcdType", "residualCurrent", "breakingCapacity");
+  else if (/\bfuse\b|mrbf|mega|midi|class.?t|gpv|blade/.test(identity)) base.push("fuseClass", "fuseHolder", "breakingCapacity");
+  else if (/surge|\bspd\b/.test(identity)) base.push("spdType", "maximumContinuousVoltage", "surgeRating");
+  else base.push("breakingCapacity", "tripCurve");
+  return [...base, "circuitProtected", "cableTerminalCapacity", "standard"];
+}
 
 function Field({
   label,
@@ -347,7 +374,7 @@ function IsolatorDetails({
   return (
     <section className="card mb-4 p-6">
       <div className="eyebrow">Isolation device</div>
-      <h2 className="mt-2 text-lg font-extrabold">DC shutoff details</h2>
+      <h2 className="mt-2 text-lg font-extrabold">Isolation ratings</h2>
       <p className="mt-1 text-[10px] leading-5 text-muted">
         Record the device rating and exactly what it disconnects. Values copied
         from a label should still be reviewed before saving.
@@ -397,6 +424,32 @@ function IsolatorDetails({
   );
 }
 
+function ProtectionDetails({
+  specs,
+  identity,
+}: {
+  specs: Record<string, string | number>;
+  identity: string;
+}) {
+  return (
+    <section className="card mb-4 p-6">
+      <div className="eyebrow">Protection device</div>
+      <h2 className="mt-2 text-lg font-extrabold">Device ratings</h2>
+      <p className="mt-1 text-[10px] leading-5 text-muted">
+        Record the values marked on this exact device. Current alone does not establish voltage, breaking capacity, trip behaviour or suitability for AC or DC.
+      </p>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        {protectionFieldKeys(identity).map((key) => {
+          const label = protectionFields[key];
+          return <Field key={key} label={label}>
+            {key === "currentType" ? <select data-protection-field={key} defaultValue={String(specs[label] ?? "Not confirmed")} className="field"><option>Not confirmed</option><option value="AC">AC</option><option value="DC">DC</option></select> : <input data-protection-field={key} defaultValue={specs[label]} className="field" placeholder={key === "ratedCurrent" ? "e.g. 32 A" : key === "ratedVoltage" ? "e.g. 230 V AC or 500 V DC" : key === "breakingCapacity" ? "e.g. 6 kA" : key === "tripCurve" ? "e.g. C curve" : key === "residualCurrent" ? "e.g. 30 mA" : undefined}/>}
+          </Field>;
+        })}
+      </div>
+    </section>
+  );
+}
+
 type BaseProps = { siteId: string; systemId: string; systemName: string; returnTo?: string };
 
 export function ComponentDetail({
@@ -427,6 +480,10 @@ export function ComponentDetail({
     (component?.kind ?? defaults?.kind ?? "other") === "inverter";
   const isIsolator =
     (component?.kind ?? defaults?.kind ?? "other") === "isolator";
+  const isProtection =
+    (component?.kind ?? defaults?.kind ?? "other") === "protection";
+  const protectionIdentity = `${component?.name ?? defaults?.name ?? ""} ${component?.model ?? ""}`.toLowerCase();
+  const showEquipmentType = !component && !defaults?.schematicImage;
   const isEarthing =
     (component?.name ?? defaults?.name ?? "")
       .toLowerCase()
@@ -447,6 +504,8 @@ export function ComponentDetail({
       if (isEarthing && Object.values(earthingFields).includes(name as never))
         return false;
       if (isIsolator && Object.values(isolatorFields).includes(name as never))
+        return false;
+      if (isProtection && Object.values(protectionFields).includes(name as never))
         return false;
       return true;
     },
@@ -500,6 +559,18 @@ export function ComponentDetail({
         const field = document.querySelector(
           `[data-isolator-field="${key}"]`,
         ) as HTMLInputElement | HTMLSelectElement | null;
+        if (field) field.value = value;
+      }
+    }
+    if (isProtection) {
+      const values: Partial<Record<keyof typeof protectionFields, string>> = {
+        ratedVoltage: result.ratedVoltage,
+        ratedCurrent: result.ratedCurrent,
+        standard: result.certifications.join(", "),
+      };
+      for (const [key, value] of Object.entries(values)) {
+        if (!value) continue;
+        const field = document.querySelector(`[data-protection-field="${key}"]`) as HTMLInputElement | HTMLSelectElement | null;
         if (field) field.value = value;
       }
     }
@@ -582,6 +653,15 @@ export function ComponentDetail({
         const field = document.querySelector(
           `[data-isolator-field="${key}"]`,
         ) as HTMLInputElement | HTMLSelectElement | null;
+        const value = field?.value.trim();
+        if (value && value !== "Not confirmed") specifications[label] = value;
+        else delete specifications[label];
+      }
+    }
+    if (isProtection) {
+      for (const key of protectionFieldKeys(protectionIdentity)) {
+        const label = protectionFields[key];
+        const field = document.querySelector(`[data-protection-field="${key}"]`) as HTMLInputElement | HTMLSelectElement | null;
         const value = field?.value.trim();
         if (value && value !== "Not confirmed") specifications[label] = value;
         else delete specifications[label];
@@ -727,6 +807,7 @@ export function ComponentDetail({
       )}
       {isEarthing && <EarthingDetails specs={component?.specs ?? {}} />}
       {isIsolator && <IsolatorDetails specs={component?.specs ?? {}} />}
+      {isProtection && <ProtectionDetails specs={component?.specs ?? {}} identity={protectionIdentity} />}
       {component?.kind === "inverter" && component.quantity > 1 && (
         <div className="mb-4 rounded-2xl border border-[#d8bd77] bg-[#fff8df] p-5">
           <strong className="block text-sm">
@@ -749,10 +830,11 @@ export function ComponentDetail({
       <form action={save} className="card p-6">
         {isAcConnection && <><input type="hidden" name="type" value={component?.kind ?? defaults?.kind ?? "other"}/><input type="hidden" name="name" value={component?.name ?? defaults?.name ?? "Grid connection"}/><input type="hidden" name="quantity" value={component?.quantity ?? 1}/></>}
         <div className="grid gap-4 sm:grid-cols-2">
-          {!isAcConnection && <Field label="Equipment type">
+          {!isAcConnection && !showEquipmentType && <input type="hidden" name="type" value={component?.kind ?? defaults?.kind ?? "other"}/>}
+          {!isAcConnection && showEquipmentType && <Field label="Equipment type">
             <select
               name="type"
-              defaultValue={component?.kind ?? defaults?.kind ?? "other"}
+              defaultValue={defaults?.kind ?? "other"}
               className="field"
             >
               {componentTypes.map(([type, label]) => (
@@ -762,7 +844,7 @@ export function ComponentDetail({
               ))}
             </select>
           </Field>}
-          {!isAcConnection && <Field label="Equipment name">
+          {!isAcConnection && <Field label="Equipment name" wide={!showEquipmentType}>
             <input
               name="name"
               required
@@ -844,6 +926,8 @@ export function ComponentDetail({
                 ? "Additional connection information"
                 : isIsolator
                   ? "Other isolator details"
+                  : isProtection
+                    ? "Other protection details"
                 : "Technical specifications"
             }
             help={
@@ -851,13 +935,15 @@ export function ComponentDetail({
                 ? "Add anything not covered above in plain language, or use Name: Value for structured details."
                 : isIsolator
                   ? "Only add details that are not covered by the isolator fields above."
+                  : isProtection
+                    ? "Only add details that are not covered by the device-rating fields above."
                 : "One Name: Value per line, or enter plain-language notes. Use any values relevant to this item: voltage, current, power, cable size, breaker rating, torque, chemistry, capacity, and so on."
             }
             wide
           >
             <textarea
               name="specifications"
-              rows={isIsolator ? 4 : 10}
+              rows={isIsolator || isProtection ? 4 : 10}
               defaultValue={editableAdditionalSpecs
                 .map(([key, value]) => `${key}: ${value}`)
                 .join("\n")}

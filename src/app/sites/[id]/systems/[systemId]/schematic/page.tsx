@@ -9,6 +9,14 @@ import { METER_BOARD_IMAGE, NON_COMMUNICATING_DIGITAL_METER_IMAGE, SMART_ELECTRI
 
 const supportedImages = /\.(?:jpe?g|png|webp|svg)$/i;
 const acronyms = new Set(["ac", "dc", "pv", "bms", "mppt", "rcd", "rccb", "ats", "ct", "spd", "wifi"]);
+const addableGuideAssetGroups = [
+  "ac-wiring",
+  "battery",
+  "low-voltage-dc",
+  "pool-equipment",
+  "protection",
+  "solar-hot-water",
+] as const;
 
 function assetLabel(fileName: string) {
   return fileName
@@ -70,12 +78,33 @@ export default async function SchematicPage({
       type: assetType(fileName),
       url: `/schematic-components/${encodeURIComponent(fileName)}`,
     }));
+  const guideAssets = (await Promise.all(addableGuideAssetGroups.map(async (group) => {
+    try {
+      const groupRoot = path.join(process.cwd(), "public", "guides", group);
+      const groupFiles = await readdir(groupRoot, { recursive: true });
+      return groupFiles
+        .filter((fileName) => supportedImages.test(fileName))
+        .map((fileName) => {
+          const urlPath = fileName.split(path.sep).map(encodeURIComponent).join("/");
+          return {
+            fileName: `guides/${group}/${fileName}`,
+            label: assetLabel(path.basename(fileName)),
+            type: assetType(`${group}/${fileName}`),
+            url: `/guides/${group}/${urlPath}`,
+          };
+        });
+    } catch {
+      return [];
+    }
+  }))).flat();
   const meterAssets = [
     { label: "Meter board or meter enclosure", url: METER_BOARD_IMAGE },
     { label: "Smart electricity meter", url: SMART_ELECTRICITY_METER_IMAGE },
     { label: "Non-communicating digital meter", url: NON_COMMUNICATING_DIGITAL_METER_IMAGE },
     { label: "Standard or accumulation electricity meter", url: "/schematic-components/energy-meter.jpg" },
   ].map(({ label, url }) => ({ fileName: `meter:${label}`, label, type: "meter" as const, url }));
-  const schematicAssets = [...meterAssets, ...fileAssets];
+  const schematicAssets = [...new Map(
+    [...fileAssets, ...guideAssets, ...meterAssets].map((asset) => [asset.url, asset]),
+  ).values()].sort((a, b) => a.label.localeCompare(b.label));
   return <SystemSchematic project={workspace.project} site={workspace.site} sites={workspace.sites} schematicAssets={schematicAssets} />;
 }

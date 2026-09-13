@@ -51,4 +51,22 @@ describe("classifyWattsonRequest", () => {
       locationKnown: false,
     });
   });
+
+  it("researches technical questions when the component has a saved manufacturer source", () => {
+    expect(classifyWattsonRequest("What does fault code E04 mean?", "Location not set", true)).toEqual({
+      regulatory: false,
+      technical: true,
+      search: true,
+      locationKnown: false,
+    });
+  });
+
+  it("does not browse for an ordinary question merely because a component has a manual", () => {
+    expect(classifyWattsonRequest("What did I call this component?", "Location not set", true)).toEqual({
+      regulatory: false,
+      technical: false,
+      search: false,
+      locationKnown: false,
+    });
+  });
 });

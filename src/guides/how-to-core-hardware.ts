@@ -1,6 +1,8 @@
 // Component-level records for the universal How-to library. These explain the
 // part itself; project-specific system choices remain in Discovery and design.
 
+import { EARTH_ELECTRODE_IMAGE } from "@/ui/assets";
+
 export const coreHardwareHowToGuides = [
   {
     group: "Mounting systems and hardware",
@@ -172,7 +174,7 @@ export const coreHardwareHowToGuides = [
       { name: "Protective earthing conductor", image: "/schematic-components/earthing-ground-bar.jpg", description: "An identified conductor connects equipment or exposed metal to the designed protective-earthing network.", bestFor: "The exact fault path and conductor route shown on the system schematic.", watchFor: "Size, insulation/identification, mechanical protection and termination follow the local system—not colour assumptions alone." },
       { name: "Module/rail bonding hardware", image: "/guides/earthing/module-rail-bonding-lug.jpg", imageCredit: "SIC Solar", imageSourceUrl: "https://www.sic-solar.com/solar-grounding-lugs_p39.html", description: "Listed clips, washers, lugs or jumpers maintain continuity across compatible frames, rails and splices.", bestFor: "A mounting family whose tested bonding method covers the exact module and rail finish.", watchFor: "Anodising, paint, loosened clamps, rail splices and module removal can interrupt an assumed bond." },
       { name: "Earth or ground bar", image: "/schematic-components/earthing-ground-bar.jpg", description: "A rated bar provides multiple controlled termination points inside a suitable enclosure or equipment assembly.", bestFor: "Orderly protective-conductor distribution where the approved design places it.", watchFor: "It is not automatically a neutral bar, DC negative busbar or permitted bonding point." },
-      { name: "Ground/earth electrode", image: "/schematic-components/earth-electrode.svg", description: "A rod, plate, ring, foundation electrode or other locally recognised system makes contact with the earth.", bestFor: "The building or supply earthing arrangement designed for the jurisdiction and Site.", watchFor: "Adding an independent electrode can create dangerous potential differences or fail to provide the fault path imagined. Follow the complete local design." },
+      { name: "Ground/earth electrode", image: EARTH_ELECTRODE_IMAGE, description: "A rod, plate, ring, foundation electrode or other locally recognised system makes contact with the earth.", bestFor: "The building or supply earthing arrangement designed for the jurisdiction and Site.", watchFor: "Adding an independent electrode can create dangerous potential differences or fail to provide the fault path imagined. Follow the complete local design." },
     ],
     questions: [
       { question: "Is DC negative the same as earth?", answer: "Not automatically. Some systems are floating; others use a specific bonding or insulation-monitoring topology. Never connect DC negative to earth unless the exact design and equipment permit it." },

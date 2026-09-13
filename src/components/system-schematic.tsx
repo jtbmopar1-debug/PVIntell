@@ -33,7 +33,7 @@ import type {
   Site,
   SystemConnection,
 } from "@/domain/models";
-import { DC_CABLE_IMAGE, METER_BOARD_IMAGE, NON_COMMUNICATING_DIGITAL_METER_IMAGE, PLUG_IN_POWER_METER_IMAGE, POOL_CIRCULATION_PUMP_IMAGE, SMART_ELECTRICITY_METER_IMAGE } from "@/ui/assets";
+import { DC_CABLE_IMAGE, EARTH_ELECTRODE_IMAGE, isCanonicalEquipmentImage, METER_BOARD_IMAGE, NON_COMMUNICATING_DIGITAL_METER_IMAGE, PLUG_IN_POWER_METER_IMAGE, POOL_CIRCULATION_PUMP_IMAGE, SMART_ELECTRICITY_METER_IMAGE } from "@/ui/assets";
 import { BrandLogo } from "@/components/brand-logo";
 import { allHowToGuides } from "@/components/pvintell-workspace";
 import { GRID_CONNECTION_IMAGE } from "@/ui/assets";
@@ -67,7 +67,10 @@ type ConnectionDetail = {
   unconfirmed?: boolean;
   saved?: SystemConnection;
   polarity?: SystemConnection["polarity"];
+  connectionType?: SystemConnection["connectionType"];
 };
+
+type ConnectionView = "all" | "ac" | "dc" | "data" | "earth";
 
 const nodeSize = { width: 180, height: 164 };
 const columnX = { source: 55, inverter: 460, output: 865 };
@@ -90,7 +93,7 @@ const imageBase = "/schematic-components";
 
 function componentImage(component: ComponentSpec) {
   const selectedImage = text(component.specs["Schematic image"]);
-  if (selectedImage?.startsWith(`${imageBase}/`)) return selectedImage;
+  if (isCanonicalEquipmentImage(selectedImage)) return selectedImage;
   const identity = [
     component.kind,
     component.name,
@@ -160,7 +163,7 @@ function componentImage(component: ComponentSpec) {
     identity.includes("earth peg") ||
     identity.includes("ground rod")
   )
-    return `${imageBase}/earth-electrode.svg`;
+    return EARTH_ELECTRODE_IMAGE;
   if (identity.includes("transfer") || identity.includes("changeover"))
     return `${imageBase}/automatic-transfer-switch-ats.jpg`;
   if (identity.includes("switchboard") || identity.includes("distribution"))
@@ -438,6 +441,34 @@ export type SchematicAsset = {
   url: string;
 };
 
+type AssetGroup = "all" | "ac" | "dc" | "switching" | "solar" | "storage" | "generation" | "metering" | "other";
+
+const assetGroups: Array<{ id: AssetGroup; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "ac", label: "AC" },
+  { id: "dc", label: "DC" },
+  { id: "switching", label: "Switches & protection" },
+  { id: "solar", label: "Solar & charging" },
+  { id: "storage", label: "Storage" },
+  { id: "generation", label: "Generation" },
+  { id: "metering", label: "Metering & monitoring" },
+  { id: "other", label: "Other" },
+];
+
+function schematicAssetGroups(asset: SchematicAsset): AssetGroup[] {
+  const identity = `${asset.label} ${asset.fileName}`.toLowerCase();
+  const groups = new Set<AssetGroup>();
+  if (/\bac\b|alternating/.test(identity)) groups.add("ac");
+  if (/\bdc\b|direct current|combiner|busbar|connector|cable|charge controller|mppt/.test(identity)) groups.add("dc");
+  if (["isolator", "protection", "combiner"].includes(asset.type) || /switch|disconnect|breaker|fuse|rcd|rccb|surge|contactor|changeover|transfer/.test(identity)) groups.add("switching");
+  if (["panel", "pv_string", "charger", "inverter"].includes(asset.type) || /solar|photovoltaic|\bpv\b|inverter|charger|mppt/.test(identity)) groups.add("solar");
+  if (asset.type === "battery" || /battery|storage/.test(identity)) groups.add("storage");
+  if (asset.type === "generator" || /generator|genset|turbine/.test(identity)) groups.add("generation");
+  if (["meter", "monitoring"].includes(asset.type) || /meter|monitor|sensor|gateway|\bct\b/.test(identity)) groups.add("metering");
+  if (!groups.size || asset.type === "other") groups.add("other");
+  return [...groups];
+}
+
 export function SystemSchematic({
   project,
   site,
@@ -462,18 +493,23 @@ export function SystemSchematic({
   }>();
   const [adding, setAdding] = useState(false);
   const [assetSearch, setAssetSearch] = useState("");
+  const [assetGroup, setAssetGroup] = useState<AssetGroup>("all");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [, setMovingNode] = useState<DiagramNode>();
   const [layoutMessage, setLayoutMessage] = useState("");
   const [showConnectionLabels, setShowConnectionLabels] = useState(false);
+  const [connectionView, setConnectionView] = useState<ConnectionView>("all");
+  const [editorConnectionType, setEditorConnectionType] = useState<SystemConnection["connectionType"]>("dc");
   const [canvasZoom, setCanvasZoom] = useState(1);
+  const [canvasFrameWidth, setCanvasFrameWidth] = useState(1100);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const viewport = canvasViewportRef.current;
     if (!viewport) return;
     const fit = () => {
+      setCanvasFrameWidth(Math.max(1, viewport.clientWidth));
       if (window.innerWidth < 768) setCanvasZoom(Math.max(.45, Math.min(1, viewport.clientWidth / 1100)));
     };
     const frame = window.requestAnimationFrame(fit);
@@ -498,9 +534,11 @@ export function SystemSchematic({
   );
   const base = `/sites/${project.siteId}/systems/${project.id}`;
   const schematicReturn = encodeURIComponent(`${base}/schematic`);
-  const visibleAssets = schematicAssets.filter((asset) =>
-    asset.label.toLowerCase().includes(assetSearch.trim().toLowerCase()),
-  );
+  const visibleAssets = schematicAssets.filter((asset) => {
+    const search = assetSearch.trim().toLowerCase();
+    const matchesSearch = !search || `${asset.label} ${asset.fileName}`.toLowerCase().includes(search);
+    return matchesSearch && (assetGroup === "all" || schematicAssetGroups(asset).includes(assetGroup));
+  });
   const diagram = useMemo(() => {
     const inverters = project.components.filter((item) => item.kind === "inverter");
     const batteries = project.components.filter((item) => item.kind === "battery");
@@ -536,7 +574,7 @@ export function SystemSchematic({
       (item) =>
         !["inverter", "battery", "generator"].includes(item.kind) &&
         (!["cable", "connector"].includes(item.kind) ||
-          text(item.specs["Schematic image"])?.startsWith(`${imageBase}/`)) &&
+          isCanonicalEquipmentImage(text(item.specs["Schematic image"]))) &&
         item.id !== earth?.id &&
         !gridComponents.some((grid) => grid.id === item.id),
     );
@@ -638,7 +676,7 @@ export function SystemSchematic({
           subtitle: text(earth.specs["Main earth bar / electrode location"]) ?? "System bonding record",
           kind: "earth",
           href: componentHref(base, earth),
-          imageSrc: `${imageBase}/earth-electrode.svg`,
+          imageSrc: EARTH_ELECTRODE_IMAGE,
         }
       : undefined;
     const accessoryNodes: DiagramNode[] = accessories.map((component) => {
@@ -792,6 +830,7 @@ export function SystemSchematic({
           values: details,
           editHref: componentHref(base, component),
           polarity: "pair",
+          connectionType: "dc",
         },
         {
           id: `inline-out:${component.id}`,
@@ -801,6 +840,7 @@ export function SystemSchematic({
           values: details,
           editHref: componentHref(base, component),
           polarity: "pair",
+          connectionType: "dc",
         },
       );
     }
@@ -814,6 +854,7 @@ export function SystemSchematic({
           targetId: target.id,
           values: pvDetails(array),
           editHref: `${base}/pv-strings/${array.id}`,
+          connectionType: "dc",
         });
     }
     for (const battery of batteries) {
@@ -827,6 +868,7 @@ export function SystemSchematic({
           values: componentDetails(batteryLinks),
           editHref: componentHref(base, batteryLinks[0]),
           unconfirmed: !batteryLinks.length,
+          connectionType: "dc",
         });
     }
     for (const generator of generators) {
@@ -847,6 +889,7 @@ export function SystemSchematic({
           targetId: assigned.id,
           values: componentDetails([generator]),
           editHref: componentHref(base, generator),
+          connectionType: "ac",
         });
     }
     if (upstreamAcName) {
@@ -870,6 +913,7 @@ export function SystemSchematic({
           targetId: assigned.id,
           values: componentDetails(acLinks),
           editHref: componentHref(base, acLinks[0]),
+          connectionType: "ac",
         });
     }
     const explicitConnections: ConnectionDetail[] = project.connections.map(
@@ -917,6 +961,7 @@ export function SystemSchematic({
         ],
         saved: connection,
         polarity,
+        connectionType: connection.connectionType,
       };
       },
     );
@@ -945,12 +990,22 @@ export function SystemSchematic({
     };
   }, [base, project.components, project.connections, project.pvArrays, schematicReturn]);
 
+  const visibleConnections = diagram.connections.filter((connection) =>
+    connectionView === "all" || connection.connectionType === connectionView,
+  );
+
+  const canvasWidth = Math.max(1100, canvasFrameWidth / canvasZoom);
+  const horizontalExpansion = canvasWidth / 1100;
+
   const displayPositions = useMemo(() => {
     const positions = new Map(diagram.positions);
     for (const [nodeRef, position] of Object.entries(positionOverrides))
       positions.set(nodeRef, position);
-    return positions;
-  }, [diagram.positions, positionOverrides]);
+    return new Map(Array.from(positions, ([nodeRef, position]) => [
+      nodeRef,
+      { x: position.x * horizontalExpansion, y: position.y },
+    ]));
+  }, [diagram.positions, horizontalExpansion, positionOverrides]);
   const canvasHeight = Math.max(
     diagram.height,
     ...Array.from(displayPositions.values()).map(
@@ -995,7 +1050,7 @@ export function SystemSchematic({
     const bounds = svg.getBoundingClientRect();
     void moveNode(
       node.id,
-      (clientX - bounds.left) * (1100 / bounds.width) - nodeSize.width / 2,
+      ((clientX - bounds.left) * (canvasWidth / bounds.width) - nodeSize.width / 2) / horizontalExpansion,
       (clientY - bounds.top) * (canvasHeight / bounds.height) - nodeSize.height / 2,
     );
   }
@@ -1032,6 +1087,19 @@ export function SystemSchematic({
   function completeConnection(target: DiagramNode) {
     if (!connectingFrom || connectingFrom.id === target.id) {
       setConnectingFrom(undefined);
+      return;
+    }
+    const existing = diagram.connections.find((connection) =>
+      connection.saved && (
+        connection.sourceId === connectingFrom.id && connection.targetId === target.id ||
+        connection.sourceId === target.id && connection.targetId === connectingFrom.id
+      ),
+    );
+    if (existing) {
+      setSelected(existing);
+      setDraftEnds(undefined);
+      setConnectingFrom(undefined);
+      setError("");
       return;
     }
     setDraftEnds({ source: connectingFrom, target });
@@ -1157,6 +1225,10 @@ export function SystemSchematic({
             ? "pair"
             : "na";
 
+  useEffect(() => {
+    if (editorOpen) setEditorConnectionType(editorConnection?.connectionType ?? defaultConnectionType);
+  }, [defaultConnectionType, editorConnection?.connectionType, editorOpen]);
+
   return (
     <div className="min-h-screen bg-canvas">
       <header className="system-workspace-header sticky top-0 z-50 border-b border-line bg-white/98 shadow-sm">
@@ -1273,18 +1345,20 @@ export function SystemSchematic({
           <div className="schematic-canvas-toolbar flex items-center gap-2 overflow-x-auto border-b border-line bg-[#fff9df] px-3 py-2">
             <div className="schematic-column-labels flex min-w-0 flex-1 items-center gap-5 text-[9px] font-bold uppercase tracking-[.1em] text-muted"><span>Sources and storage</span><span className="ml-auto hidden md:inline">Inverter / charger</span><span className="ml-auto hidden md:inline">AC distribution</span></div>
             <div className="relative flex shrink-0 items-center gap-1.5">
+              <label className="sr-only" htmlFor="installed-schematic-connection-view">Show schematic connections</label>
+              <select id="installed-schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as ConnectionView)} className="h-9 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC only</option><option value="dc">DC only</option><option value="data">Comms only</option><option value="earth">Earth only</option></select>
               <button type="button" onClick={() => void tidyLayout()} aria-label="Tidy schematic layout" title="Tidy layout" className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><WandSparkles size={13}/><span className="schematic-tool-label">Tidy layout</span></button>
               <button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-label={showConnectionLabels ? "Hide connection labels" : "Show connection labels"} title={showConnectionLabels ? "Hide labels" : "Show labels"} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>}<span className="schematic-tool-label">{showConnectionLabels ? "Hide labels" : "Show labels"}</span></button>
               <button type="button" onClick={() => setAdding((value) => !value)} aria-label="Add schematic item" title="Add item" className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/><span className="schematic-tool-label">Add item</span></button>
-              {adding && <div className="absolute right-0 top-11 z-30 w-[min(92vw,500px)] rounded-2xl border border-line bg-white p-3 text-left normal-case tracking-normal shadow-2xl"><div className="px-1 pb-3"><div className="eyebrow">Component library</div><input value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search pictures and equipment" className="field mt-2"/></div><div className="thin-scrollbar grid max-h-[460px] grid-cols-2 gap-2 overflow-y-auto pr-1">{visibleAssets.map((asset) => <button key={asset.fileName} type="button" onClick={() => router.push(`${base}/equipment/new?type=${asset.type}&name=${encodeURIComponent(asset.label)}&image=${encodeURIComponent(asset.url)}&returnTo=${schematicReturn}`)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={asset.url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-cover"/><span className="line-clamp-3">{asset.label}</span></button>)}</div>{!visibleAssets.length && <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures.</p>}<button type="button" onClick={() => router.push(`${base}/equipment/new?type=other&name=Other%20equipment&returnTo=${schematicReturn}`)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line py-2.5 text-xs font-bold text-brand"><Plus size={14}/>Add without a library picture</button></div>}
+              {adding && <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="component-library-title"><button type="button" className="absolute inset-0 bg-[#071b2d]/55 backdrop-blur-[2px]" onClick={() => setAdding(false)} aria-label="Close component library"/><div className="relative flex max-h-[min(86dvh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-white text-left normal-case tracking-normal shadow-2xl"><div className="shrink-0 border-b border-line p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div id="component-library-title" className="eyebrow">Component library</div><input autoFocus value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search pictures and equipment" className="field mt-2"/></div><button type="button" onClick={() => setAdding(false)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-line text-muted hover:bg-[#eef3f8]" aria-label="Close component library"><X size={16}/></button></div><div className="thin-scrollbar mt-3 flex gap-1.5 overflow-x-auto pb-1" aria-label="Component groups">{assetGroups.map((group) => <button key={group.id} type="button" onClick={() => setAssetGroup(group.id)} aria-pressed={assetGroup === group.id} className={`shrink-0 rounded-full border px-3 py-1.5 text-[10px] font-bold ${assetGroup === group.id ? "border-brand bg-brand text-white" : "border-line bg-white text-brand hover:bg-[#eef3f8]"}`}>{group.label}</button>)}</div></div><div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{visibleAssets.map((asset) => <button key={asset.fileName} type="button" onClick={() => router.push(`${base}/equipment/new?type=${asset.type}&name=${encodeURIComponent(asset.label)}&image=${encodeURIComponent(asset.url)}&returnTo=${schematicReturn}`)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={asset.url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-contain p-1"/><span className="line-clamp-3">{asset.label}</span></button>)}</div>{!visibleAssets.length && <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures in this group.</p>}<button type="button" onClick={() => router.push(`${base}/equipment/new?type=other&name=Other%20equipment&returnTo=${schematicReturn}`)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line py-2.5 text-xs font-bold text-brand"><Plus size={14}/>Add without a library picture</button></div></div></div>}
             </div>
             <div className="schematic-zoom-controls flex shrink-0 items-center gap-1 border-l border-line pl-2"><span className="mr-1 text-[9px] font-bold text-muted">Zoom</span><button type="button" onClick={() => setCanvasZoom((value) => Math.max(.45, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out">−</button><button type="button" onClick={() => setCanvasZoom(1)} className="h-8 min-w-12 rounded-lg border border-line bg-white px-2 text-[9px] font-bold" aria-label="Reset zoom">{Math.round(canvasZoom * 100)}%</button><button type="button" onClick={() => setCanvasZoom((value) => Math.min(1.4, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in">+</button></div>
           </div>
           <div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the system map a clear postcard-sized canvas.</span></div></div>
           <div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto touch-pan-x bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
             <svg
-              viewBox={`0 0 1100 ${canvasHeight}`}
-              style={{ width: 1100 * canvasZoom, height: canvasHeight * canvasZoom }}
+              viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
+              style={{ width: canvasWidth * canvasZoom, height: canvasHeight * canvasZoom }}
               role="img"
               aria-label={`${project.name} system connection schematic`}
               onDragOver={(event) => event.preventDefault()}
@@ -1295,11 +1369,11 @@ export function SystemSchematic({
                 if (!nodeRef || connectingFrom) return;
                 event.preventDefault();
                 const bounds = event.currentTarget.getBoundingClientRect();
-                const scaleX = 1100 / bounds.width;
+                const scaleX = canvasWidth / bounds.width;
                 const scaleY = canvasHeight / bounds.height;
                 void moveNode(
                   nodeRef,
-                  (event.clientX - bounds.left) * scaleX - nodeSize.width / 2,
+                  ((event.clientX - bounds.left) * scaleX - nodeSize.width / 2) / horizontalExpansion,
                   (event.clientY - bounds.top) * scaleY - nodeSize.height / 2,
                 );
               }}
@@ -1318,13 +1392,13 @@ export function SystemSchematic({
                 </marker>
               </defs>
               <rect
-                width="1100"
+                width={canvasWidth}
                 height={canvasHeight}
                 fill="url(#schematic-grid)"
                 opacity="0.42"
                 pointerEvents="none"
               />
-              {diagram.connections.map((connection) => (
+              {visibleConnections.map((connection) => (
                 <ConnectionPath
                   key={connection.id}
                   connection={connection}
@@ -1441,7 +1515,7 @@ export function SystemSchematic({
               </label>
               <label className="text-xs font-bold">
                 Type
-                <select name="connectionType" defaultValue={editorConnection?.connectionType ?? defaultConnectionType} className="field">
+                <select name="connectionType" value={editorConnectionType} onChange={(event) => setEditorConnectionType(event.target.value as SystemConnection["connectionType"])} className="field">
                   <option value="dc">DC power</option>
                   <option value="ac">AC power</option>
                   <option value="data">Data / communications</option>
@@ -1449,7 +1523,7 @@ export function SystemSchematic({
                   <option value="other">Other</option>
                 </select>
               </label>
-              <label className="text-xs font-bold">
+              {editorConnectionType === "dc" && <label className="text-xs font-bold">
                 DC polarity
                 <select name="polarity" defaultValue={editorConnection ? editorPolarity : defaultPolarity} className="field">
                   <option value="pair">Positive + negative pair</option>
@@ -1457,7 +1531,8 @@ export function SystemSchematic({
                   <option value="negative">Negative cable</option>
                   <option value="na">Not applicable / unspecified</option>
                 </select>
-              </label>
+              </label>}
+              {editorConnectionType !== "dc" && <input type="hidden" name="polarity" value="na"/>}
               <label className="text-xs font-bold">
                 Cable size
                 <input name="cableSize" defaultValue={editorConnection?.cableSize} placeholder="e.g. 35 mm² or 6 mm² TPS" className="field" />

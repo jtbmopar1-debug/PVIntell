@@ -16,7 +16,7 @@ import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
 import { buildPvArrayPlan } from "@/design/pv-array-plan";
 import { suggestPvDcStringCable } from "@/design/pv-dc-cable-sizing";
 import type { DesignCalculatorState, Project, Site } from "@/domain/models";
-import { GRID_CONNECTION_IMAGE } from "@/ui/assets";
+import { EARTH_ELECTRODE_IMAGE, GRID_CONNECTION_IMAGE } from "@/ui/assets";
 
 const n = (value: unknown, fallback = 0) => {
   const direct = Number(value);
@@ -781,7 +781,7 @@ function customEquipmentImage(label: string) {
   if (/isolator|disconnect/.test(name)) return "/schematic-components/dc-disconnect-isolator.jpg";
   if (/panel|module|array/.test(name)) return "/schematic-components/solar-panel-pv-module.jpg";
   if (/board|switchboard|distribution/.test(name)) return "/schematic-components/ac-distribution-board.jpg";
-  if (/earth|ground/.test(name)) return "/schematic-components/earth-electrode.svg";
+  if (/earth|ground/.test(name)) return EARTH_ELECTRODE_IMAGE;
   return "/schematic-components/ac-circuit-breaker-mcb.jpg";
 }
 
@@ -2048,7 +2048,7 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
     ...solarNodes,
     { id: "battery", label: "Battery storage", detail: design.batteryUsableKwh ? `${round(design.batteryUsableKwh, 1)} kWh usable storage from discovery` : design.batteryVoltage ? `${design.batteryVoltage} V storage proposed` : "Storage capacity requires a confirmed daily-energy value", image: "/schematic-components/lifepo4-battery-bank.jpg", x: 35, y: 345 },
     { id: "switchboard", label: "Building power board", detail: "Sends power to lights, outlets and tools", image: "/schematic-components/ac-distribution-board.jpg", x: 940, y: 180 },
-    { id: "earth", label: "Safety earth", detail: "Provides a safety path into the ground", image: "/schematic-components/earth-electrode.svg", x: 940, y: 415 },
+    { id: "earth", label: "Safety earth", detail: "Provides a safety path into the ground", image: EARTH_ELECTRODE_IMAGE, x: 940, y: 415 },
   ];
   const connections: NonNullable<Draft["connections"]> = [];
   if (design.architecture === "separate_solar_controller_and_inverter") {
