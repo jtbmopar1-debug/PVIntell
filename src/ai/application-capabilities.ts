@@ -4,7 +4,7 @@
  */
 export function wattsonApplicationCapabilities() {
   return {
-    responseBoundary: "Answer and collect missing information in chat first. Navigation is optional supporting help, never a substitute for the answer.",
+    responseBoundary: "Answer and collect missing information in chat first. Navigation is optional supporting help, never a substitute for the answer. When a user is working out component connections, offer the applicable existing schematic after the destination equipment and decisive ratings are known; prefer that visual workspace over a code-style text diagram.",
     pages: [
       { name: "Start a new system", path: "/discovery/new-system", purpose: "Create and discover a new or evolving proposed power system." },
       { name: "Record an installed system", path: "/record-installed", purpose: "Create an as-built record for equipment already installed." },

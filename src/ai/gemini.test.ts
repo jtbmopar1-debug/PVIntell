@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyWattsonRequest } from "./gemini";
+import { classifyWattsonRequest, missingPvConnectionTargetQuestion, wattsonAudienceInstruction } from "./gemini";
 
 describe("classifyWattsonRequest", () => {
   it("keeps ordinary discovery on the economical model without search", () => {
@@ -68,5 +68,29 @@ describe("classifyWattsonRequest", () => {
       search: false,
       locationKnown: false,
     });
+  });
+});
+
+describe("Wattson audience level", () => {
+  it("uses a layperson style when onboarding says the user is new", () => {
+    expect(wattsonAudienceInstruction({ userAssessment: { experience: "new", electricalConfidence: "learn" } }))
+      .toContain("LAYPERSON");
+  });
+
+  it("uses technical language for a professional", () => {
+    expect(wattsonAudienceInstruction({ userAssessment: { experience: "professional", electricalConfidence: "qualified" } }))
+      .toContain("PROFESSIONAL");
+  });
+});
+
+describe("PV connection target gate", () => {
+  it("asks what the panels connect to before suggesting topology", () => {
+    expect(missingPvConnectionTargetQuestion("I have 8 solar panels. Can I connect them in parallel and series?"))
+      .toContain("exact inverter or solar charge controller");
+  });
+
+  it("does not interrupt when the destination equipment is identified", () => {
+    expect(missingPvConnectionTargetQuestion("How should I connect 8 panels to my Victron MPPT?"))
+      .toBeNull();
   });
 });

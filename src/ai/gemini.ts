@@ -164,6 +164,34 @@ export function classifyWattsonRequest(message: string, location: string, hasEqu
   return { regulatory, technical, search, locationKnown };
 }
 
+export function wattsonAudienceInstruction(questionnaireContext: unknown) {
+  const root = questionnaireContext && typeof questionnaireContext === "object"
+    ? questionnaireContext as Record<string, unknown>
+    : {};
+  const assessment = root.userAssessment && typeof root.userAssessment === "object"
+    ? root.userAssessment as Record<string, unknown>
+    : {};
+  const experience = String(assessment.experience ?? "");
+  const confidence = String(assessment.electricalConfidence ?? "");
+  if (experience === "new" || confidence === "learn")
+    return "LAYPERSON: Use ordinary words and short sentences. Ask the one necessary question before giving technical analysis. Introduce at most one new technical term at a time and explain it immediately. Do not show equations, code-style diagrams, acronyms, or example wiring arrangements unless the user asks for deeper detail after the basics are clear.";
+  if (experience === "some" || confidence === "basic")
+    return "GUIDED DIY: Keep the explanation practical and mostly plain-language. Define technical terms on first use, make the next action obvious, and put any necessary clarification question before optional detail.";
+  if (experience === "professional" || confidence === "qualified")
+    return "PROFESSIONAL: Be concise and technically precise. Do not explain established fundamentals unless requested, but still state unknowns and required verification.";
+  if (experience === "experienced" || confidence === "confident")
+    return "EXPERIENCED: Technical language is appropriate. Keep it concise, identify decisive ratings and assumptions, and avoid elementary explanations unless requested.";
+  return "UNCONFIRMED LEVEL: Start in clear plain language, define necessary technical terms, and let the user's replies determine whether to increase technical depth.";
+}
+
+export function missingPvConnectionTargetQuestion(message: string) {
+  const asksForTopology = /\b(?:connect|wire|wiring|series|parallel|string(?:ing)?)\b/i.test(message);
+  const identifiesPanels = /\b(?:solar\s+panels?|pv\s+(?:panels?|modules?|array|string)|panels?)\b/i.test(message);
+  const identifiesDestination = /\b(?:inverter|charge\s+controller|solar\s+controller|mppt|optimi[sz]er|microinverter)\b/i.test(message);
+  if (!asksForTopology || !identifiesPanels || identifiesDestination) return null;
+  return "What are these panels connecting to—the exact inverter or solar charge controller make and model? I need that before I can work out a safe series-and-parallel arrangement. Once we have it, I can help you map the arrangement in PVIntell’s schematic builder.";
+}
+
 function parseInteraction(
   raw: GeminiInteraction,
   model: string,
@@ -247,6 +275,10 @@ export async function askGemini({
     project.location,
     project.components.some((component) => Boolean(component.manualUrl)),
   );
+  const missingConnectionTarget = missingPvConnectionTargetQuestion(message);
+  if (missingConnectionTarget) {
+    return { message: missingConnectionTarget, citations: [], model: "pvintell-connection-gate", searched: false, usage: {}, actions: [] };
+  }
   const compactProject = compactProjectContext(project);
   const compactRecentConversation = compactConversation(recentConversation);
   const model = route.technical
@@ -254,6 +286,7 @@ export async function askGemini({
     : (process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite");
 const systemInstruction = `You are Wattson, PVIntell's project-aware solar power guide.
 ${GLOBAL_PRODUCT_PERSPECTIVE}
+Audience level from onboarding: ${wattsonAudienceInstruction(questionnaireContext)}
 The user may be a complete beginner. Ask about ordinary life and desired outcomes rather than electrical terminology.
 Treat confirmed PVIntell records as the source of truth and clearly distinguish them from assumptions, estimates and proposals. On the dashboard, the top-level project named "PVIntell dashboard" is only a transport placeholder: ignore its projectType, voltage, autonomy and component fields. The real dashboard records are in connectedSiteSystems.
 Your primary role is to educate, design and help build. Monitoring and optimisation follow once a system is sufficiently described or commissioned.
@@ -263,7 +296,7 @@ Operating priority:
 3. Use tools only when their stated prerequisites are satisfied. Tool availability is not permission to skip discovery.
 4. Ask one plain-language question, save the answer when confirmed, and move forward without repeating completed questions.
 The explicit questionnaireContext.activeConversation is the authoritative working memory for this conversation. Resolve pronouns and short replies (including “this”, “it”, “this setup”, “one of these”, “earlier”, “yes”, “no, just this setup”, and “I told you earlier”) against recentConversation and that active state before consulting retrieved records. questionnaireContext.retrievalPolicy defines the precedence boundary: retrieved Site/system records may supplement the active subject, but must never replace it or become associated with it without explicit user confirmation. Treat corrections and rejectedInterpretations as authoritative. Before asking anything, check recentConversation, image extraction, activeConversation, and the preceding assistant-question/user-answer pair; never repeat an answered or corrected question.
-Never claim that an application page, record, diagram, setting, or equipment item exists unless it is present in supplied application/tool data. Equipment display codes such as b01–b04 are model-specific; when the controller model/manual is unknown, say their meanings cannot be confirmed. Do not claim electrical compatibility or provide an exact wiring schematic until the necessary controller limits and panel Voc, Vmp, Isc, and Imp are confirmed. A conceptual flow is still useful when requested, but label confirmed facts separately from those missing ratings.
+Never claim that an application page, record, diagram, setting, or equipment item exists unless it is present in supplied application/tool data. Equipment display codes such as b01–b04 are model-specific; when the controller model/manual is unknown, say their meanings cannot be confirmed. Before suggesting a PV series/parallel arrangement, establish exactly what the panels connect to. If the destination inverter, controller, optimiser or microinverter is not unambiguously identified, ask for its make and model first and stop there—do not bury that question after an example layout. Do not claim electrical compatibility or provide an exact wiring schematic until the necessary controller limits and panel Voc, Vmp, Isc, and Imp are confirmed. Once the required facts are known, offer the relevant real PVIntell schematic as the clearest way to map and review the arrangement; do not substitute an ASCII diagram when the schematic tool is available. A conceptual flow is still useful when requested, but label confirmed facts separately from those missing ratings.
 Recognise boats, vehicles and other 12/24 V battery installations as low-voltage DC systems. A separate solar charge controller is normal in these systems. Never invent an inverter, AC switchboard or AC load path when none was stated. Keep starter and house batteries as distinct roles, preserve the stated physical quantity, and do not combine amp-hours or assert series/parallel wiring unless the user confirms that topology. When topology matters, ask one focused question about the house-bank connection or whether any inverter/AC loads exist.
 Meter boards, revenue meters and smart-meter arrangements are location-specific. Use the selected Site country plus its network/utility or metering provider when known. Do not apply New Zealand terminology or requirements globally. If the jurisdiction is missing, give only neutral definitions and ask for the Site country before providing ownership, installation, interval, tariff, export or compliance-specific advice.
 questionnaireContext.applicationCapabilities is the authoritative map of PVIntell pages and their purposes. Do not invent navigation or recommend generic Settings for system setup, equipment recording, design, or schematics. Name only a supplied real page whose stated purpose matches the task, and only after answering in chat.
@@ -400,13 +433,15 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(25_000),
     },
   );
-  const raw = (await response.json()) as GeminiInteraction;
+  const raw = (await response.json().catch(() => ({}))) as GeminiInteraction;
   if (!response.ok)
     throw new Error(
-      raw.error?.message ??
+      response.status === 504
+        ? "The model took too long to respond. Please send that message again."
+        : raw.error?.message ??
         `Gemini request failed with status ${response.status}.`,
     );
   return parseInteraction(raw, model, route.search);
