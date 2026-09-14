@@ -642,22 +642,6 @@ export interface AppliedWattsonAction {
 export const wattsonActionTools = [
   {
     type: "function",
-    name: "resolve_installed_import_destination",
-    description: "Interpret the user's natural-language reply while arranging a structured installed-system import. This is a routing decision only and does not create or alter records. Use it whenever the user accepts or declines the import, identifies an existing Site/system, says the destination is a new Site, or supplies any of those names across one or more conversational turns.",
-    parameters: {
-      type: "object",
-      properties: {
-        authorised: { type: "boolean" },
-        destination: { type: "string", enum: ["existing", "new", "unknown"] },
-        site_name: { type: "string" },
-        system_name: { type: "string" },
-      },
-      required: ["authorised", "destination"],
-      additionalProperties: false,
-    },
-  },
-  {
-    type: "function",
     name: "create_power_system_workspace",
     description:
       "Dashboard only: create the user's first empty place and power-system workspace after the public-electricity relationship and primary goal have both been confirmed in plain language. This creates a discovery workspace only; it does not select architecture or equipment. Use onboarding location and do not ask for coordinates again. Do not call when connectedSiteSystems already contains a system.",

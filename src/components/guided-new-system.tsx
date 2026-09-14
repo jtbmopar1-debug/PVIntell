@@ -1221,7 +1221,7 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
     const nextMessages = [...messages, { role: "user" as const, content: displayedMessage }];
     setMessages(nextMessages); setInput(""); setSending(true); setError("");
     try {
-      const payload = { message, conversationId, discoveryDraftId, siteId, projectId, discoveryAnswers, question: { id: question.id, title: question.title, stage: question.stage, help: question.noviceHelp, options: question.options }, recentConversation: nextMessages.slice(-8) };
+      const payload = { message, conversationId, requestId: crypto.randomUUID(), discoveryDraftId, siteId, projectId, discoveryAnswers, question: { id: question.id, title: question.title, stage: question.stage, help: question.noviceHelp, options: question.options }, recentConversation: nextMessages.slice(-8) };
       const formData = new FormData();
       formData.set("payload", JSON.stringify(payload));
       if (attachment) formData.set("file", attachment);
@@ -1230,10 +1230,12 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
       let body: { error?: string; conversationId?: string; safetyDecision?: string; message?: string } = {};
       try { body = responseText ? JSON.parse(responseText) as typeof body : {}; }
       catch { body = { error: response.status === 413 ? "That photo was too large to upload. Crop closer to the rating label and try again." : `Wattson could not read the server response (${response.status}).` }; }
+      if (body.conversationId) {
+        setConversationId(body.conversationId);
+        onConversation(body.conversationId);
+      }
       if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable.");
       if (!body.conversationId) throw new Error("Wattson returned an incomplete response. Please try the photo again.");
-      setConversationId(body.conversationId);
-      onConversation(body.conversationId);
       if (typeof body.safetyDecision === "string") onSafetyDecision(body.safetyDecision);
       setMessages((current) => [...current, { role: "assistant", content: String(body.message) }]);
       setAttachment(undefined);

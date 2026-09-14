@@ -16,6 +16,9 @@ export async function updateSession(request: NextRequest) {
       },
     },
   });
-  await supabase.auth.getClaims();
+  const claims = await supabase.auth.getClaims();
+  const issuedAt = Number(claims.data?.claims?.iat ?? 0);
+  const clockIsAhead = issuedAt > Math.floor(Date.now() / 1000) + 30;
+  if (claims.error || clockIsAhead) await supabase.auth.refreshSession();
   return response;
 }

@@ -3,6 +3,9 @@ import { askGemini } from "@/ai/gemini";
 import { demoProject } from "@/data/demo-project";
 import { createClient } from "@/lib/supabase/server";
 import { userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
+import { conversationStatePromptContext, recordWattsonAssistantTurn, reduceWattsonUserTurn } from "@/ai/conversation-state";
+import { cachedConversationResponse, startedConversationRequest } from "@/ai/conversation-request";
+import { extractEquipmentLabel } from "@/ai/equipment-label";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(3000),
@@ -16,6 +19,7 @@ const schema = z.object({
     options: z.array(z.object({ value: z.string().max(200), label: z.string().max(300), description: z.string().max(1000) })).max(30).optional(),
   }),
   recentConversation: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(4000) })).max(8),
+  requestId: z.uuid().optional(),
 });
 
 export async function POST(request: Request) {
@@ -36,6 +40,10 @@ export async function POST(request: Request) {
   }
   const supabase = await createClient(); const claims = await supabase.auth.getClaims(); const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const cachedRequest = await cachedConversationResponse(supabase, "user_chat_messages", undefined, parsed.data.requestId);
+  if (cachedRequest) return Response.json(cachedRequest);
+  const startedRequest = await startedConversationRequest(supabase, "user_chat_messages", undefined, parsed.data.requestId);
+  if (startedRequest) return Response.json({ error: "That message is already being handled, so Wattson did not run it again.", conversationId: startedRequest.conversationId, retryable: false }, { status: 409 });
 
   let location = "Location not set"; let siteName = "New system";
   if (parsed.data.siteId) {
@@ -97,18 +105,47 @@ export async function POST(request: Request) {
   if (parsed.data.siteId || parsed.data.projectId) {
     await supabase.from("user_conversations").update({ site_id: parsed.data.siteId ?? null, project_id: parsed.data.projectId ?? null, title: conversationTitle }).eq("id", conversationId).eq("owner_id", userId);
   }
-  const image = imageFile ? { data: Buffer.from(await imageFile.arrayBuffer()).toString("base64"), mimeType: imageFile.type } : undefined;
+  if (!conversationId) return Response.json({ error: "Could not open the discovery conversation." }, { status: 500 });
+  const imageBytes = imageFile ? new Uint8Array(await imageFile.arrayBuffer()) : undefined;
+  const image = imageFile && imageBytes ? { data: Buffer.from(imageBytes).toString("base64"), mimeType: imageFile.type } : undefined;
+  let imageExtraction: Record<string, unknown> | undefined;
+  if (imageFile && imageBytes) {
+    try { imageExtraction = await extractEquipmentLabel(imageBytes, imageFile.type) as unknown as Record<string, unknown>; }
+    catch { /* The main image answer can still explain an unreadable or non-label photo. */ }
+  }
   const userContent = imageFile ? `${parsed.data.message}\n\n[Attached image: ${imageFile.name}]` : parsed.data.message;
-  const userWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "user", content: userContent, structured_context: { kind: "discovery_help", questionId: parsed.data.question.id, imageName: imageFile?.name, mimeType: imageFile?.type } });
-  if (userWrite.error) return Response.json({ error: userWrite.error.message }, { status: 400 });
+  const userWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "user", content: userContent, structured_context: { kind: "discovery_help", questionId: parsed.data.question.id, imageName: imageFile?.name, mimeType: imageFile?.type }, client_request_id: parsed.data.requestId });
+  if (userWrite.error) return Response.json({ error: userWrite.error.message, conversationId }, { status: userWrite.error.code === "23505" ? 409 : 400 });
 
   const question = parsed.data.question;
   const discoveryAnswers = parsed.data.discoveryAnswers ?? {};
+  const storedState = await supabase.from("user_conversations").select("conversation_state").eq("id", conversationId).eq("owner_id", userId).single();
+  if (storedState.error) return Response.json({ error: storedState.error.message }, { status: 400 });
+  let conversationState = reduceWattsonUserTurn(storedState.data.conversation_state, parsed.data.message, {
+    site: parsed.data.siteId ? { id: parsed.data.siteId, name: siteName } : undefined,
+    system: parsed.data.projectId ? { id: parsed.data.projectId, name: siteName } : undefined,
+    image: imageFile ? { mimeType: imageFile.type, warning: `Attached discovery image: ${imageFile.name}`, extraction: imageExtraction } : undefined,
+  });
+  conversationState.activeIntent = "discovery_help";
+  conversationState.activeSubject = {
+    kind: helpContext === "discovery" ? "site" : "component",
+    description: `${question.title}. ${question.help}`,
+    association: parsed.data.projectId ? "system" : parsed.data.siteId ? "site" : "unassociated",
+    siteId: parsed.data.siteId,
+    siteName,
+    systemId: parsed.data.projectId,
+    systemName: parsed.data.projectId ? siteName : undefined,
+  };
+  const userStateWrite = await supabase.from("user_conversations").update({ conversation_state: conversationState }).eq("id", conversationId).eq("owner_id", userId);
+  if (userStateWrite.error) return Response.json({ error: userStateWrite.error.message, conversationId }, { status: 400 });
   const customBatterySelected = question.id === "battery_chemistry" && discoveryAnswers.battery_chemistry === "custom_home_built";
   const salvagedEvBattery = customBatterySelected && /\b(?:tesla|wreck(?:ed|ing)?|salvag(?:e|ed)|crash(?:ed)?|vehicle|\bev\b|car\s+(?:battery|pack)|traction\s+(?:battery|pack))\b/i.test(parsed.data.message);
   if (salvagedEvBattery) {
     const message = "Do not use this battery in the build based on the information currently available. A salvaged vehicle battery—especially one with unknown crash, water, storage, handling or electrical history—must be treated as unsafe and unsuitable unless every safety-critical point is independently verified.\n\nI cannot recommend a BMS, inverter or wiring arrangement as a way around missing evidence. Reconsideration would require the exact pack/module identity and chemistry, traceable provenance, qualified physical and insulation assessment, verified cell/module condition, functioning BMS and contactors, isolation monitoring, pre-charge, thermal management, enclosure and protection, manufacturer operating limits, compatible inverter integration, documented test results, and any required professional inspection or approval.\n\nUntil all of that evidence is available and acceptable, choose a different battery for this system. You remain free to retain it in your own record, but PVIntell will keep it marked unverified and not recommended.";
-    const assistantWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { kind: "discovery_help", questionId: question.id, safetyDecision: "do_not_use", reason: "salvaged_ev_battery_unverified" } });
+    conversationState = recordWattsonAssistantTurn(conversationState, message);
+    const stateWrite = await supabase.from("user_conversations").update({ conversation_state: conversationState }).eq("id", conversationId).eq("owner_id", userId);
+    if (stateWrite.error) return Response.json({ error: stateWrite.error.message }, { status: 400 });
+    const assistantWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { kind: "discovery_help", questionId: question.id, evidenceRevision: conversationState.revision, safetyDecision: "do_not_use", reason: "salvaged_ev_battery_unverified" }, response_to_request_id: parsed.data.requestId });
     if (assistantWrite.error) return Response.json({ error: assistantWrite.error.message }, { status: 400 });
     return Response.json({ conversationId, message, safetyDecision: "do_not_use" });
   }
@@ -122,14 +159,28 @@ export async function POST(request: Request) {
         ? "This came from the working schematic. Keep the selected component or connection and neighbouring items in view, and refer back to its schematic record—not the questionnaire."
         : "This came from Build It. Focus on implementation, parts, checks and recorded evidence, and refer back to this Build It item—not the questionnaire.")
     + " For a heat-pump photo, read the advertised heating capacity and model but do not use any input explicitly marked indoor-only. Keep this workflow simple: use heating capacity divided by 5 as the average-operating planning input. State the exact Heating size shown on label and resulting Average electrical input fields for the user. Keep the result visibly estimated and replace it with a representative measured average when available. Never present thermal capacity, indoor-only watts, an uncited model match, or the planning estimate as confirmed.";
-  const result = await askGemini({
-    project: { ...demoProject, id: parsed.data.projectId ?? `discovery-${conversationId}`, siteId: parsed.data.siteId, name: `${siteName} discovery help`, location, projectType: confirmedProjectType },
-    recentConversation: parsed.data.recentConversation,
-    allowActions: false,
-    message: `You are in a dedicated phone-a-friend ${helpContext} chat. ${contextInstruction} Stay strictly on the active item until the user understands it and has a usable answer. The confirmed discovery answers below are authoritative context. Never contradict them, invent an unselected goal or priority, assume equipment that was not recorded, or substitute the demo project's defaults. Discuss generator operation only when the confirmed answers or the user's current message explicitly mention a generator. For a grid-connected system, explain battery reserve as outage backup while the grid is unavailable; do not describe it as normal off-grid autonomy. When helping with AC phase, never infer single-phase or three-phase from the number of switch or breaker toggles: older single-phase switchboards may contain linked multi-pole devices. Say most ordinary houses use single-phase power, commonly about 230 V in New Zealand and many countries or 110–120 V in some overseas systems, then direct the user to reliable supply records or equipment labelling if confirmation is needed. Teach in plain language and help the user identify evidence such as a label, measurement, bill or photo when that evidence is necessary to answer this exact question. When an image is attached, report visible evidence first and clearly distinguish it from anything requiring measurement or qualified inspection. Never declare a roof structurally suitable, electrical equipment safe, or an installation compliant from a photo alone. Ask one focused clarifying question only when the active question cannot yet be answered. The chat remains open: if the user voluntarily continues with another question about this same active subject, answer it fully and helpfully, but still do not manufacture a follow-up question merely to prolong the conversation. Never use a closing question to explore mounting conditions, equipment, loads, design details, or any other adjacent discovery subject. Do not save an answer or alter any project record from this help chat. Never claim certainty when facts are missing.\n\nConfirmed discovery answers:\n${JSON.stringify(discoveryAnswers)}\n\nActive question:\n${JSON.stringify(question)}\n\nUser message: ${parsed.data.message}`,
-    image,
-  });
-  const assistantWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: result.message, structured_context: { kind: "discovery_help", questionId: question.id, provider: "gemini", model: result.model, citations: result.citations, usage: result.usage } });
+  let result;
+  try {
+    result = await askGemini({
+      project: { ...demoProject, id: parsed.data.projectId ?? `discovery-${conversationId}`, siteId: parsed.data.siteId, name: `${siteName} discovery help`, location, projectType: confirmedProjectType },
+      recentConversation: parsed.data.recentConversation,
+      allowActions: false,
+      message: parsed.data.message,
+      questionnaireContext: {
+        conversationState: conversationStatePromptContext(conversationState),
+        confirmedDiscoveryAnswers: discoveryAnswers,
+        activeHelpQuestion: question,
+        scope: `Dedicated phone-a-friend ${helpContext} chat. ${contextInstruction} Stay on the active item until the user has a usable answer. This route is read-only: never save or alter application records. Do not manufacture an adjacent follow-up question.`,
+      },
+      image,
+    });
+  } catch (problem) {
+    return Response.json({ error: problem instanceof Error ? problem.message : "Wattson is unavailable.", conversationId, retryable: true }, { status: 502 });
+  }
+  conversationState = recordWattsonAssistantTurn(conversationState, result.message);
+  const stateWrite = await supabase.from("user_conversations").update({ conversation_state: conversationState }).eq("id", conversationId).eq("owner_id", userId);
+  if (stateWrite.error) return Response.json({ error: stateWrite.error.message }, { status: 400 });
+  const assistantWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: result.message, structured_context: { kind: "discovery_help", questionId: question.id, evidenceRevision: conversationState.revision, provider: "gemini", model: result.model, citations: result.citations, usage: result.usage }, response_to_request_id: parsed.data.requestId });
   if (assistantWrite.error) return Response.json({ error: assistantWrite.error.message }, { status: 400 });
   return Response.json({ conversationId, message: result.message, citations: result.citations });
 }

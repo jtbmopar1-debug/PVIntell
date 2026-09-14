@@ -426,12 +426,13 @@ export function PVIntellWorkspace({
             projectId: updated.id,
             project: updated,
             conversationId,
+            requestId: crypto.randomUUID(),
           }),
         });
         const body = await response.json();
+        if (typeof body.conversationId === "string") setConversationId(body.conversationId);
         if (!response.ok)
           throw new Error(body.error ?? "Wattson is unavailable");
-        if (typeof body.conversationId === "string") setConversationId(body.conversationId);
         reply = body.message;
         citations = body.citations;
         actionUrl = body.actionUrl;
@@ -477,7 +478,7 @@ export function PVIntellWorkspace({
   async function sendImage(file: File) {
     if (sending) return;
     const message =
-      "Please inspect this attached image. Extract only values that are clearly visible. If it belongs to an existing system item and the match is unambiguous, update that record; otherwise ask me which item it belongs to.";
+      "Please inspect this attached image and extract only values that are clearly visible. Use it as conversation evidence only; do not update or attach it to an equipment record unless I separately ask you to.";
     const preview = URL.createObjectURL(file);
     setMessages((m) => [
       ...m,
@@ -495,13 +496,14 @@ export function PVIntellWorkspace({
       body.set("message", message);
       body.set("projectId", project.id);
       body.set("project", JSON.stringify(project));
+      body.set("requestId", crypto.randomUUID());
       if (conversationId) body.set("conversationId", conversationId);
       body.set("file", file);
       const response = await fetch("/api/wattson", { method: "POST", body });
       const result = await response.json();
+      if (typeof result.conversationId === "string") setConversationId(result.conversationId);
       if (!response.ok)
         throw new Error(result.error ?? "Wattson could not inspect the image");
-      if (typeof result.conversationId === "string") setConversationId(result.conversationId);
       setMessages((m) => [
         ...m,
         {

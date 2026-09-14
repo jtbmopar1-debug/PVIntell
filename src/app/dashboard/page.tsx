@@ -4,6 +4,7 @@ import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { createClient } from "@/lib/supabase/server";
 import type { SolarArrayForecastInput } from "@/weather/forecast";
+import { isFutureJwtError } from "@/lib/supabase/auth-errors";
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ site?: string; conversation?: string; start?: string; wattson?: string; welcome?: string }> }) {
   const supabase = await createClient();
@@ -20,6 +21,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       : Promise.resolve({ data: null, error: null }),
     supabase.from("discovery_drafts").select("id,status,question_id,answers,updated_at").eq("owner_id", userId).order("updated_at", { ascending: false }),
   ]);
+  if ([profile.error, siteRows.error, systemRows.error, conversation.error, discoveryDraftRows.error].some(isFutureJwtError)) redirect("/auth/session-recovery?next=/dashboard");
   if (profile.error) throw profile.error;
   if (profile.data.onboarding_status !== "completed") redirect("/onboarding");
   if (siteRows.error) throw siteRows.error;

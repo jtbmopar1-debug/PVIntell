@@ -31,7 +31,7 @@ export function WattsonChatHistory({ initialChats, limit }: { initialChats: Watt
     const createdAt = new Date().toISOString(); const pending = { role: "user" as const, content: message, createdAt };
     const currentId = selected.id; setInput(""); setSending(true); setError(""); setSelected((chat) => chat ? { ...chat, messages: [...chat.messages, pending], messageCount: chat.messageCount + 1 } : chat);
     try {
-      const response = await fetch(`/api/wattson/conversations/${selected.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: selected.kind, message }) });
+      const response = await fetch(`/api/wattson/conversations/${selected.id}/messages`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: selected.kind, message, requestId: crypto.randomUUID() }) });
       const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable.");
       const reply = { role: "assistant" as const, content: String(body.message), createdAt: new Date().toISOString() };
       setSelected((chat) => chat?.id === currentId ? { ...chat, messages: [...chat.messages, reply], messageCount: chat.messageCount + 1, preview: reply.content, updatedAt: reply.createdAt } : chat);

@@ -10,24 +10,30 @@ import { captureSiteInventoryFromLabel, type InventoryPhotoCapture } from "@/ai/
 import { extractEquipmentLabel } from "@/ai/equipment-label";
 import { containsUnsupportedSettingsSetupAdvice, wattsonApplicationCapabilities } from "@/ai/application-capabilities";
 import {
-  buildActiveConversationState,
-  conceptualSchematicForActiveSetup,
-  conversationRetrievalPolicy,
-  equipmentTargetClarification,
-  removeRepeatedAnsweredQuestions,
-} from "@/ai/active-conversation";
+  conversationStatePromptContext,
+  parseWattsonConversationState,
+  recordWattsonAssistantTurn,
+  reduceWattsonUserTurn,
+  removeAnsweredWattsonQuestions,
+} from "@/ai/conversation-state";
+import { actionsAllowedByDecision, consumeConfirmedPendingAction, pendingActionRequests, routeWattsonTurn } from "@/ai/conversation-router";
 import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
 import { loadMonitoringSnapshot } from "@/monitoring/repository";
 import { buildMonitoringWattsonContext } from "@/monitoring/wattson-context";
 import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
 import { requestsSchematicCreation } from "@/ai/schematic-intent";
 import { registerGalleryImage } from "@/gallery/register";
+import { loadWorkspace } from "@/data/cloud-project";
+import { cachedConversationResponse, startedConversationRequest } from "@/ai/conversation-request";
+import { attachImageToRecord, requestsExistingRecordAttachment, resolveRecordAttachmentTarget, type RecordAttachmentTarget } from "@/ai/record-attachment";
+import { persistRequestedSchematic } from "@/ai/schematic-builder";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
   projectId: z.uuid(),
   project: z.custom<Project>(),
   conversationId: z.uuid().optional(),
+  requestId: z.uuid().optional(),
 });
 
 function proposedArchitectureReply(actions: Array<{ name: string; arguments: unknown }>) {
@@ -78,6 +84,7 @@ export async function POST(request: Request) {
         message: form.get("message"),
         projectId: form.get("projectId"),
         conversationId: form.get("conversationId") || undefined,
+        requestId: form.get("requestId") || undefined,
         project:
           typeof projectText === "string" ? JSON.parse(projectText) : null,
       };
@@ -108,6 +115,10 @@ export async function POST(request: Request) {
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string")
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const cachedRequest = await cachedConversationResponse(supabase, "chat_messages", undefined, parsed.data.requestId);
+  if (cachedRequest) return Response.json(cachedRequest);
+  const startedRequest = await startedConversationRequest(supabase, "chat_messages", undefined, parsed.data.requestId);
+  if (startedRequest) return Response.json({ error: "That message is already being handled, so Wattson did not run its actions again.", conversationId: startedRequest.conversationId, retryable: false }, { status: 409 });
 
   const owned = await supabase
     .from("projects")
@@ -117,6 +128,13 @@ export async function POST(request: Request) {
     .maybeSingle();
   if (owned.error || !owned.data)
     return Response.json({ error: "Project not found" }, { status: 404 });
+  let conversation = parsed.data.conversationId
+    ? await supabase.from("conversations").select("id,title,conversation_state").eq("project_id", parsed.data.projectId).eq("id", parsed.data.conversationId).maybeSingle()
+    : await supabase.from("conversations").select("id,title,conversation_state").eq("project_id", parsed.data.projectId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (conversation.error)
+    return Response.json({ error: conversation.error.message }, { status: 400 });
+  if (parsed.data.conversationId && !conversation.data)
+    return Response.json({ error: "That Wattson conversation was not found." }, { status: 404 });
   let image: { data: string; mimeType: string } | undefined;
   let imageBytes: Uint8Array | undefined;
   let imagePath: string | undefined;
@@ -155,10 +173,32 @@ export async function POST(request: Request) {
       .createSignedUrl(imagePath, 3600);
     imageUrl = signed.data?.signedUrl;
   }
+  if (!conversation.data) {
+    if (await userConversationCount(supabase, userId) >= WATTSON_CONVERSATION_LIMIT)
+      return Response.json({ error: `You have reached the ${WATTSON_CONVERSATION_LIMIT}-chat limit. Delete an old chat from Wattson chats before starting another.` }, { status: 409 });
+    const created = await supabase
+      .from("conversations")
+      .insert({
+        project_id: parsed.data.projectId,
+        title: "Wattson project discovery",
+      })
+      .select("id,conversation_state")
+      .single();
+    if (created.error)
+      return Response.json({ error: created.error.message }, { status: 400 });
+    conversation = { ...conversation, data: { ...created.data, title: "Wattson project discovery" } };
+  }
+
+  const conversationId = conversation.data?.id;
+  if (!conversationId)
+    return Response.json(
+      { error: "Could not create conversation" },
+      { status: 500 },
+    );
   let inventoryCapture: InventoryPhotoCapture | undefined;
   if (imagePath && imageBytes && imageFile) {
-    const explicitlyRequestsInventoryWrite = /\b(?:save|record|add|attach|import)\b[\s\S]{0,80}\b(?:photo|image|label|equipment|inventory|component)\b|\b(?:save|record|add|attach|import) (?:this|it)\b/i.test(parsed.data.message);
-    if (explicitlyRequestsInventoryWrite) {
+    const imageDecision = routeWattsonTurn(parsed.data.message, parseWattsonConversationState(conversation.data?.conversation_state));
+    if (imageDecision.mutationConsent && imageDecision.intent === "record_attachment" && !requestsExistingRecordAttachment(parsed.data.message)) {
       inventoryCapture = await captureSiteInventoryFromLabel({ supabase, siteId: owned.data.site_id, imagePath, imageBytes, mimeType: imageFile.type });
     } else {
       try {
@@ -172,39 +212,9 @@ export async function POST(request: Request) {
       }
     }
   }
-
-  let conversation = parsed.data.conversationId
-    ? await supabase.from("conversations").select("id,title").eq("project_id", parsed.data.projectId).eq("id", parsed.data.conversationId).maybeSingle()
-    : await supabase.from("conversations").select("id,title").eq("project_id", parsed.data.projectId).order("created_at", { ascending: false }).limit(1).maybeSingle();
-  if (conversation.error)
-    return Response.json(
-      { error: conversation.error.message },
-      { status: 400 },
-    );
-  if (parsed.data.conversationId && !conversation.data)
-    return Response.json({ error: "That Wattson conversation was not found." }, { status: 404 });
-  if (!conversation.data) {
-    if (await userConversationCount(supabase, userId) >= WATTSON_CONVERSATION_LIMIT)
-      return Response.json({ error: `You have reached the ${WATTSON_CONVERSATION_LIMIT}-chat limit. Delete an old chat from Wattson chats before starting another.` }, { status: 409 });
-    const created = await supabase
-      .from("conversations")
-      .insert({
-        project_id: parsed.data.projectId,
-        title: "Wattson project discovery",
-      })
-      .select("id")
-      .single();
-    if (created.error)
-      return Response.json({ error: created.error.message }, { status: 400 });
-    conversation = { ...conversation, data: { ...created.data, title: "Wattson project discovery" } };
-  }
-
-  const conversationId = conversation.data?.id;
-  if (!conversationId)
-    return Response.json(
-      { error: "Could not create conversation" },
-      { status: 500 },
-    );
+  // The browser project snapshot is transport compatibility only. Reload the
+  // canonical record so stale UI state cannot replace confirmed database facts.
+  const canonicalProject = (await loadWorkspace(supabase, parsed.data.projectId, conversationId)).project;
   const userInsert = await supabase
     .from("chat_messages")
     .insert({
@@ -214,9 +224,10 @@ export async function POST(request: Request) {
       structured_context: imagePath
         ? { imagePath, mimeType: imageFile?.type }
         : {},
+      client_request_id: parsed.data.requestId,
     });
   if (userInsert.error)
-    return Response.json({ error: userInsert.error.message }, { status: 400 });
+    return Response.json({ error: userInsert.error.message, conversationId }, { status: userInsert.error.code === "23505" ? 409 : 400 });
   if (!conversation.data?.title || /^Wattson (?:project discovery|conversation)$/i.test(conversation.data.title))
     await supabase.from("conversations").update({ title: conversationTitle(parsed.data.message) }).eq("id", conversationId);
 
@@ -233,30 +244,68 @@ export async function POST(request: Request) {
       ? history.slice(0, -1)
       : history;
   const priorAssistantMessage = [...priorHistory].reverse().find((item) => item.role === "assistant")?.content ?? "";
-  if (requestsSchematicCreation(parsed.data.message, priorAssistantMessage)) {
+  let conversationState = reduceWattsonUserTurn(conversation.data?.conversation_state, parsed.data.message, {
+    site: { id: owned.data.site_id, name: canonicalProject.location || "Current Site" },
+    system: { id: parsed.data.projectId, name: canonicalProject.name },
+    image: imagePath ? { imagePath, mimeType: imageFile?.type, extraction: inventoryCapture?.extraction as Record<string, unknown> | undefined, warning: inventoryCapture?.warning } : undefined,
+  });
+  const routeDecision = routeWattsonTurn(parsed.data.message, conversationState);
+  conversationState.activeIntent = routeDecision.intent;
+  const userStateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
+  if (userStateSaved.error) return Response.json({ error: userStateSaved.error.message, conversationId }, { status: 400 });
+  if (routeDecision.intent === "schematic" && routeDecision.mode === "execute" && requestsSchematicCreation(parsed.data.message, priorAssistantMessage)) {
     const schematicId = parsed.data.projectId;
     const actionUrl = `/sites/${owned.data.site_id}/systems/${schematicId}/schematic`;
-    const installedPhase = await supabase.from("projects").update({ phase: "monitor", updated_at: new Date().toISOString() }).eq("id", schematicId).eq("owner_id", userId);
-    if (installedPhase.error) {
-      const message = `I could not create the installed-system schematic because PVIntell returned this technical error: ${installedPhase.error.message}`;
-      await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { schematicCreationError: installedPhase.error.message } });
-      return Response.json({ message, actions: [] });
+    const completed = conversationState.completedActions.some((action) => action.kind === "create_schematic" && action.systemId === schematicId);
+    let message = "It is already built. Open the schematic below.";
+    let schematicAction: Record<string, unknown> | undefined;
+    if (!completed) {
+      try {
+        const built = await persistRequestedSchematic({
+          supabase,
+          projectId: schematicId,
+          message: parsed.data.message,
+          priorUserText: priorHistory.filter((item) => item.role === "user").map((item) => item.content).join("\n"),
+          fallbackPanelWatts: Number(conversationState.facts.find((fact) => fact.key === "panel.rated_power_w")?.value ?? 0) || undefined,
+        });
+        const pvSummary = built.arrayIds.length && built.panelsPerArray
+          ? `${built.arrayCount} strings of ${built.panelsPerArray}${built.panelWatts ? ` × ${built.panelWatts} W` : " panels"}`
+          : undefined;
+        message = `Built the requested installed-system schematic${pvSummary ? ` with ${pvSummary}` : ""}. Missing electrical ratings remain TBC until verified. Open it below.`;
+        schematicAction = { type: "schematic_built", summary: "Created requested schematic records", ...built };
+      } catch (problem) {
+        const detail = problem instanceof Error ? problem.message : "Unknown schematic creation error";
+        const errorMessage = `I could not create the schematic because PVIntell returned this technical error: ${detail}`;
+        await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: errorMessage, structured_context: { evidenceRevision: conversationState.revision, schematicCreationError: detail }, response_to_request_id: parsed.data.requestId });
+        return Response.json({ conversationId, message: errorMessage, actions: [] });
+      }
     }
-    const message = "The installed-system schematic is ready. Open it below; any missing specifications remain TBC and provisional until verified.";
-    const saved = await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { schematicId, actionUrl, actionLabel: "Open schematic" } });
+    conversationState.pendingAction = undefined;
+    if (!completed) {
+      conversationState.completedActions.push({ kind: "create_schematic", revision: conversationState.revision, description: "Created installed-system schematic", siteId: owned.data.site_id, systemId: schematicId, result: { actionUrl } });
+    }
+    conversationState = recordWattsonAssistantTurn(conversationState, message);
+    const stateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
+    if (stateSaved.error) return Response.json({ error: stateSaved.error.message }, { status: 400 });
+    const saved = await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { evidenceRevision: conversationState.revision, schematicId, actionUrl, actionLabel: "Open schematic" }, response_to_request_id: parsed.data.requestId });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-    return Response.json({ message, schematicId, actionUrl, actionLabel: "Open schematic", actions: [] });
+    return Response.json({ conversationId, message, schematicId, actionUrl, actionLabel: "Open schematic", actions: schematicAction ? [schematicAction] : [] });
   }
-  if (isNewSystemSetupIntent(parsed.data.message)) {
+  if (routeDecision.intent === "new_system" && isNewSystemSetupIntent(parsed.data.message)) {
     const message = startHereMessage();
+    conversationState.pendingAction = { kind: "create_system", status: "offered", description: "Start guided system setup" };
+    conversationState = recordWattsonAssistantTurn(conversationState, message);
+    const stateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
+    if (stateSaved.error) return Response.json({ error: stateSaved.error.message }, { status: 400 });
     const saved = await supabase.from("chat_messages").insert({
       conversation_id: conversationId,
       role: "assistant",
       content: message,
-      structured_context: { kind: "start_here_handoff", actionUrl: startHereUrl, actionLabel: startHereLabel },
+      structured_context: { kind: "start_here_handoff", evidenceRevision: conversationState.revision, actionUrl: startHereUrl, actionLabel: startHereLabel },
+      response_to_request_id: parsed.data.requestId,
     });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-    return Response.json({ message, actionUrl: startHereUrl, actionLabel: startHereLabel, actions: [] });
+    return Response.json({ conversationId, message, actionUrl: startHereUrl, actionLabel: startHereLabel, actions: [] });
   }
   const questionnaireResult = await supabase
     .from("questionnaire_responses")
@@ -351,6 +400,40 @@ export async function POST(request: Request) {
       },
       { status: 400 },
     );
+  const attachmentComponents = (siteComponentsResult.data ?? []).filter((component) => component.project_id === parsed.data.projectId);
+  const attachmentArrays = (siteArraysResult.data ?? []).filter((array) => array.project_id === parsed.data.projectId);
+  const pendingTarget = routeDecision.pendingAction?.payload?.attachmentTarget;
+  const storedTarget = pendingTarget && typeof pendingTarget === "object"
+    && "kind" in pendingTarget && "id" in pendingTarget && "projectId" in pendingTarget && "name" in pendingTarget
+    && ((pendingTarget as Record<string, unknown>).kind === "component" || (pendingTarget as Record<string, unknown>).kind === "pv_array")
+    ? pendingTarget as RecordAttachmentTarget
+    : undefined;
+  const attachmentRequest = Boolean(imagePath && requestsExistingRecordAttachment(parsed.data.message))
+    || Boolean(!imagePath && routeDecision.pendingAction?.kind === "attach_record" && routeDecision.mode === "execute");
+  if (attachmentRequest) {
+    const targetResult = storedTarget ? { target: storedTarget } : resolveRecordAttachmentTarget(parsed.data.message, attachmentComponents, attachmentArrays);
+    const attachmentImagePath = imagePath ?? routeDecision.pendingAction?.payload?.imagePath;
+    let attachmentMessage: string;
+    if (!targetResult.target) {
+      const choices = (targetResult.candidates ?? []).map((candidate) => candidate.name).join(", ");
+      attachmentMessage = choices
+        ? `I haven’t attached the image because more than one record matches. Which one do you mean: ${choices}?`
+        : "I haven’t attached the image because I can’t identify one exact existing record. Which component or PV array should it belong to?";
+    } else if (typeof attachmentImagePath !== "string") {
+      attachmentMessage = "I haven’t attached anything because this conversation does not have an image available for that action.";
+    } else {
+      const attached = await attachImageToRecord(supabase, targetResult.target, attachmentImagePath);
+      attachmentMessage = `${attached.summary}.`;
+      conversationState.pendingAction = undefined;
+      conversationState.completedActions.push({ kind: "attach_record", revision: conversationState.revision, description: attached.summary, siteId: owned.data.site_id, systemId: targetResult.target.projectId, result: { imagePath: attachmentImagePath, attachmentTarget: targetResult.target } });
+    }
+    conversationState = recordWattsonAssistantTurn(conversationState, attachmentMessage);
+    const attachmentStateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
+    if (attachmentStateSaved.error) return Response.json({ error: attachmentStateSaved.error.message, conversationId }, { status: 400 });
+    const attachmentReplySaved = await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: attachmentMessage, structured_context: { evidenceRevision: conversationState.revision, imagePath: attachmentImagePath, attachmentTarget: targetResult.target }, response_to_request_id: parsed.data.requestId });
+    if (attachmentReplySaved.error) return Response.json({ error: attachmentReplySaved.error.message, conversationId }, { status: 400 });
+    return Response.json({ conversationId, message: attachmentMessage, actions: targetResult.target ? [{ type: "record_attachment", summary: attachmentMessage }] : [], imagePath: attachmentImagePath, imageUrl });
+  }
   const connectedSiteSystems = (siteSystemsResult.data ?? []).map((system) => ({
     ...system,
     selected: system.id === parsed.data.projectId,
@@ -364,18 +447,10 @@ export async function POST(request: Request) {
       (connection) => connection.project_id === system.id,
     ),
   }));
-  const activeConversation = buildActiveConversationState({
-    messages: priorHistory,
-    currentMessage: parsed.data.message,
-    knownSites: [siteResult.data],
-    knownSystems: connectedSiteSystems.map((system) => ({ id: system.id, name: system.name, siteId: siteResult.data.id, siteName: siteResult.data.name })),
-    ambientSite: siteResult.data,
-    currentImageCapture: inventoryCapture,
-  });
-  const activeSubjectIsUnassociated = activeConversation.currentSubject?.association === "unassociated";
+  const activeSubjectIsUnassociated = conversationState.activeSubject?.association === "unassociated";
   const groundedProject = activeSubjectIsUnassociated
     ? {
-        ...parsed.data.project,
+        ...canonicalProject,
         name: "Saved project context withheld — active setup is not associated",
         description: "",
         goal: "",
@@ -390,7 +465,7 @@ export async function POST(request: Request) {
         installationSteps: [],
         commissioning: [],
       }
-    : parsed.data.project;
+    : canonicalProject;
   const groundedSiteEquipment = activeSubjectIsUnassociated ? [] : equipmentResult.data ?? [];
   const groundedSiteSystems = connectedSiteSystems.map((system) => activeSubjectIsUnassociated
     ? {
@@ -404,18 +479,18 @@ export async function POST(request: Request) {
       }
     : {
         ...system,
-        conversationRelationship: activeConversation.currentSubject?.associatedSystemId === system.id || system.selected
+        conversationRelationship: conversationState.activeSubject?.systemId === system.id || system.selected
           ? "explicitly-associated-with-active-subject"
           : "retrieved-record-not-associated-with-active-subject",
       });
   const selectedSystem = connectedSiteSystems.find((system) => system.id === parsed.data.projectId);
-  const monitoringOnlyIntent = completedSystemIntent(parsed.data.message);
+  const monitoringOnlyIntent = routeDecision.mutationConsent && completedSystemIntent(parsed.data.message);
   let phaseMovedToMonitor = false;
   if (monitoringOnlyIntent && selectedSystem?.phase !== "monitor") {
     const phaseUpdated = await supabase.from("projects").update({ phase: "monitor" }).eq("id", parsed.data.projectId).eq("owner_id", userId);
     if (phaseUpdated.error) return Response.json({ error: phaseUpdated.error.message }, { status: 400 });
     if (selectedSystem) selectedSystem.phase = "monitor";
-    parsed.data.project.phase = "monitor";
+    canonicalProject.phase = "monitor";
     phaseMovedToMonitor = true;
   }
 
@@ -435,8 +510,7 @@ export async function POST(request: Request) {
         project: groundedProject,
         recentConversation: priorHistory,
         questionnaireContext: {
-          activeConversation,
-          retrievalPolicy: conversationRetrievalPolicy(activeConversation),
+          conversationState: conversationStatePromptContext(conversationState),
           applicationCapabilities: wattsonApplicationCapabilities(),
           dailyMonitorLog: activeSubjectIsUnassociated ? undefined : await loadDailyLogContext(supabase, userId, { systemId: parsed.data.projectId, siteId: owned.data.site_id }),
           onboardingLocation: profileResult.data.home_location,
@@ -449,6 +523,7 @@ export async function POST(request: Request) {
         },
         monitoringContext: activeSubjectIsUnassociated ? undefined : monitoringContext,
         image,
+        allowActions: routeDecision.mutationConsent && !inventoryCapture?.saved,
       });
       const systemSettings = selectedSystem?.settings;
       const monitoringOnlySystem = monitoringOnlyIntent || selectedSystem?.phase === "monitor";
@@ -457,10 +532,12 @@ export async function POST(request: Request) {
       const blockedArchitecture = result.actions.some((action) => action.name === "record_design_preference") && nextDiscovery;
       const uncertainDiscovery = userExpressesUncertainty(parsed.data.message) && Boolean(currentDiscovery);
       const recordChangeRequested = structuredRecordChangeIntent(parsed.data.message);
+      const routedActions = pendingActionRequests(routeDecision);
+      const candidateActions = routeDecision.pendingAction ? routedActions : result.actions;
       const toolActions = await applyWattsonActions(
         supabase,
         parsed.data.projectId,
-        result.actions.filter((action) =>
+        actionsAllowedByDecision(candidateActions, routeDecision).filter((action) =>
           !activeSubjectIsUnassociated
           && !(monitoringOnlySystem && ["record_design_discovery", "record_design_preference", "record_preliminary_design", "record_proposed_component"].includes(action.name))
           &&
@@ -493,7 +570,7 @@ export async function POST(request: Request) {
       if (uncertainDiscovery)
         message = `No problem—I haven’t saved that as an answer. ${currentDiscovery ? discoveryGuidance(currentDiscovery[0]) : "Tell me which part is unclear and I’ll explain it another way."}`;
       if (monitoringOnlyIntent)
-        message = `Understood - I’ve set ${selectedSystem?.name ?? parsed.data.project.name} to monitor mode. I won’t run design discovery or build prompts for this system; Wattson will treat it as a commissioned as-built installation for monitoring, diagnostics and record-keeping.`;
+        message = `Understood - I’ve set ${selectedSystem?.name ?? canonicalProject.name} to monitor mode. I won’t run design discovery or build prompts for this system; Wattson will treat it as a commissioned as-built installation for monitoring, diagnostics and record-keeping.`;
       if (updateSummary && message !== architectureReply && message !== discoveryReply)
         message = message
           ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`
@@ -511,12 +588,30 @@ export async function POST(request: Request) {
         message = result.actions.length
           ? "I couldn’t safely apply that change to a specific record. Tell me which item it belongs to."
           : "I didn’t produce a useful reply. Please send that once more.";
-      message = removeRepeatedAnsweredQuestions(message, activeConversation);
-      message = conceptualSchematicForActiveSetup(activeConversation) ?? message;
-      message = equipmentTargetClarification(activeConversation) ?? message;
+      message = removeAnsweredWattsonQuestions(message, conversationState);
       if (containsUnsupportedSettingsSetupAdvice(message)) {
         const withoutSettingsAdvice = message.replace(/[^.!?]*(?:go|head|navigate) to (?:the )?settings[^.!?]*[.!?]?|[^.!?]*open (?:the )?settings[^.!?]*[.!?]?/gi, "").trim();
         message = `${withoutSettingsAdvice}${withoutSettingsAdvice ? "\n\n" : ""}You do not need generic Settings for this. I can keep working from the confirmed details in this conversation; a specific PVIntell page should be named only when its actual controls are needed.`;
+      }
+      if (result.offeredAction && !inventoryCapture?.saved) {
+        const latestImage = [...conversationState.evidence].reverse().find((item) => item.source === "image")?.data;
+        const offeredAction = result.offeredAction.action;
+        const actionTargetsThisSystem = offeredAction?.arguments && typeof offeredAction.arguments === "object"
+          && (!("project_id" in offeredAction.arguments) || (offeredAction.arguments as Record<string, unknown>).project_id === parsed.data.projectId);
+        const offeredAttachmentTarget = result.offeredAction.kind === "attach_record"
+          ? resolveRecordAttachmentTarget(`${parsed.data.message} ${result.offeredAction.description}`, attachmentComponents, attachmentArrays).target
+          : undefined;
+        const actionableImage = result.offeredAction.kind === "attach_record" && typeof latestImage?.imagePath === "string" && Boolean(offeredAttachmentTarget);
+        if (actionTargetsThisSystem || actionableImage) {
+          conversationState.pendingAction = {
+            kind: result.offeredAction.kind,
+            status: "offered",
+            description: result.offeredAction.description,
+            siteId: owned.data.site_id,
+            systemId: parsed.data.projectId,
+            payload: { action: offeredAction, imagePath: latestImage?.imagePath, mimeType: latestImage?.mimeType, attachmentTarget: offeredAttachmentTarget },
+          };
+        }
       }
       citations = result.citations;
       structuredContext = {
@@ -529,13 +624,13 @@ export async function POST(request: Request) {
         actions: appliedActions,
         imagePath,
         inventoryCapture,
-        activeConversation,
+        evidenceRevision: conversationState.revision,
       };
     } catch (error) {
       const detail =
         error instanceof Error ? error.message : "Unknown Gemini error";
       return Response.json(
-        { error: `Wattson could not reach Gemini: ${detail}` },
+        { error: `Wattson could not reach Gemini: ${detail}`, conversationId, retryable: true },
         { status: 502 },
       );
     }
@@ -543,10 +638,15 @@ export async function POST(request: Request) {
     message = await new MockAIProvider().sendMessage(parsed.data.message, {
       project: groundedProject,
     });
-    structuredContext = { provider: "mock", projectId: parsed.data.projectId, activeConversation };
+    structuredContext = { provider: "mock", projectId: parsed.data.projectId, evidenceRevision: conversationState.revision };
   }
   if (inventoryCapture?.saved)
     message = `${message}\n\nI added ${inventoryCapture.equipmentName ?? "this equipment"} to this Site’s inventory from the label photo. I saved only visible label details and marked its physical condition as needing testing; you can review or correct the inventory record at any time.`;
+
+  if (routeDecision.mode === "execute" && routeDecision.pendingAction?.status === "confirmed") conversationState = consumeConfirmedPendingAction(conversationState);
+  conversationState = recordWattsonAssistantTurn(conversationState, message);
+  const stateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
+  if (stateSaved.error) return Response.json({ error: stateSaved.error.message }, { status: 400 });
 
   const assistantInsert = await supabase
     .from("chat_messages")
@@ -555,6 +655,7 @@ export async function POST(request: Request) {
       role: "assistant",
       content: message,
       structured_context: structuredContext,
+      response_to_request_id: parsed.data.requestId,
     });
   if (assistantInsert.error)
     return Response.json(

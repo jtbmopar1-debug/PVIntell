@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { BrandLogo } from "@/components/brand-logo";
 import { GalleryManager } from "@/components/gallery-manager";
 import { createClient } from "@/lib/supabase/server";
+import { isFutureJwtError } from "@/lib/supabase/auth-errors";
 
 export default async function GalleryPage() {
   const supabase = await createClient();
@@ -11,6 +12,7 @@ export default async function GalleryPage() {
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") redirect("/login");
   const rows = await supabase.from("user_gallery_images").select("id,storage_path,file_name,source,created_at").eq("owner_id", userId).order("created_at", { ascending: false });
+  if (isFutureJwtError(rows.error)) redirect("/auth/session-recovery?next=/settings/gallery");
   if (rows.error) throw rows.error;
   const images = (await Promise.all((rows.data ?? []).map(async (item) => {
     const signed = await supabase.storage.from("project-photos").createSignedUrl(item.storage_path, 3600);

@@ -130,6 +130,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
     try {
       const bodyData = new FormData();
       bodyData.set("message", message);
+      bodyData.set("requestId", crypto.randomUUID());
       if (attachment) bodyData.set("file", attachment);
       if (siteId) bodyData.set("siteId", siteId);
       if (activeConversationId) bodyData.set("conversationId", activeConversationId);
@@ -148,8 +149,8 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
       }));
       const response = await fetch("/api/wattson/dashboard", { method: "POST", body: bodyData });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
       if (typeof body.conversationId === "string") setActiveConversationId(body.conversationId);
+      if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
       setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: body.message, citations: body.citations, actionUrl: body.actionUrl, actionLabel: body.actionLabel, createdAt: new Date().toISOString() }]);
       setAttachment(undefined);
       if (body.actions?.length) router.refresh();

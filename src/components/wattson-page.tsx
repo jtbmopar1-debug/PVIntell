@@ -27,10 +27,11 @@ export function WattsonPage({ sites, initialSiteId, initialConversationId, initi
     const message = input.trim() || (attachment ? "Please use this image as evidence." : ""); if (!message || sending) return;
     setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", content: message, createdAt: new Date().toISOString() }]); setInput(""); setSending(true);
     try {
-      const data = new FormData(); data.set("message", message); if (siteId) data.set("siteId", siteId); if (conversationId) data.set("conversationId", conversationId); if (attachment) data.set("file", attachment);
+      const data = new FormData(); data.set("message", message); data.set("requestId", crypto.randomUUID()); if (siteId) data.set("siteId", siteId); if (conversationId) data.set("conversationId", conversationId); if (attachment) data.set("file", attachment);
       if (weather.data) data.set("weatherContext", JSON.stringify({ site: weather.data.site, fetchedAt: weather.data.fetchedAt, allForecastHours: weather.data.hours }));
-      const response = await fetch("/api/wattson/dashboard", { method: "POST", body: data }); const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
+      const response = await fetch("/api/wattson/dashboard", { method: "POST", body: data }); const body = await response.json();
       if (body.conversationId) setConversationId(body.conversationId);
+      if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
       setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: body.message, citations: body.citations, actionUrl: body.actionUrl, actionLabel: body.actionLabel, createdAt: new Date().toISOString() }]); setAttachment(undefined);
     } catch (error) { setMessages((current) => [...current, { id: crypto.randomUUID(), role: "assistant", content: error instanceof Error ? error.message : "Wattson is unavailable.", createdAt: new Date().toISOString() }]); }
     finally { setSending(false); }
