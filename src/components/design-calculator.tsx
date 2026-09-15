@@ -1,19 +1,20 @@
 "use client";
 
-import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Eye, EyeOff, Link2, Minus, Plus, RotateCcw, Save, Smartphone, Sun, X } from "lucide-react";
+import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Eye, EyeOff, Link2, Minus, Plus, RotateCcw, Save, Smartphone, Sun, X, Zap } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
+import { SchematicWattsonChat } from "@/components/schematic-wattson-chat";
 import { defaultProposalPanel, defaultProposalPanelStringLayout, proposalPanelProfile } from "@/design/candidate-panel";
 import { deriveProposalSizing, normalizedDailyEnergy, solarFirstPowerAlternative } from "@/design/proposal-sizing";
 import { recommendedPanelOrientation } from "@/design/panel-orientation";
 import { generatorFromDiscovery, proposalIncludesSolar } from "@/design/proposal-inputs";
 import { assessPanelSurfaces } from "@/design/panel-surfaces";
 import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
-import { buildPvArrayPlan } from "@/design/pv-array-plan";
+import { balancedPanelAllocation, buildPvArrayPlan, resizeUserPvArrayPlan, splitPvArrayPlan } from "@/design/pv-array-plan";
 import { suggestPvDcStringCable } from "@/design/pv-dc-cable-sizing";
 import type { DesignCalculatorState, Project, Site } from "@/domain/models";
 import { EARTH_ELECTRODE_IMAGE, GRID_CONNECTION_IMAGE } from "@/ui/assets";
@@ -31,6 +32,12 @@ const round = (value: number, places = 1) => Number.isFinite(value) ? value.toFi
 const supplementaryArray = (design: DesignCalculatorState) => {
   const group = design.existingPanelGroup;
   if (!group?.supplementaryTargetPvKw) return undefined;
+  const explicitUniformSplit = Boolean(
+    design.proposedAsBuiltDraft?.nodes?.some((node) => node.id === "pv-combiner")
+    && n(design.pvStrings) > 1
+    && n(design.pvStrings) * n(design.panelsPerString) === n(design.panelCount),
+  );
+  if (explicitUniformSplit) return undefined;
   return {
     targetPvKw: n(group.supplementaryTargetPvKw),
     count: n(group.supplementaryCount),
@@ -482,7 +489,18 @@ export function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculato
       detail: `${design.inverterPlan.unitRatingsKw.reduce((total, rating) => total + rating, 0)} kW installed AC capacity selected for the ${design.inverterKw} kW calculated requirement across ${design.inverterPlan.unitRatingsKw.length} inverter units; ${design.inverterPlan.preferredPhase === "three" ? "three-phase connection preferred" : "connect to the confirmed site phase"}; confirm local connection and equipment rules`,
     };
     const baseDetail = node.detail.replace(/^(?:\s*\d+(?:\.\d+)?\s*kW continuous rating proposed(?:\s*;\s*|\s*$))+/i, "");
-    return { ...node, detail: `${design.inverterKw} kW continuous rating proposed${node.id === "pv-inverter" && baseDetail ? `; ${baseDetail}` : ""}` };
+    const stringVmp = n(design.panelVmpV) * n(design.panelsPerString);
+    const stringVoc = n(design.panelVocV) * n(design.panelsPerString);
+    const coldVoc = stringVoc && Number.isFinite(Number(design.panelVocTemperatureCoefficientPercentPerC))
+      ? stringVoc * (1 + Math.abs(Number(design.panelVocTemperatureCoefficientPercentPerC)) / 100 * 35)
+      : undefined;
+    const parallelStrings = Math.max(1, n(design.pvStrings, 1));
+    const combinedImp = n(design.panelImpA) * parallelStrings;
+    const combinedIsc = n(design.panelIscA) * parallelStrings;
+    const pvInput = stringVmp || stringVoc || combinedImp || combinedIsc
+      ? `; PV input requires ${stringVmp ? `${round(stringVmp, 1)} Vmp` : "Vmp TBC"}, ${coldVoc ? `${round(coldVoc, 1)} V cold-corrected Voc` : stringVoc ? `${round(stringVoc, 1)} V nameplate Voc plus temperature allowance` : "Voc TBC"}, ${combinedImp ? `${round(combinedImp, 1)} A operating` : "operating current TBC"} and ${combinedIsc ? `${round(combinedIsc, 1)} A input Isc` : "input Isc TBC"}`
+      : "";
+    return { ...node, detail: `${design.inverterKw} kW continuous rating proposed${pvInput}${node.id === "pv-inverter" && baseDetail ? `; ${baseDetail}` : ""}` };
   }
   if (node.id === "battery") {
     const nominalKwh = n(design.batteryVoltage) * n(design.batteryAh) * n(design.batteryQuantity, 1) / 1000;
@@ -535,22 +553,31 @@ function generatorInterfaceSpecification(design: DesignCalculatorState, gridConn
   };
 }
 
-function componentPlanningDetail(node: NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number], draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>, design: DesignCalculatorState, ready: boolean) {
+export function componentPlanningDetail(node: NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number], draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>, design: DesignCalculatorState, ready: boolean) {
   const basic = planningNodeDetail(node, design);
-  if (!ready) return basic;
   const touching = (draft.connections ?? []).filter((connection) => connection.from === node.id || connection.to === node.id);
   const dc = touching.find((connection) => connection.kind === "solar-dc");
   const ac = touching.find((connection) => connection.kind === "ac" && !connection.authorityCheck);
   if (node.id.includes("solar-safety")) {
-    if (design.pvArrayPlan?.status !== "resolved") return {
+    const panelsInSeries = n(design.panelsPerString);
+    const stringVoc = n(design.panelVocV) * panelsInSeries;
+    const ratedVoltage = stringVoc ? stringVoc <= 300 ? 300 : stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500 : undefined;
+    const designCurrent = Math.max(n(design.panelIscA) * 1.25, n(dc?.protectionAmps));
+    const ratedCurrent = [16, 20, 25, 32, 40, 50, 63].find((amps) => amps >= designCurrent);
+    return {
       ...basic,
-      detail: "Voltage, current, poles, isolation and any combiner requirement remain unselected until the array series/parallel hierarchy and inverter MPPT limits are resolved.",
+      detail: `${ratedVoltage ? `${ratedVoltage} V DC` : "voltage rating to verify"} · ${ratedCurrent ? `${ratedCurrent} A minimum` : "current rating to verify"} · PV-rated DC load-break isolator; confirm cold-corrected Voc, poles, enclosure, mounting location and the selected equipment instructions`,
     };
-    const stringVoc = n(design.panelVocV) * n(design.panelsPerString, 1);
-    const ratedVoltage = stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500;
-    const ratedCurrent = [16, 20, 25, 32, 40, 50, 63].find((amps) => amps >= Math.max(32, n(dc?.protectionAmps))) ?? Math.ceil(n(dc?.protectionAmps));
-    return { ...basic, detail: `${ratedVoltage} V DC · ${ratedCurrent} A minimum · DC-PV2 load-break isolator; confirm cold-corrected Voc, poles, enclosure and location` };
   }
+  if (node.id === "pv-combiner") {
+    const strings = Math.max(1, n(design.pvStrings, 1));
+    const stringVoc = n(design.panelVocV) * n(design.panelsPerString);
+    const voltageRating = stringVoc ? stringVoc <= 300 ? 300 : stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500 : undefined;
+    const outputDesignCurrent = n(design.panelIscA) * strings * 1.25;
+    const outputRating = [20, 25, 32, 40, 50, 63, 80, 100].find((amps) => amps >= outputDesignCurrent);
+    return { ...basic, detail: `${strings} string inputs · ${voltageRating ? `${voltageRating} V DC minimum` : "voltage rating to verify"} · ${outputRating ? `${outputRating} A minimum combined output` : "output-current rating to verify"}; terminals, string protection and enclosure to suit the final design and local rules` };
+  }
+  if (!ready) return basic;
   if (node.id === "ac-safety") return { ...basic, detail: `${design.connectionType === "ac_three" ? 400 : 230} V AC · ${ac?.protectionAmps ?? "rating to verify"} A protection; confirm poles, curve, fault rating and RCD requirements` };
   return basic;
 }
@@ -639,10 +666,24 @@ export function schematicCardDetail(node: ProposedNode, draft: ProposedDraft, de
     const count = plannedArrayForNode(node.id, design)?.allocatedPanelCount
       ?? (supplementary && node.id === "solar-pv-1" ? design.existingPanelGroup?.proposedUseCount : undefined)
       ?? (supplementary && node.id === "solar-pv-2" ? supplementary.count : undefined)
+      ?? (node.id.startsWith("solar-pv-") ? design.panelsPerString : undefined)
       ?? (node.id === "solar" ? design.panelCount : undefined);
-    return count ? `${count} panels` : "TBC";
+    const panelWatts = supplementary && node.id === "solar-pv-1"
+      ? design.existingPanelGroup?.wattsEach ?? design.panelWatts
+      : supplementary && node.id === "solar-pv-2"
+        ? supplementary.watts
+        : design.panelWatts;
+    return count ? panelWatts ? `${count} × ${panelWatts} W` : `${count} panels` : "TBC";
   }
   if (node.id === "battery") return `${design.batteryVoltage ?? "TBC"} V · ${design.batteryAh ?? "TBC"} Ah`;
+  if (node.id.includes("solar-safety")) {
+    const rating = node.detail.match(/(\d+(?:\.\d+)?)\s*V\s*DC\s*·\s*(\d+(?:\.\d+)?)\s*A\s*minimum/i);
+    return rating ? `${rating[1]} V · ${rating[2]} A · DC` : "TBC · DC";
+  }
+  if (node.id === "pv-combiner") {
+    const rating = node.detail.match(/(\d+(?:\.\d+)?)\s*V\s*DC\s*minimum\s*·\s*(\d+(?:\.\d+)?)\s*A\s*minimum/i);
+    return rating ? `${rating[1]} V · ${rating[2]} A · DC` : "TBC · DC";
+  }
   if (isPhysicalInverterNode(node.id)) {
     const recordedRating = node.id === "battery-inverter" ? Number(`${node.label} ${node.detail}`.match(/\b(\d+(?:\.\d+)?)\s*kW\b/i)?.[1]) || undefined : undefined;
     const rating = recordedRating ?? (node.id === "battery-inverter" ? undefined : inverterRatingForNode(node.id, design));
@@ -1049,6 +1090,7 @@ export function recoverRecordedStringLayout(design: DesignCalculatorState, panel
 
 function pendingPvArrayPlan(project: Project, design: DesignCalculatorState, panelCount: number | undefined) {
   if (!proposalIncludesSolar(project.designDiscovery ?? {})) return undefined;
+  if (design.pvArrayPlan?.configurationSource === "user" && panelCount) return resizeUserPvArrayPlan(design.pvArrayPlan, panelCount);
   const surfaces = assessPanelSurfaces(project.designDiscovery ?? {}, { ...design, panelCount }, project.solarResource?.latitude);
   return buildPvArrayPlan({ panelCount, surfaces: surfaces.faces, existingPanelGroup: design.existingPanelGroup });
 }
@@ -1130,7 +1172,7 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       panelWeightBasis: saved.panelWeightBasis,
       pvStrings: rejectWattsonPanelSizing ? undefined : saved.pvStrings ?? recoveredStringLayout?.strings,
       panelsPerString: rejectWattsonPanelSizing ? undefined : saved.panelsPerString ?? recoveredStringLayout?.panelsPerString,
-      stringDesign: rejectWattsonPanelSizing ? undefined : saved.stringDesign ?? recoveredStringLayout,
+      stringDesign: rejectWattsonPanelSizing ? undefined : (saved.stringDesign && typeof saved.stringDesign === "object" ? saved.stringDesign : undefined) ?? recoveredStringLayout,
       panelVmpV: saved.panelVmpV,
       panelVocV: saved.panelVocV,
       panelImpA: saved.panelImpA,
@@ -1401,8 +1443,9 @@ function ProposedPlan({ project, design, onToggle }: { project: Project; design:
   return <section className="card overflow-hidden"><div className="border-b border-line bg-[#fff1ee] p-5"><div className="eyebrow text-[#b9412b]">Proposed system outline</div><h2 className="mt-2 text-xl font-extrabold">What Wattson is planning</h2><p className="mt-2 max-w-3xl text-xs leading-5 text-muted">These are not installed components. A green tick means you have reviewed the planning requirements for that item — not that it has been purchased, wired or approved.</p></div><div className="grid gap-4 p-5 md:grid-cols-2">{items.map((item) => { const complete = design.proposedChecklist?.[item.id] ?? false; return <article key={item.id} className={`rounded-2xl border p-4 ${complete ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-[#ecaaa0] bg-[#fff7f5]"}`}><div className="flex items-start justify-between gap-3"><div><div className={`text-[10px] font-bold uppercase tracking-[.12em] ${complete ? "text-[#17603b]" : "text-[#b9412b]"}`}>{complete ? "Planning reviewed" : "Needs planning"}</div><h3 className="mt-2 text-sm font-extrabold">{item.title}</h3></div><button type="button" onClick={() => onToggle(item.id)} className={`grid size-9 shrink-0 place-items-center rounded-xl border ${complete ? "border-[#74bd8d] bg-white text-[#17603b]" : "border-[#e79b91] bg-white text-[#b9412b]"}`} title={complete ? "Mark planning as needing review" : "Mark planning requirements reviewed"}>{complete ? <CheckCircle2 size={18}/> : <Circle size={18}/>}</button></div><p className="mt-3 text-[11px] leading-5 text-muted">{item.detail}</p><details className="mt-3 rounded-xl bg-white/70 p-3 text-[11px] leading-5 text-muted"><summary className="cursor-pointer font-bold text-brand">What do I need to check?</summary><p className="mt-2">{item.help}</p></details><Link href={`${base}?view=wattson`} className="mt-4 inline-flex text-[11px] font-bold text-brand">Ask Wattson about this component →</Link></article>; })}</div><div className="flex flex-col justify-between gap-3 border-t border-line bg-[#f7fafc] p-5 sm:flex-row sm:items-center"><p className="text-xs leading-5 text-muted">{planningComplete ? "Outline accepted. Next, review how these parts connect in the proposed build schematic." : "Review all four proposed components to unlock the proposed build schematic."}</p>{planningComplete ? <Link href={`${base}/design/schematic`} className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-brand px-5 text-xs font-bold text-white">Continue to proposed schematic →</Link> : <span className="inline-flex h-11 shrink-0 items-center justify-center rounded-xl bg-[#dce7f1] px-5 text-xs font-bold text-[#6d7f91]">Continue to proposed schematic</span>}</div></section>;
 }
 
-export function ProposedBuildSchematic({ project, site, showIntro = false }: { project: Project; site: Site; showIntro?: boolean }) {
+export function ProposedBuildSchematic({ project, site, showIntro = false, initialConversationId, initialMessages = [] }: { project: Project; site: Site; showIntro?: boolean; initialConversationId?: string; initialMessages?: import("@/domain/models").ChatMessage[] }) {
   const router = useRouter();
+  const [wattsonOpen, setWattsonOpen] = useState(false);
   const includeBattery = proposalIncludesBattery(project);
   const [design, setDesign] = useState<DesignCalculatorState>(() => {
     const stored = { ...project.designCalculator, ...recommendedPanelOrientation(project.designCalculator ?? {}, site.latitude) };
@@ -1518,24 +1561,16 @@ export function ProposedBuildSchematic({ project, site, showIntro = false }: { p
   };
   return <div className="proposed-schematic-page animate-rise space-y-5">
     {introOpen && introPortalTarget ? createPortal(<div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-[#0b2742]/55 p-4 pt-[max(1rem,env(safe-area-inset-top))] sm:items-center sm:py-8" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissIntro(); }}><section role="dialog" aria-modal="true" aria-labelledby="proposal-intro-title" className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-3xl border border-[#bad0e4] bg-white p-6 shadow-2xl md:p-8"><div className="flex items-start justify-between gap-4"><div><div className="eyebrow">Your proposal is ready</div><h2 id="proposal-intro-title" className="mt-2 font-display text-2xl font-extrabold tracking-[-.04em]">Here is how your proposed system works</h2></div><button type="button" onClick={dismissIntro} className="grid size-10 shrink-0 place-items-center rounded-xl border border-line text-muted" aria-label="Dismiss proposal introduction"><X size={18}/></button></div><div className="mt-5 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design} site={site}/></div></div><button type="button" onClick={dismissIntro} className="mt-5 h-12 w-full rounded-xl bg-brand px-5 text-sm font-extrabold text-white">Explore and adjust my schematic</button></section></div>, introPortalTarget) : null}
-    <div className="schematic-page-intro"><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p><div className="mt-4 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design} site={site}/></div></div></div><section className="proposed-schematic-shell card overflow-hidden"><ProposedSchematic project={project} projectName={project.name} gridConnected={proposalUsesPublicGrid(project)} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}</div>;
+    <div className="schematic-page-intro"><div><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p></div><div className="mt-4 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design} site={site}/></div></div></div><section className="proposed-schematic-shell card overflow-hidden"><ProposedSchematic project={project} projectName={project.name} gridConnected={proposalUsesPublicGrid(project)} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`} onOpenWattson={() => setWattsonOpen(true)}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}<SchematicWattsonChat project={project} initialConversationId={initialConversationId} initialMessages={initialMessages} open={wattsonOpen} onClose={() => setWattsonOpen(false)}/></div>;
 }
 
-function ProposedSchematic({ project, projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref }: { project: Project; projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string }) {
+function ProposedSchematic({ project, projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref, onOpenWattson }: { project: Project; projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string; onOpenWattson: () => void }) {
   const rawDraft = ensureGeneratorSupply(ensureGridSupply(proposalDraftForCurrentDesign(design, gridConnected), gridConnected), design, gridConnected);
   const upgradedDraft = upgradePvStringIsolationDraft(rawDraft, design);
   const repairedDraft = repairCustomEquipmentDraft(upgradedDraft);
   const routedDraft = ensureSupplementaryMicroinverterRouting(repairedDraft, design);
   const earthedDraft = ensureInverterProtectiveEarth(ensurePvArrayEarth(routedDraft));
   const sourceDraft = batteryAdjustedDraft(earthedDraft, includeBattery);
-  const upgradeSignature = JSON.stringify(earthedDraft);
-  const savedDraftSignature = JSON.stringify(design.proposedAsBuiltDraft);
-  const lastSavedUpgrade = useRef("");
-  useEffect(() => {
-    if (upgradeSignature === savedDraftSignature || upgradeSignature === lastSavedUpgrade.current) return;
-    lastSavedUpgrade.current = upgradeSignature;
-    onDraftChange(earthedDraft);
-  }, [earthedDraft, onDraftChange, savedDraftSignature, upgradeSignature]);
   const calculatedConnections = sourceDraft.connections?.map((connection) => preliminaryConnectionValues(connection, design));
   const routesReady = (calculatedConnections ?? []).filter((connection) => !connection.authorityCheck).every((connection) => connection.configured === true);
   const draftWithConnections = { ...sourceDraft, connections: calculatedConnections };
@@ -1559,7 +1594,7 @@ function ProposedSchematic({ project, projectName, gridConnected, includeBattery
       </div>
     </div>
 
-    <DraftProposedSchematicCanvas draft={draft} design={design} project={project} gridConnected={gridConnected} systemName={projectName} onChange={onDraftChange} onRedesign={onRedesign} wattsonHref={wattsonHref}/>
+    <DraftProposedSchematicCanvas draft={draft} design={design} project={project} gridConnected={gridConnected} systemName={projectName} onChange={onDraftChange} onRedesign={onRedesign} wattsonHref={wattsonHref} onOpenWattson={onOpenWattson}/>
 
     <div className="mt-5 rounded-2xl border border-line bg-white p-4">
       <div className="eyebrow">Before Build It</div>
@@ -1577,7 +1612,7 @@ function ProposedSchematic({ project, projectName, gridConnected, includeBattery
   </section>;
 }
 
-function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, systemName, onChange, onRedesign, wattsonHref }: { draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>; design: DesignCalculatorState; project: Project; gridConnected: boolean; systemName: string; onChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string }) {
+function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, systemName, onChange, onRedesign, wattsonHref, onOpenWattson }: { draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>; design: DesignCalculatorState; project: Project; gridConnected: boolean; systemName: string; onChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string; onOpenWattson: () => void }) {
   const [zoom, setZoom] = useState(1);
   const [showConnectionLabels, setShowConnectionLabels] = useState(true);
   const [connectionView, setConnectionView] = useState<SchematicConnectionView>("all");
@@ -1596,6 +1631,9 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const [componentModalTarget, setComponentModalTarget] = useState<HTMLElement | null>(null);
   const [quickPanelCount, setQuickPanelCount] = useState("");
   const [quickEditMessage, setQuickEditMessage] = useState("");
+  const [configurationOpen, setConfigurationOpen] = useState(false);
+  const [configurationParts, setConfigurationParts] = useState("2");
+  const [configurationMessage, setConfigurationMessage] = useState("");
   const [addingItem, setAddingItem] = useState(false);
   const [assetSearch, setAssetSearch] = useState("");
   const [assetGroup, setAssetGroup] = useState<ProposedAssetGroup>("all");
@@ -1603,11 +1641,54 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const [connectionMode, setConnectionMode] = useState(false);
   const [connectingFromId, setConnectingFromId] = useState<string>();
   const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const initialCanvasFitDone = useRef(false);
+  const [canvasFrameWidth, setCanvasFrameWidth] = useState(1120);
+  const [viewPreferencesReady, setViewPreferencesReady] = useState(false);
+  const viewPreferencesKey = `pvintell:proposed-schematic-view:${project.id}`;
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const raw = window.localStorage.getItem(viewPreferencesKey);
+        if (raw) {
+          const saved = JSON.parse(raw) as {
+            zoom?: unknown;
+            connectionView?: unknown;
+            showConnectionLabels?: unknown;
+          };
+          if (typeof saved.zoom === "number" && saved.zoom >= .25 && saved.zoom <= 1.3) {
+            setZoom(saved.zoom);
+            initialCanvasFitDone.current = true;
+          }
+          if (["all", "ac", "dc", "earth"].includes(String(saved.connectionView)))
+            setConnectionView(saved.connectionView as SchematicConnectionView);
+          if (typeof saved.showConnectionLabels === "boolean")
+            setShowConnectionLabels(saved.showConnectionLabels);
+        }
+      } catch {
+        window.localStorage.removeItem(viewPreferencesKey);
+      } finally {
+        setViewPreferencesReady(true);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [viewPreferencesKey]);
+  useEffect(() => {
+    if (!viewPreferencesReady) return;
+    window.localStorage.setItem(viewPreferencesKey, JSON.stringify({
+      zoom,
+      connectionView,
+      showConnectionLabels,
+    }));
+  }, [connectionView, showConnectionLabels, viewPreferencesKey, viewPreferencesReady, zoom]);
   useEffect(() => {
     const viewport = canvasViewportRef.current;
     if (!viewport) return;
     const fit = () => {
-      if (window.innerWidth < 1100) setZoom(Math.max(.25, Math.min(1, viewport.clientWidth / 1120)));
+      setCanvasFrameWidth((current) => current === viewport.clientWidth ? current : viewport.clientWidth);
+      if (!initialCanvasFitDone.current && window.innerWidth < 1100) {
+        setZoom(Math.max(.25, Math.min(1, viewport.clientWidth / 1120)));
+        initialCanvasFitDone.current = true;
+      }
     };
     const frame = window.requestAnimationFrame(fit);
     const observer = new ResizeObserver(fit);
@@ -1626,11 +1707,19 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const visibleConnections = schematicConnectionsForView(connections, connectionView);
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const canvasSize = schematicCanvasSize(nodes, nodeWidth, 128);
+  const canvasRenderWidth = Math.max(canvasSize.width, canvasFrameWidth / Math.max(zoom, .25));
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
   const selectedConnection = connections.find((connection) => `${connection.from}:${connection.to}` === selectedConnectionKey);
   const selectedNodeIsSolar = selectedNode?.id === "solar" || selectedNode?.id.startsWith("solar-pv-");
+  const selectedStringNumber = selectedNode?.id.startsWith("solar-pv-") ? Number(selectedNode.id.split("-").at(-1)) : undefined;
+  const selectedCardPanelCount = selectedStringNumber ? n(design.panelsPerString) : n(design.panelCount);
   const selectedSupplementaryArray = selectedNode?.id === "solar-pv-2" ? supplementaryArray(design) : undefined;
   const selectedPlannedArray = selectedNode ? plannedArrayForNode(selectedNode.id, design) : undefined;
+  const selectedArrayPanelCount = Math.round(n(selectedPlannedArray?.allocatedPanelCount));
+  const requestedArrayParts = Number(configurationParts);
+  const configurationPreview = Number.isInteger(requestedArrayParts) && requestedArrayParts >= 2 && requestedArrayParts <= selectedArrayPanelCount
+    ? balancedPanelAllocation(selectedArrayPanelCount, requestedArrayParts)
+    : [];
   const selectedNodeSpecs = selectedSupplementaryArray ? [
     ["Mounting", "Suitable mounting area to confirm"], ["Array", `At least ${round(selectedSupplementaryArray.targetPvKw, 2)} kW`], ["Connection", "Separate compatible string / MPPT input"], ["Planning azimuth", azimuthText(design.azimuthDegrees)], ["Planning tilt", design.tiltDegrees === undefined ? "not established" : `${round(design.tiltDegrees, 0)}°; actual surface to confirm`], ["Panel type / quantity", "Select a compatible option"], ["Electrical limits", "Confirm from selected module and inverter datasheets"],
   ] : selectedPlannedArray ? [
@@ -1640,20 +1729,31 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     ["Combiner", selectedPlannedArray.topology.combinerRequirement === "required" ? "Required" : selectedPlannedArray.topology.combinerRequirement === "not_required" ? "Not required" : "Pending selected inverter input limits"],
     ["Surface", [selectedPlannedArray.mounting, selectedPlannedArray.direction, selectedPlannedArray.pitch].filter(Boolean).join("; ") || "Recorded mounting-area details apply"],
   ] : selectedNodeIsSolar ? [
-    ["Mounting", mountingLocationText(design.mountingLocations)], ["Array", `${design.panelCount ?? "—"} × ${design.panelWatts ?? "—"} W`], ["Strings", pvLayoutLabel(design)], ["Azimuth", azimuthText(design.azimuthDegrees)], ["Tilt", design.tiltDegrees === undefined ? "not established" : `${round(design.tiltDegrees, 0)}°`], ["Panel Vmp / Voc", `${design.panelVmpV ?? "—"} / ${design.panelVocV ?? "—"} V`], ["Panel Imp / Isc", `${design.panelImpA ?? "—"} / ${design.panelIscA ?? "—"} A`],
+    ["Mounting", mountingLocationText(design.mountingLocations)],
+    ["Array", `${selectedCardPanelCount || "—"} × ${design.panelWatts ?? "—"} W`],
+    ["String", selectedStringNumber ? `PV${selectedStringNumber}: 1 string × ${selectedCardPanelCount || "—"} panels in series (${design.pvStrings ?? "—"} PV strings total)` : pvLayoutLabel(design)],
+    ["Azimuth", azimuthText(design.azimuthDegrees)], ["Tilt", design.tiltDegrees === undefined ? "not established" : `${round(design.tiltDegrees, 0)}°`], ["Panel Vmp / Voc", `${design.panelVmpV ?? "—"} / ${design.panelVocV ?? "—"} V`], ["Panel Imp / Isc", `${design.panelImpA ?? "—"} / ${design.panelIscA ?? "—"} A`],
   ] : selectedNode?.id === "battery" ? [
     ["Battery bank", `${design.batteryQuantity ?? "—"} × ${design.batteryVoltage ?? "—"} V`], ["Capacity", `${design.batteryAh ?? "—"} Ah each`], ["Planning usable", `${design.usableBatteryPercent ?? "—"}%`], ["Chemistry", design.batteryChemistry ?? "Not confirmed"],
   ] : selectedNode && isPhysicalInverterNode(selectedNode.id) ? [["Continuous rating", `${inverterRatingForNode(selectedNode.id, design) ?? "—"} kW`], ["Arrangement", design.architecture?.replaceAll("_", " ") ?? "Not confirmed"]] : selectedNode ? [["Current proposal", selectedNode.detail], ["Technical notes", selectedNode.notes || "No notes recorded"]] : [];
   useEffect(() => {
     setComponentModalTarget(null);
-    if (!selectedNode) return;
-    setQuickPanelCount(String(design.panelCount ?? ""));
+    if (!selectedNodeId) return;
+    setQuickPanelCount(String(
+      selectedPlannedArray?.allocatedPanelCount
+      ?? (selectedStringNumber ? design.panelsPerString : undefined)
+      ?? design.panelCount
+      ?? "",
+    ));
     setQuickEditMessage("");
+    setConfigurationOpen(false);
+    setConfigurationParts("2");
+    setConfigurationMessage("");
     const frame = window.requestAnimationFrame(() => {
       setComponentModalTarget(document.getElementById("schematic-component-record-modal"));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [design.panelCount, selectedNode]);
+  }, [design.panelCount, design.panelsPerString, selectedNodeId, selectedPlannedArray?.allocatedPanelCount, selectedStringNumber]);
   const overviewHref = `${wattsonHref.split("?")[0]}/design`;
   const pvNames = Array.from({ length: Math.max(1, n(design.pvStrings, 1)) }, (_, index) => `PV${index + 1}`);
   const connectionDisplayLabel = (connection: (typeof connections)[number]) => connection.authorityCheck && connection.from === "grid-supply" ? "Public grid AC supply to isolation" : connection.authorityCheck && connection.to === "switchboard" ? "Grid AC feed to power board" : !design.pvArrayPlan && connection.kind === "solar-dc" && connection.from === "solar" ? `${pvNames.join(" / ")} · ${n(design.panelsPerString, 1)} panels per string` : !design.pvArrayPlan && connection.kind === "solar-dc" && connection.from === "solar-safety" ? `${pvNames.join(" / ")} to inverter/MPPT inputs` : connection.label;
@@ -1743,13 +1843,15 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     setSelectedNodeId(undefined);
   };
   const saveQuickPanelQuantity = () => {
-    const panelCount = Number(quickPanelCount);
-    if (!Number.isInteger(panelCount) || panelCount < 1 || panelCount > 10000) {
+    const enteredPanelCount = Number(quickPanelCount);
+    if (!Number.isInteger(enteredPanelCount) || enteredPanelCount < 1 || enteredPanelCount > 10000) {
       setQuickEditMessage("Enter a whole number of panels greater than zero.");
       return;
     }
+    const editingUniformString = Boolean(selectedStringNumber && !design.pvArrayPlan && n(design.pvStrings) > 1);
+    const panelCount = editingUniformString ? enteredPanelCount * n(design.pvStrings) : enteredPanelCount;
     if (panelCount === design.panelCount) {
-      setQuickEditMessage("That quantity is already in the proposal.");
+      setQuickEditMessage(editingUniformString ? "That per-array quantity is already in the proposal." : "That quantity is already in the proposal.");
       return;
     }
     const panelWatts = n(design.panelWatts, defaultProposalPanel.watts);
@@ -1808,13 +1910,44 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     };
     const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected);
     onRedesign(nextDesign, nextDraft);
-    setQuickEditMessage(`Saved ${panelCount} panels. Array, string, inverter and storage planning figures were refreshed.`);
+    setQuickEditMessage(editingUniformString
+      ? `Saved ${enteredPanelCount} panels in each of ${n(design.pvStrings)} arrays (${panelCount} panels total). Dependent planning figures were refreshed.`
+      : `Saved ${panelCount} panels. Array, string, inverter and storage planning figures were refreshed.`);
+  };
+  const saveArrayConfiguration = () => {
+    if (!selectedNode || !selectedPlannedArray || !design.pvArrayPlan) return;
+    const parts = Number(configurationParts);
+    if (!Number.isInteger(parts) || parts < 2) {
+      setConfigurationMessage("Choose two or more arrays.");
+      return;
+    }
+    if (parts > selectedArrayPanelCount) {
+      setConfigurationMessage("Each new array needs at least one panel.");
+      return;
+    }
+    const selectedIndex = Number(selectedNode.id.match(/^solar-pv-(\d+)$/)?.[1]) - 1;
+    if (!Number.isInteger(selectedIndex) || selectedIndex < 0) return;
+    const pvArrayPlan = splitPvArrayPlan(design.pvArrayPlan, selectedIndex, parts);
+    const nextDesign: DesignCalculatorState = {
+      ...design,
+      pvArrayPlan,
+      pvStrings: undefined,
+      panelsPerString: undefined,
+      stringDesign: undefined,
+      proposedChecklist: { ...(design.proposedChecklist ?? {}), "solar-array": false, "proposed-schematic": false },
+      updatedAt: new Date().toISOString(),
+      updatedBy: "user",
+    };
+    const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected);
+    onRedesign(nextDesign, nextDraft);
+    setConfigurationOpen(false);
+    setConfigurationMessage(`Saved ${parts} arrays: ${configurationPreview.join(" + ")} panels. Total remains ${selectedArrayPanelCount}.`);
   };
   const moveNode = (event: DragEvent<HTMLDivElement>) => {
     if (!movingNodeId) return;
     event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
-    const x = Math.max(0, Math.min(canvasSize.width - nodeWidth - 20, (event.clientX - bounds.left) / zoom - nodeWidth / 2));
+    const x = Math.max(0, Math.min(canvasRenderWidth - nodeWidth - 20, (event.clientX - bounds.left) / zoom - nodeWidth / 2));
     const y = Math.max(0, Math.min(canvasSize.height - 128 - 20, (event.clientY - bounds.top) / zoom - 60));
     onChange({ ...draft, nodes: nodes.map((node) => node.id === movingNodeId ? { ...node, x: Math.round(x / 10) * 10, y: Math.round(y / 10) * 10 } : node) });
     setMovingNodeId(undefined);
@@ -1902,7 +2035,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         return { path, labelX: (fromCx + toCx) / 2, labelY: routeY };
       }
       const routeRight = Math.max(from.x + nodeWidth, to.x + nodeWidth) + 16;
-      const routeX = routeRight <= canvasSize.width - 8 ? routeRight : Math.max(8, Math.min(from.x, to.x) - 16);
+      const routeX = routeRight <= canvasRenderWidth - 8 ? routeRight : Math.max(8, Math.min(from.x, to.x) - 16);
       const x1 = routeX > fromCx ? from.x + nodeWidth : from.x;
       const x2 = routeX > toCx ? to.x + nodeWidth : to.x;
       const fromXDirection = Math.sign(routeX - x1) || 1;
@@ -1926,12 +2059,27 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const earthConnections = visibleConnections.filter((connection) => connection.kind === "earth");
   const earthLaneOffset = (connection: (typeof connections)[number]) => connection.kind === "earth" ? Math.max(0, earthConnections.indexOf(connection)) * 10 : 0;
 
-  return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><span className="text-xs font-extrabold text-brand">{systemName}</span><div className="flex shrink-0 flex-wrap gap-1"><label className="sr-only" htmlFor="schematic-connection-view">Show schematic connections</label><select id="schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as SchematicConnectionView)} className="h-9 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC connections</option><option value="dc">DC connections</option><option value="earth">Earth connections</option></select><button type="button" onClick={tidyLayout} className="h-9 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={() => setAddingItem(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/>Add item</button><button type="button" onClick={() => { setConnectionMode((value) => !value); setConnectingFromId(undefined); }} aria-pressed={connectionMode} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold ${connectionMode ? "border-brand bg-brand text-white" : "border-line bg-white text-brand"}`}><Link2 size={13}/>{connectionMode ? "Cancel connect" : "Connect items"}</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div>{connectionMode ? <div className="border-b border-[#e3c65a] bg-[#fff4bd] px-4 py-3 text-xs font-bold text-brand" role="status">{connectingFromId ? `Selected ${byId.get(connectingFromId)?.label ?? "item"}. Tap the destination card.` : "Tap the first item you want to connect."}</div> : null}<div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto overscroll-contain">
-    {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5">{selectedNodeIsSolar && !supplementaryArray(design) ? <div className="rounded-2xl border border-[#9fc6e7] bg-[#eef6fd] p-4"><div className="eyebrow">Quick edit</div><label className="mt-3 block text-xs font-bold">Total panel quantity<div className="mt-1.5 flex gap-2"><input type="number" min="1" max="10000" step="1" inputMode="numeric" value={quickPanelCount} onChange={(event) => { setQuickPanelCount(event.target.value); setQuickEditMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={saveQuickPanelQuantity} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">Save quantity</button></div></label><p className="mt-2 text-[10px] leading-4 text-muted">This refreshes array capacity, string layout and the dependent inverter and storage planning figures.</p>{quickEditMessage ? <p className="mt-2 text-[10px] font-semibold text-brand" role="status">{quickEditMessage}</p> : null}</div> : null}<div className="mt-5 eyebrow">Full component specification</div><dl className="mt-3 grid gap-3 sm:grid-cols-2">{selectedNodeSpecs.map(([label, value]) => <div key={label} className="rounded-xl border border-line bg-[#f7fafc] p-3"><dt className="text-[9px] font-bold uppercase tracking-[.12em] text-muted">{label}</dt><dd className="mt-1 text-xs font-extrabold">{value}</dd></div>)}</dl><button type="button" onClick={removeSelectedNode} className="mt-4 h-9 w-full rounded-lg border border-[#e7b7af] text-[10px] font-bold text-[#a7442d]">Delete this item</button></div>, componentModalTarget) : null}
-    <div className="origin-top-left" style={{ zoom, width: canvasSize.width }}>
-    <div className="flex items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted" style={{ minWidth: canvasSize.width }}><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery DC</span><span><b className="text-[#d99500]">Gold</b> = inverter AC to the building</span><span><b className="text-[#9b3db5]">Purple</b> = controlled public-grid AC</span><span><b className="text-[#25875a]">Green</b> = protective earth / bonding</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
-    <div className="relative bg-[radial-gradient(circle,#c8d7e4_1px,transparent_1px),radial-gradient(circle_at_50%_45%,rgba(246,201,69,.12),transparent_22rem)] bg-[size:20px_20px,auto]" style={{ width: canvasSize.width, height: canvasSize.height }} role="img" aria-label="Draft proposed solar power system schematic" onDragOver={(event) => event.preventDefault()} onDrop={moveNode}>
-      <svg viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`} className="absolute inset-0 h-full w-full" aria-hidden>
+  return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><div className="flex items-center gap-3"><button type="button" onClick={onOpenWattson} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-brand px-3 text-[10px] font-bold text-white"><Zap size={13}/>Work on this with Wattson</button><span className="text-xs font-extrabold text-brand">{systemName}</span></div><div className="flex shrink-0 flex-wrap gap-1"><label className="sr-only" htmlFor="schematic-connection-view">Show schematic connections</label><select id="schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as SchematicConnectionView)} className="h-9 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC connections</option><option value="dc">DC connections</option><option value="earth">Earth connections</option></select><button type="button" onClick={tidyLayout} className="h-9 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={() => setAddingItem(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/>Add item</button><button type="button" onClick={() => { setConnectionMode((value) => !value); setConnectingFromId(undefined); }} aria-pressed={connectionMode} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold ${connectionMode ? "border-brand bg-brand text-white" : "border-line bg-white text-brand"}`}><Link2 size={13}/>{connectionMode ? "Cancel connect" : "Connect items"}</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div>{connectionMode ? <div className="border-b border-[#e3c65a] bg-[#fff4bd] px-4 py-3 text-xs font-bold text-brand" role="status">{connectingFromId ? `Selected ${byId.get(connectingFromId)?.label ?? "item"}. Tap the destination card.` : "Tap the first item you want to connect."}</div> : null}<div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto overscroll-contain">
+    {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5">
+      {selectedNodeIsSolar && !supplementaryArray(design) ? <div className="rounded-2xl border border-[#9fc6e7] bg-[#eef6fd] p-4">
+        <div className="eyebrow">Quick edit</div>
+        <label className="mt-3 block text-xs font-bold">{selectedStringNumber ? "Panels in this array" : "Total panel quantity"}<div className="mt-1.5 flex gap-2"><input type="number" min="1" max="10000" step="1" inputMode="numeric" value={quickPanelCount} onChange={(event) => { setQuickPanelCount(event.target.value); setQuickEditMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={saveQuickPanelQuantity} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">Save quantity</button></div></label>
+        <p className="mt-2 text-[10px] leading-4 text-muted">{selectedStringNumber && !design.pvArrayPlan && n(design.pvStrings) > 1 ? `This proposal uses ${n(design.pvStrings)} equal arrays. Saving changes each array to this quantity and refreshes the total and dependent planning figures.` : "This refreshes array capacity, string layout and the dependent inverter and storage planning figures. A user-selected array grouping is retained."}</p>
+        {quickEditMessage ? <p className="mt-2 text-[10px] font-semibold text-brand" role="status">{quickEditMessage}</p> : null}
+      </div> : null}
+      {configurationOpen && selectedPlannedArray ? <div className="mt-4 rounded-2xl border border-[#d4b85f] bg-[#fff9df] p-4">
+        <div className="eyebrow text-[#765918]">Array configuration</div>
+        <p className="mt-2 text-xs leading-5 text-muted">Split <strong className="text-ink">{selectedPlannedArray.name}</strong> into balanced arrays without changing its {selectedArrayPanelCount}-panel total.</p>
+        <label className="mt-3 block text-xs font-bold">Number of arrays<div className="mt-1.5 flex gap-2"><input type="number" min="2" max={selectedArrayPanelCount} step="1" inputMode="numeric" value={configurationParts} onChange={(event) => { setConfigurationParts(event.target.value); setConfigurationMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={saveArrayConfiguration} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">Save configuration</button></div></label>
+        {configurationPreview.length ? <p className="mt-2 text-[10px] font-semibold text-[#765918]">Preview: {configurationPreview.map((count, index) => `Array ${index + 1}: ${count} panels`).join(" · ")}</p> : null}
+      </div> : null}
+      {configurationMessage ? <p className="mt-3 text-[10px] font-semibold text-brand" role="status">{configurationMessage}</p> : null}
+      <div className="mt-5 eyebrow">Full component specification</div><dl className="mt-3 grid gap-3 sm:grid-cols-2">{selectedNodeSpecs.map(([label, value]) => <div key={label} className="rounded-xl border border-line bg-[#f7fafc] p-3"><dt className="text-[9px] font-bold uppercase tracking-[.12em] text-muted">{label}</dt><dd className="mt-1 text-xs font-extrabold">{value}</dd></div>)}</dl><button type="button" onClick={removeSelectedNode} className="mt-4 h-9 w-full rounded-lg border border-[#e7b7af] text-[10px] font-bold text-[#a7442d]">Delete this item</button>
+    </div>, componentModalTarget) : null}
+    <div className="origin-top-left" style={{ zoom, width: canvasRenderWidth }}>
+    <div className="flex items-center gap-4 border-b border-line bg-[#f8fbfe] px-4 py-2 text-[9px] font-semibold text-muted" style={{ minWidth: canvasRenderWidth }}><strong className="text-brand">Draft proposed schematic</strong><span><b className="text-[#d94141]">Red + black</b> = solar or battery DC</span><span><b className="text-[#d99500]">Gold</b> = inverter AC to the building</span><span><b className="text-[#9b3db5]">Purple</b> = controlled public-grid AC</span><span><b className="text-[#25875a]">Green</b> = protective earth / bonding</span><span className="ml-auto">Cable sizes and safety parts still need checking</span></div>
+    <div className="relative bg-[radial-gradient(circle,#c8d7e4_1px,transparent_1px),radial-gradient(circle_at_50%_45%,rgba(246,201,69,.12),transparent_22rem)] bg-[size:20px_20px,auto]" style={{ width: canvasRenderWidth, height: canvasSize.height }} role="img" aria-label="Draft proposed solar power system schematic" onDragOver={(event) => event.preventDefault()} onDrop={moveNode}>
+      <svg viewBox={`0 0 ${canvasRenderWidth} ${canvasSize.height}`} className="absolute inset-0 h-full w-full" aria-hidden>
         {visibleConnections.map((connection) => {
           if (connection.kind === "solar-dc" || connection.kind === "battery-dc") {
             const circuitCount = connection.kind === "solar-dc" && connection.from === "solar" ? Math.max(1, n(design.pvStrings, 1)) : 1;
@@ -1977,7 +2125,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     {(selectedNode || selectedConnection) ? <div className="fixed inset-0 z-[80] grid place-items-center bg-[#102d4d]/45 p-4" onMouseDown={(event) => { if (event.currentTarget === event.target) { setSelectedNodeId(undefined); setSelectedConnectionKey(undefined); setPendingSizing(undefined); } }}>
       <section id={selectedNode ? "schematic-component-record-modal" : undefined} className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-3"><div><div className="eyebrow">{selectedNode ? "Proposed component" : "Planning connection"}</div><h3 className="mt-2 text-xl font-extrabold">{selectedNode?.label ?? selectedConnection?.label}</h3></div><button type="button" onClick={() => { setSelectedNodeId(undefined); setSelectedConnectionKey(undefined); setPendingSizing(undefined); }} className="grid size-9 place-items-center rounded-xl border border-line"><X size={16}/></button></div>
-        {selectedNode ? <div className="mt-5 space-y-4"><p className="text-xs leading-5 text-muted">{selectedNode.detail}</p><Link href={`${overviewHref}#tech-${selectedNode.id}`} className="flex h-11 w-full items-center justify-center rounded-xl bg-brand px-4 text-center text-xs font-bold text-white">{selectedNodeIsSolar ? "Edit panel quantity or specifications" : "Edit this component"}</Link><button type="button" onClick={() => openContextChat("ask")} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Ask Wattson about this component</button><button type="button" onClick={acceptComponent} className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-xs font-bold transition ${selectedNode.reviewed ? "border border-[#86c79a] bg-[#dff3e8] text-[#17603b]" : "bg-[#238653] text-white hover:bg-[#1b7045]"}`}><CheckCircle2 size={16}/>{selectedNode.reviewed ? "Specification accepted" : "Accept specification"}</button><p className="rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 text-[10px] leading-4 text-muted">Acceptance adds this proposed item to the Build It shopping list. It does not mark it purchased, installed or certified.</p></div> : null}
+        {selectedNode ? <div className="mt-5 space-y-4"><p className="text-xs leading-5 text-muted">{selectedNode.detail}</p><Link href={`${overviewHref}#tech-${selectedNode.id}`} className="flex h-11 w-full items-center justify-center rounded-xl bg-brand px-4 text-center text-xs font-bold text-white">{selectedNodeIsSolar ? "Edit panel quantity or specifications" : "Edit this component"}</Link>{selectedPlannedArray && selectedArrayPanelCount > 1 ? <button type="button" onClick={() => { setConfigurationOpen((current) => !current); setConfigurationMessage(""); }} aria-expanded={configurationOpen} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Change array configuration</button> : null}<button type="button" onClick={() => openContextChat("ask")} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Ask Wattson about this component</button><button type="button" onClick={acceptComponent} className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-xs font-bold transition ${selectedNode.reviewed ? "border border-[#86c79a] bg-[#dff3e8] text-[#17603b]" : "bg-[#238653] text-white hover:bg-[#1b7045]"}`}><CheckCircle2 size={16}/>{selectedNode.reviewed ? "Specification accepted" : "Accept specification"}</button><p className="rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 text-[10px] leading-4 text-muted">Acceptance adds this proposed item to the Build It shopping list. It does not mark it purchased, installed or certified.</p></div> : null}
         {selectedConnection ? <div className="mt-5 space-y-4"><p className="text-xs leading-5 text-muted">Record the measured or estimated one-way route so Wattson can suggest planning values for this connection. You will review the complete schematic before Build It opens.</p><NumberField label="One-way route length" value={routeLength} unit="m" onChange={setRouteLength}/><label className="block text-xs font-bold">Distance quality<select value={routeBasis} onChange={(event) => setRouteBasis(event.target.value as "estimated" | "measured")} className="mt-1.5 h-11 w-full rounded-xl border border-line bg-white px-3"><option value="estimated">Estimated</option><option value="measured">Measured</option></select></label><button type="button" disabled={routeLength <= 0} onClick={saveRoute} className="h-11 w-full rounded-xl bg-brand px-4 text-xs font-bold text-white disabled:opacity-40">Calculate and review planning values</button><button type="button" onClick={() => openContextChat("ask")} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Ask Wattson about this connection</button><p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[10px] leading-4 text-[#765918]">Final conductor and protection selection still depends on equipment limits, installation method, temperature, grouping, fault level and local electrical rules.</p></div> : null}
       </section>
     </div> : null}

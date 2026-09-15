@@ -36,6 +36,34 @@ describe("single Wattson intent and consent router", () => {
     expect(actionsAllowedByDecision(actions, explicit)).toEqual(actions);
   });
 
+  it("treats splitting an existing array as an explicit record edit", () => {
+    expect(routeWattsonTurn("Can you split the 2 arrays into 4 total?", parseWattsonConversationState(undefined))).toMatchObject({
+      intent: "equipment_record",
+      mode: "execute",
+      mutationConsent: true,
+    });
+  });
+
+  it("tolerates change-to being mistyped as charge-to for an array edit", () => {
+    expect(routeWattsonTurn("Charge to 2 arrays of 5 please", parseWattsonConversationState(undefined))).toMatchObject({
+      intent: "equipment_record",
+      mode: "execute",
+      mutationConsent: true,
+    });
+  });
+
+  it("keeps a short answer inside the active equipment-edit workflow", () => {
+    const state = parseWattsonConversationState(undefined);
+    state.activeIntent = "equipment_record";
+    state.questions.push({ key: "panel-count", text: "How many panels should each array have?", answered: false });
+    const answered = reduceWattsonUserTurn(state, "2 each, same orientation");
+    expect(routeWattsonTurn("2 each, same orientation", answered)).toMatchObject({
+      intent: "equipment_record",
+      mode: "execute",
+      mutationConsent: true,
+    });
+  });
+
   it("keeps discovery help only for an answer or same-subject follow-up", () => {
     const state = parseWattsonConversationState(undefined);
     state.activeIntent = "discovery_help";

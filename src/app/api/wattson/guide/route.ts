@@ -48,9 +48,9 @@ export async function POST(request: Request) {
     if (owned.error || !owned.data) return Response.json({ error: "Project not found" }, { status: 404 });
     project = (await loadWorkspace(supabase, parsed.data.projectId)).project;
   } else if (parsed.data.siteId) {
-    const site = await supabase.from("sites").select("id,name,location").eq("id", parsed.data.siteId).eq("owner_id", userId).maybeSingle();
+    const site = await supabase.from("sites").select("id,name,location,location_confirmed").eq("id", parsed.data.siteId).eq("owner_id", userId).maybeSingle();
     if (site.error || !site.data) return Response.json({ error: "Site not found" }, { status: 404 });
-    project = { ...demoProject, id: `guide-${site.data.id}`, siteId: site.data.id, name: `${site.data.name} guide help`, location: site.data.location ?? "Location not set" };
+    project = { ...demoProject, id: `guide-${site.data.id}`, siteId: site.data.id, name: `${site.data.name} guide help`, location: site.data.location_confirmed && site.data.location ? site.data.location : "Location not set" };
   }
   if (!project) return Response.json({ error: "Guide context is unavailable" }, { status: 400 });
 

@@ -663,7 +663,7 @@ export function PVIntellWorkspace({
         <header className="system-workspace-header sticky top-0 z-50 border-b border-line bg-[rgba(248,250,252,.98)]">
           <div className="mx-auto flex h-[64px] max-w-[1440px] items-center gap-4 px-4 md:px-6">
             <Link href="/dashboard" className="shrink-0"><Logo /></Link>
-            {cloud && <WattsonHeaderAction siteId={initialSite.id}/>} 
+            {cloud && view !== "proposed-schematic" && <WattsonHeaderAction siteId={initialSite.id}/>} 
             {cloud && <details className="relative hidden shrink-0 md:block"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{initialSite.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div><div className="space-y-1">{sites.map((site) => <Link key={site.id} href={`/sites/${site.id}`} className={`flex items-center gap-2 rounded-xl px-3 py-2 text-[11px] font-bold ${site.id === initialSite.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}><MapPin size={12}/><span className="truncate">{site.name}</span></Link>)}</div><Link href="/discovery/new-system" className="mt-3 flex items-center gap-2 rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-[#143c63]"><Sparkles size={13}/>New independent Site</Link></div></details>}
              <div className="hidden min-w-0 flex-1 border-l border-line pl-4 md:block">
               <div className="eyebrow text-[8px]">{currentViewLabel}</div>
@@ -751,7 +751,7 @@ export function PVIntellWorkspace({
             <SolarWeather site={initialSite} solarArrayKw={installedSolarKw} solarArrays={installedSolarArrays} />
           )}{" "}
           {view === "design" && <DesignCalculator project={project} site={initialSite} />}{" "}
-          {view === "proposed-schematic" && <ProposedBuildSchematic key={`${project.id}:${project.designCalculator?.updatedAt ?? ""}:${showProposalIntro}`} project={project} site={initialSite} showIntro={showProposalIntro} />}{" "}
+          {view === "proposed-schematic" && <ProposedBuildSchematic key={`${project.id}:${project.designCalculator?.updatedAt ?? ""}:${showProposalIntro}`} project={project} site={initialSite} showIntro={showProposalIntro} initialConversationId={conversationId} initialMessages={messages} />}{" "}
           {view === "overview" && (
             <SystemTechnicalOverview
               project={project}
@@ -852,8 +852,8 @@ function Wattson({
   const conversationRef = useRef<HTMLDivElement>(null);
   const installed = ["check", "monitor", "diagnose", "maintain", "explain"].includes(project.phase);
   const installedPvWatts = project.pvArrays.reduce((total: number, array: { panelWatts?: number; panelCount?: number }) => total + Number(array.panelWatts ?? 0) * Number(array.panelCount ?? 0), 0);
-  const installedBatteryCount = project.components.filter((component: { kind?: string; name?: string }) => component.kind === "battery" || /\bbatter(?:y|ies)\b/i.test(component.name ?? "")).reduce((total: number, component: { quantity?: number }) => total + Number(component.quantity ?? 1), 0);
-  const installedInverterCount = project.components.filter((component: { kind?: string; name?: string }) => component.kind === "inverter" || /\binverter\b/i.test(component.name ?? "")).reduce((total: number, component: { quantity?: number }) => total + Number(component.quantity ?? 1), 0);
+  const installedBatteryCount = project.components.filter((component: { kind?: string }) => component.kind === "battery").reduce((total: number, component: { quantity?: number }) => total + Number(component.quantity ?? 1), 0);
+  const installedInverterCount = project.components.filter((component: { kind?: string }) => component.kind === "inverter").reduce((total: number, component: { quantity?: number }) => total + Number(component.quantity ?? 1), 0);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       const conversation = conversationRef.current;
@@ -1614,7 +1614,15 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
   const stringVoc = Number(design.panelVocV ?? 0) * Number(design.panelsPerString ?? 0);
   const isolatorVoltage = stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500;
   const pvProtection = acceptedConnections.filter((connection) => connection.kind === "solar-dc").reduce((largest, connection) => Math.max(largest, Number(connection.protectionAmps ?? 0)), 0);
-  const isolatorCurrent = [20, 25, 32, 40, 50, 63].find((rating) => rating >= Math.max(20, pvProtection)) ?? Math.ceil(Math.max(20, pvProtection));
+  const pvStringDesignCurrent = Number(design.panelIscA ?? 0) * 1.25;
+  const isolatorCurrent = [20, 25, 32, 40, 50, 63].find((rating) => rating >= Math.max(20, pvStringDesignCurrent, pvProtection)) ?? Math.ceil(Math.max(20, pvStringDesignCurrent, pvProtection));
+  const combinedPvIsc = Number(design.panelIscA ?? 0) * Math.max(1, acceptedPvStrings);
+  const combinedPvDesignCurrent = combinedPvIsc * 1.25;
+  const combinedPvRating = [20, 25, 32, 40, 50, 63, 80, 100].find((rating) => rating >= combinedPvDesignCurrent) ?? Math.ceil(combinedPvDesignCurrent);
+  const stringVmp = Number(design.panelVmpV ?? 0) * Number(design.panelsPerString ?? 0);
+  const reverseCurrent = Math.max(0, acceptedPvStrings - 1) * Number(design.panelIscA ?? 0) * 1.25;
+  const moduleFuseLimit = Number(design.panelMaximumSeriesFuseA ?? 0);
+  const stringFusingRequired = acceptedPvStrings > 1 && moduleFuseLimit > 0 && reverseCurrent > moduleFuseLimit;
   const acProtection = acceptedConnections.filter((connection) => connection.kind === "ac" && !connection.authorityCheck).reduce((largest, connection) => Math.max(largest, Number(connection.protectionAmps ?? 0)), 0);
   const shoppingItems: ShoppingItem[] = [];
   if (acceptedPvNodes.length && !hasAsBuiltRecord) {
@@ -1662,7 +1670,10 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
     );
   }
 
-  if (isolators.length) shoppingItems.push({ name: "PV DC isolator", specification: `${isolatorVoltage} V DC · ${isolatorCurrent} A minimum · DC-PV2 load-break · poles and IP rating to suit location`, quantity: `${isolators.length}`, regulated: true, basis: "One accepted isolator per independent PV string" });
+  if (isolators.length) shoppingItems.push({ name: "PV DC isolator", specification: `${isolatorVoltage} V DC · ${isolatorCurrent} A minimum · PV-rated DC load-break · poles and enclosure rating to suit the selected equipment, mounting location and local rules`, quantity: `${isolators.length}`, regulated: true, basis: `One accepted isolator per independent PV string · current rating based on ${design.panelIscA ? `${design.panelIscA} A module Isc × 1.25` : "the available PV design current"}` });
+  if (acceptedComponents.some((node) => node.id === "pv-combiner")) shoppingItems.push({ name: "PV combiner box", specification: `${isolatorVoltage} V DC minimum · ${combinedPvRating || "rating to confirm"} A minimum output · ${acceptedPvStrings} string inputs · terminals and enclosure to suit the selected conductors, environment and local rules`, quantity: "1", regulated: true, basis: `${acceptedPvStrings} × ${design.panelIscA ?? "?"} A Isc × 1.25 = ${combinedPvDesignCurrent ? decimal(combinedPvDesignCurrent, 1) : "—"} A design output` });
+  if (stringFusingRequired) shoppingItems.push({ name: "gPV string fuse and holder", specification: `Coordinate the fuse with string current and do not exceed the module's ${moduleFuseLimit} A maximum-series-fuse rating; final voltage, class and holder must match the selected equipment and local rules`, quantity: `${acceptedPvStrings} sets`, regulated: true, basis: `Preliminary reverse-current check: ${decimal(reverseCurrent, 1)} A exceeds the recorded ${moduleFuseLimit} A module limit` });
+  if (acceptedPvNodes.length) shoppingItems.push({ name: "Inverter / MPPT PV input requirement", specification: `MPPT range must include ${stringVmp ? `${decimal(stringVmp, 1)} V string Vmp` : "the final string Vmp"} · maximum input voltage must exceed temperature-corrected string Voc · operating input current at least ${design.panelImpA ? `${decimal(Number(design.panelImpA) * Math.max(1, acceptedPvStrings), 1)} A` : "TBC"} · input short-circuit rating at least ${combinedPvIsc ? `${decimal(combinedPvIsc, 1)} A` : "TBC"}`, quantity: "Design requirement", regulated: true, basis: `${acceptedPvStrings} parallel string${acceptedPvStrings === 1 ? "" : "s"} on a combined input; separate MPPT allocation changes the per-input current requirement` });
 
   for (const route of groupedRoutes.values()) {
     const purchaseLength = routeLengthWithAllowance(route.lengthM);

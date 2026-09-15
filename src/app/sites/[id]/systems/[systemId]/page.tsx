@@ -14,6 +14,10 @@ export default async function PowerSystemPage({ params, searchParams }: { params
   try { workspace = await loadSiteWorkspace(supabase, id, systemId, query.conversation); } catch { redirect(`/sites/${id}`); }
   const { project, messages, conversationId, site, sites, systems, questionnaireDrafts, siteEquipment } = workspace;
   const installed = ["check", "monitor", "diagnose", "maintain", "explain"].includes(project.phase);
-  const initialWattsonPrompt = query.focus ? `Explain the proposed ${query.focus} in this system, why it is included, how it connects to the other components, and what still needs to be verified.` : undefined;
+  const initialWattsonPrompt = query.focus === "schematic"
+    ? "Continue working on this schematic with me — "
+    : query.focus
+      ? `Explain the proposed ${query.focus} in this system, why it is included, how it connects to the other components, and what still needs to be verified.`
+      : undefined;
   return <PVIntellWorkspace key={`${project.id}:${project.updatedAt ?? ""}:${conversationId ?? "latest"}`} initialProject={project} initialMessages={messages} initialConversationId={conversationId} initialSite={site} sites={sites} systems={systems} initialQuestionnaires={questionnaireDrafts} initialSiteEquipment={siteEquipment} cloud systemPage initialView={requestedView && workspaceViews.has(requestedView) ? requestedView : installed ? "overview" : "system"} initialWattsonPrompt={initialWattsonPrompt} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""}/>;
 }

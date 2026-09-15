@@ -109,5 +109,5 @@ export default async function SchematicPage({
   const schematicAssets = [...new Map(
     [...fileAssets, ...guideAssets, ...meterAssets].map((asset) => [asset.url, asset]),
   ).values()].sort((a, b) => a.label.localeCompare(b.label));
-  return <SystemSchematic project={workspace.project} site={workspace.site} sites={workspace.sites} schematicAssets={schematicAssets} initiallyAdding={query.add === "1"} />;
+  return <SystemSchematic project={workspace.project} site={workspace.site} sites={workspace.sites} schematicAssets={schematicAssets} initiallyAdding={query.add === "1"} initialConversationId={workspace.conversationId} initialMessages={workspace.messages} />;
 }

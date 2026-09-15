@@ -28,7 +28,7 @@ export interface WattsonRouteDecision {
 
 const schematicSubject = /\b(?:schematic|wiring diagram|connection diagram)\b/i;
 const recordCreate = /\b(?:save|record|add|attach|import)\b[\s\S]{0,80}\b(?:this|that|it|record|equipment|component|inventory|image|photo|label|fact|detail|panel|array|battery|controller|inverter|generator|meter|load|connection)\b|\b(?:save|record|add|attach|import)\s+(?:this|that|it)\b/i;
-const recordUpdate = /\b(?:update|correct|replace|change)\b(?!\s+me\b)[\s\S]{0,100}\b(?:record|equipment|component|inventory|image|photo|label|field|value|panel|array|battery|controller|inverter|connection|load|site name|system name)\b/i;
+const recordUpdate = /\b(?:update|correct|replace|change|charge(?=\s+to\b)|split|divide|combine|merge|reconfigure)\b(?!\s+me\b)[\s\S]{0,100}\b(?:records?|equipment|components?|inventory|images?|photos?|labels?|fields?|values?|panels?|arrays?|batter(?:y|ies)|controllers?|inverters?|connections?|loads?|site name|system name)\b/i;
 
 export function routeWattsonTurn(message: string, state: WattsonConversationState): WattsonRouteDecision {
   if (rejectsPendingAction(message) && !state.pendingAction) return { intent: state.activeIntent, mode: "reject", mutationConsent: false };
@@ -58,6 +58,9 @@ export function routeWattsonTurn(message: string, state: WattsonConversationStat
       mutationConsent: true,
     };
   }
+  const answersCurrentWorkflowQuestion = state.questions.some((question) => question.answered && question.answer === message.trim());
+  if (state.activeIntent === "equipment_record" && answersCurrentWorkflowQuestion)
+    return { intent: "equipment_record", mode: "execute", mutationConsent: true };
   if (state.activeIntent === "discovery_help") {
     const subjectWords = new Set((state.activeSubject?.description ?? "").toLocaleLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? []);
     const messageWords = message.toLocaleLowerCase().match(/[\p{L}\p{N}]{4,}/gu) ?? [];

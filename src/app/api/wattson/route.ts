@@ -27,6 +27,8 @@ import { loadWorkspace } from "@/data/cloud-project";
 import { cachedConversationResponse, startedConversationRequest } from "@/ai/conversation-request";
 import { attachImageToRecord, requestsExistingRecordAttachment, resolveRecordAttachmentTarget, type RecordAttachmentTarget } from "@/ai/record-attachment";
 import { persistRequestedSchematic } from "@/ai/schematic-builder";
+import { COMPONENT_REGULATORY_LIBRARY_VERSION, regulatoryJurisdictionKey } from "@/regulations/component-regulatory-library";
+import { reconfigurePvTopology, requestedPvTopology } from "@/ai/pv-topology-editor";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -34,6 +36,7 @@ const requestSchema = z.object({
   project: z.custom<Project>(),
   conversationId: z.uuid().optional(),
   requestId: z.uuid().optional(),
+  surface: z.enum(["schematic"]).optional(),
 });
 
 function proposedArchitectureReply(actions: Array<{ name: string; arguments: unknown }>) {
@@ -60,7 +63,26 @@ function completedSystemIntent(message: string) {
 }
 
 function structuredRecordChangeIntent(message: string) {
-  return /\b(?:update|change|correct|set|make|standardise|standardize|copy)\b/i.test(message) && /\b(?:record|equipment|component|batter(?:y|ies)|inverter|panel|pv\s*string|array|connection)\b/i.test(message);
+  return /\b(?:update|change|charge(?=\s+to\b)|correct|set|make|standardise|standardize|copy)\b/i.test(message) && /\b(?:records?|equipment|components?|batter(?:y|ies)|inverters?|panels?|pv\s*strings?|arrays?|connections?)\b/i.test(message);
+}
+
+function uniformExistingArrayUpdates(message: string, project: Project) {
+  const match = message.match(/\b(?:change|charge|set|make|reconfigure)?\s*(?:them|it|the\s+(?:pv\s*)?arrays?)?\s*(?:to|as|into)?\s*(\d+)\s+(?:pv\s*)?arrays?\s+(?:of|with)\s+(\d+)(?:\s+panels?)?\b/i);
+  if (!match) return [];
+  const arrayCount = Number(match[1]);
+  const panelsPerArray = Number(match[2]);
+  if (!Number.isInteger(arrayCount) || !Number.isInteger(panelsPerArray) || arrayCount < 1 || panelsPerArray < 1 || project.pvArrays.length !== arrayCount) return [];
+  return project.pvArrays.map((array) => ({
+    name: "record_or_update_pv_array" as const,
+    arguments: {
+      operation: "update" as const,
+      array_id: array.id,
+      array_name: array.name,
+      panel_count: panelsPerArray,
+      strings: 1,
+      panels_per_string: panelsPerArray,
+    },
+  }));
 }
 
 function requestedBulkCount(message: string) {
@@ -85,6 +107,7 @@ export async function POST(request: Request) {
         projectId: form.get("projectId"),
         conversationId: form.get("conversationId") || undefined,
         requestId: form.get("requestId") || undefined,
+        surface: form.get("surface") || undefined,
         project:
           typeof projectText === "string" ? JSON.parse(projectText) : null,
       };
@@ -249,10 +272,38 @@ export async function POST(request: Request) {
     system: { id: parsed.data.projectId, name: canonicalProject.name },
     image: imagePath ? { imagePath, mimeType: imageFile?.type, extraction: inventoryCapture?.extraction as Record<string, unknown> | undefined, warning: inventoryCapture?.warning } : undefined,
   });
+  if (parsed.data.surface === "schematic") {
+    conversationState.activeSubject = {
+      kind: "setup",
+      description: `${canonicalProject.name} schematic`,
+      association: "system",
+      siteId: owned.data.site_id,
+      siteName: canonicalProject.location || "Current Site",
+      systemId: parsed.data.projectId,
+      systemName: canonicalProject.name,
+    };
+  }
   const routeDecision = routeWattsonTurn(parsed.data.message, conversationState);
   conversationState.activeIntent = routeDecision.intent;
   const userStateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
   if (userStateSaved.error) return Response.json({ error: userStateSaved.error.message, conversationId }, { status: 400 });
+  const topologyRequest = parsed.data.surface === "schematic" && routeDecision.mutationConsent ? requestedPvTopology(parsed.data.message) : null;
+  if (topologyRequest) {
+    try {
+      const topology = await reconfigurePvTopology(supabase, parsed.data.projectId, topologyRequest);
+      conversationState.completedActions.push({ kind: "record_equipment", revision: conversationState.revision, description: topology.summary, siteId: owned.data.site_id, systemId: parsed.data.projectId });
+      const stateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
+      if (stateSaved.error) throw stateSaved.error;
+      const replySaved = await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: topology.summary, structured_context: { evidenceRevision: conversationState.revision, topologyRequest }, response_to_request_id: parsed.data.requestId });
+      if (replySaved.error) throw replySaved.error;
+      return Response.json({ conversationId, message: topology.summary, actions: [{ type: "pv_topology_updated", summary: topology.summary }] });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "The topology could not be updated";
+      const message = `I haven’t changed the schematic because the complete PV topology could not be saved safely. ${detail}`;
+      await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { evidenceRevision: conversationState.revision, topologyRequest, topologyError: detail }, response_to_request_id: parsed.data.requestId });
+      return Response.json({ conversationId, message, actions: [] });
+    }
+  }
   if (routeDecision.intent === "schematic" && routeDecision.mode === "execute" && requestsSchematicCreation(parsed.data.message, priorAssistantMessage)) {
     const schematicId = parsed.data.projectId;
     const actionUrl = `/sites/${owned.data.site_id}/systems/${schematicId}/schematic`;
@@ -328,7 +379,7 @@ export async function POST(request: Request) {
     );
   const siteResult = await supabase
     .from("sites")
-    .select("id,name")
+    .select("id,name,location,location_confirmed")
     .eq("id", owned.data.site_id)
     .eq("owner_id", userId)
     .single();
@@ -484,6 +535,17 @@ export async function POST(request: Request) {
           : "retrieved-record-not-associated-with-active-subject",
       });
   const selectedSystem = connectedSiteSystems.find((system) => system.id === parsed.data.projectId);
+  let currentRegulatoryGuidance: Array<Record<string, unknown>> = [];
+  if (siteResult.data.location_confirmed && siteResult.data.location) {
+    const regulatoryCache = await supabase
+      .from("component_regulatory_guidance")
+      .select("component_kind,jurisdiction_label,guidance_markdown,citations,checked_at,refresh_after,topic_library_version")
+      .eq("owner_id", userId)
+      .eq("jurisdiction_key", regulatoryJurisdictionKey(siteResult.data.location))
+      .eq("topic_library_version", COMPONENT_REGULATORY_LIBRARY_VERSION)
+      .gt("refresh_after", new Date().toISOString());
+    if (!regulatoryCache.error) currentRegulatoryGuidance = regulatoryCache.data ?? [];
+  }
   const monitoringOnlyIntent = routeDecision.mutationConsent && completedSystemIntent(parsed.data.message);
   let phaseMovedToMonitor = false;
   if (monitoringOnlyIntent && selectedSystem?.phase !== "monitor") {
@@ -507,7 +569,12 @@ export async function POST(request: Request) {
       } catch { /* Monitoring must not break non-monitoring Wattson conversations. */ }
       const result = await askGemini({
         message: parsed.data.message,
-        project: groundedProject,
+        project: {
+          ...groundedProject,
+          location: siteResult.data.location_confirmed && siteResult.data.location
+            ? siteResult.data.location
+            : "Location not set",
+        },
         recentConversation: priorHistory,
         questionnaireContext: {
           conversationState: conversationStatePromptContext(conversationState),
@@ -516,10 +583,12 @@ export async function POST(request: Request) {
           onboardingLocation: profileResult.data.home_location,
           userTimezone: profileResult.data.timezone,
           userAssessment: profileResult.data.onboarding_assessment ?? {},
+          selectedSite: siteResult.data,
           responses: activeSubjectIsUnassociated ? [] : questionnaireResult.data ?? [],
           siteEquipment: groundedSiteEquipment,
           inventoryLabelCapture: inventoryCapture,
           connectedSiteSystems: groundedSiteSystems,
+          currentRegulatoryGuidance,
         },
         monitoringContext: activeSubjectIsUnassociated ? undefined : monitoringContext,
         image,
@@ -533,7 +602,8 @@ export async function POST(request: Request) {
       const uncertainDiscovery = userExpressesUncertainty(parsed.data.message) && Boolean(currentDiscovery);
       const recordChangeRequested = structuredRecordChangeIntent(parsed.data.message);
       const routedActions = pendingActionRequests(routeDecision);
-      const candidateActions = routeDecision.pendingAction ? routedActions : result.actions;
+      const deterministicArrayUpdates = uniformExistingArrayUpdates(parsed.data.message, canonicalProject);
+      const candidateActions = deterministicArrayUpdates.length ? deterministicArrayUpdates : routeDecision.pendingAction ? routedActions : result.actions;
       const toolActions = await applyWattsonActions(
         supabase,
         parsed.data.projectId,

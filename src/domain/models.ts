@@ -203,6 +203,8 @@ export interface DesignCalculatorState {
   fitLimited?: boolean;
   pvArrayPlan?: {
     status: "surface_allocation_required" | "topology_unresolved" | "resolved";
+    /** User means the array grouping was explicitly changed from the schematic. */
+    configurationSource?: "discovery" | "user";
     arrays: Array<{
       id: string;
       name: string;

@@ -11,7 +11,7 @@ function GuideList({ title, items }: { title: string; items?: readonly string[] 
   return <section className="rounded-xl border border-line bg-white p-4"><h3 className="text-sm font-extrabold">{title}</h3><ul className="mt-3 space-y-2 text-sm leading-6 text-muted">{items.map((item) => <li key={item} className="flex gap-2"><span className="mt-2 size-1.5 shrink-0 rounded-full bg-brand"/>{item}</li>)}</ul></section>;
 }
 
-export function HowToLibrary({ siteId, siteName, location }: { siteId?: string; siteName?: string; location?: string }) {
+export function HowToLibrary({ siteId, siteName, location, locationConfirmed = false }: { siteId?: string; siteName?: string; location?: string; locationConfirmed?: boolean }) {
   const [query, setQuery] = useState("");
   const [section, setSection] = useState("");
   const [selectedId, setSelectedId] = useState("");
@@ -40,7 +40,7 @@ export function HowToLibrary({ siteId, siteName, location }: { siteId?: string; 
     </header>
 
     <main className="mx-auto max-w-[1180px] p-4 pb-20 md:p-6">
-      {selected ? <GuideDetail guide={selected} back={() => setSelectedId("")}/> : <>
+      {selected ? <GuideDetail guide={selected} back={() => setSelectedId("")} siteId={siteId} location={location} locationConfirmed={locationConfirmed}/> : <>
         <div className="mb-5 overflow-hidden rounded-2xl bg-cover bg-center p-5 text-white shadow-[0_12px_30px_rgba(12,39,65,.16)] sm:p-7" style={{ backgroundImage: "linear-gradient(90deg, rgba(8,35,58,.94), rgba(8,35,58,.68)), url('/backgrounds/vilkasss-ai-generated-8897488_1920.jpg')" }}><div className="eyebrow text-[#ffd44f]">Solar knowledge base</div><h1 className="mt-2 font-display text-2xl font-extrabold tracking-[-.04em] sm:text-3xl">How can we help?</h1><p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-white/90">Search the full library or choose a section. Guides now open here with room to read comfortably on phones.</p></div>
         <label className="flex min-h-12 items-center gap-3 rounded-xl border border-line bg-white px-4 shadow-sm"><Search size={18} className="shrink-0 text-brand"/><span className="sr-only">Search the How-to library</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search panels, batteries, MC4, mounting…" className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted"/></label>
         <div className="mt-4 flex gap-2 overflow-x-auto pb-2"><button type="button" onClick={() => setSection("")} className={`shrink-0 rounded-full border px-3 py-2 text-xs font-bold ${!section ? "border-brand bg-brand text-white" : "border-line bg-white text-ink"}`}>All guides</button>{sections.map((name) => <button key={name} type="button" onClick={() => setSection(name)} className={`shrink-0 rounded-full border px-3 py-2 text-xs font-bold ${section === name ? "border-brand bg-brand text-white" : "border-line bg-white text-ink"}`}>{name}</button>)}</div>
@@ -51,7 +51,7 @@ export function HowToLibrary({ siteId, siteName, location }: { siteId?: string; 
   </div>;
 }
 
-function GuideDetail({ guide, back }: { guide: NoviceHowToGuide; back: () => void }) {
+function GuideDetail({ guide, back, siteId, location, locationConfirmed }: { guide: NoviceHowToGuide; back: () => void; siteId?: string; location?: string; locationConfirmed: boolean }) {
   return <article className="mx-auto max-w-4xl">
     <button type="button" onClick={back} className="mb-4 inline-flex min-h-11 items-center gap-2 rounded-xl border border-line bg-white px-4 text-sm font-bold text-brand"><ArrowLeft size={16}/> Back to guides</button>
     <div className="card overflow-hidden"><div className="grid gap-5 p-4 sm:grid-cols-[220px_1fr] sm:p-6"><div className="flex min-h-44 items-center justify-center rounded-xl border border-line bg-white p-3"><img src={guide.image} alt={`Reference for ${guide.title}`} className="max-h-64 max-w-full object-contain"/></div><div><div className="eyebrow">{guide.group}</div><h1 className="mt-2 font-display text-2xl font-extrabold">{guide.title}</h1><p className="mt-3 text-sm leading-6 text-muted">{guide.summary}</p></div></div>
@@ -59,7 +59,7 @@ function GuideDetail({ guide, back }: { guide: NoviceHowToGuide; back: () => voi
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"><GuideList title="What to buy" items={guide.buy}/><GuideList title="Tools" items={guide.tools}/><GuideList title="Before you start" items={guide.before}/></div>
         <section><h2 className="text-base font-extrabold">Put it together</h2><ol className="mt-3 grid gap-3 sm:grid-cols-2">{guide.steps.map((step, index) => <li key={`${index}-${step}`} className="flex gap-3 rounded-xl border border-line bg-white p-4 text-sm leading-6"><span className="grid size-7 shrink-0 place-items-center rounded-full bg-brand text-xs font-bold text-white">{index + 1}</span>{step}</li>)}</ol></section>
         <GuideList title="Final checks" items={guide.checks}/>
-        <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">{guide.sourceUrl ? <a href={guide.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center rounded-xl bg-brand px-4 text-sm font-bold text-white">Open detailed source →</a> : null}<p className="text-xs leading-5 text-muted">Source: {guide.source}</p></div>
+        <div className="border-t border-line pt-4"><div className="flex flex-wrap items-center gap-3">{siteId ? <Link href={`/settings/regulations?site=${siteId}&guide=${encodeURIComponent(guide.id)}`} className="inline-flex min-h-11 items-center rounded-xl bg-brand px-4 text-sm font-bold text-white">Rules &amp; requirements{locationConfirmed && location ? ` · ${location}` : ""} →</Link> : <span className="text-xs font-bold text-[#8b6512]">Add a Site before loading local rules.</span>}{guide.sourceUrl ? <a href={guide.sourceUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-brand underline">{guide.sourceUrl.includes("wikimedia.org") ? "View image credit" : "Open product/reference document"}</a> : null}</div><p className="mt-3 text-xs leading-5 text-muted">Reference note: {guide.source}</p></div>
       </div>
     </div>
   </article>;

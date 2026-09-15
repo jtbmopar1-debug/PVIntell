@@ -47,9 +47,9 @@ export async function POST(request: Request) {
 
   let location = "Location not set"; let siteName = "New system";
   if (parsed.data.siteId) {
-    const site = await supabase.from("sites").select("id,name,location").eq("id", parsed.data.siteId).eq("owner_id", userId).maybeSingle();
+    const site = await supabase.from("sites").select("id,name,location,location_confirmed").eq("id", parsed.data.siteId).eq("owner_id", userId).maybeSingle();
     if (site.error || !site.data) return Response.json({ error: "Site not found." }, { status: 404 });
-    location = site.data.location ?? location; siteName = site.data.name;
+    location = site.data.location_confirmed && site.data.location ? site.data.location : location; siteName = site.data.name;
   }
   if (parsed.data.projectId) {
     const project = await supabase.from("projects").select("id,name,site_id").eq("id", parsed.data.projectId).eq("owner_id", userId).maybeSingle();

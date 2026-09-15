@@ -28,6 +28,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  ChatMessage,
   ComponentSpec,
   Project,
   PVArray,
@@ -36,8 +37,10 @@ import type {
 } from "@/domain/models";
 import { DC_CABLE_IMAGE, EARTH_ELECTRODE_IMAGE, isCanonicalEquipmentImage, METER_BOARD_IMAGE, NON_COMMUNICATING_DIGITAL_METER_IMAGE, PLUG_IN_POWER_METER_IMAGE, POOL_CIRCULATION_PUMP_IMAGE, SMART_ELECTRICITY_METER_IMAGE } from "@/ui/assets";
 import { BrandLogo } from "@/components/brand-logo";
+import { SchematicWattsonChat } from "@/components/schematic-wattson-chat";
 import { allHowToGuides } from "@/components/pvintell-workspace";
 import { GRID_CONNECTION_IMAGE } from "@/ui/assets";
+import { isVisibleInstalledAccessory, removeCoveredInferredLinks } from "@/schematic/installed-layout";
 
 type DiagramNode = {
   id: string;
@@ -503,12 +506,16 @@ export function SystemSchematic({
   sites,
   schematicAssets = [],
   initiallyAdding = false,
+  initialConversationId,
+  initialMessages = [],
 }: {
   project: Project;
   site: Site;
   sites: Site[];
   schematicAssets?: SchematicAsset[];
   initiallyAdding?: boolean;
+  initialConversationId?: string;
+  initialMessages?: ChatMessage[];
 }) {
   const router = useRouter();
   async function askGuide(guide: (typeof allHowToGuides)[number], question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) {
@@ -535,8 +542,46 @@ export function SystemSchematic({
   const [canvasZoom, setCanvasZoom] = useState(1);
   const [canvasFrameWidth, setCanvasFrameWidth] = useState(1100);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [wattsonOpen, setWattsonOpen] = useState(false);
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const initialCanvasFitDone = useRef(false);
+  const [viewPreferencesReady, setViewPreferencesReady] = useState(false);
+  const viewPreferencesKey = `pvintell:schematic-view:${project.id}`;
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const raw = window.localStorage.getItem(viewPreferencesKey);
+        if (raw) {
+          const saved = JSON.parse(raw) as {
+            zoom?: unknown;
+            connectionView?: unknown;
+            showConnectionLabels?: unknown;
+          };
+          if (typeof saved.zoom === "number" && saved.zoom >= .3 && saved.zoom <= 1.4) {
+            setCanvasZoom(saved.zoom);
+            initialCanvasFitDone.current = true;
+          }
+          if (["all", "ac", "dc", "data", "earth"].includes(String(saved.connectionView)))
+            setConnectionView(saved.connectionView as ConnectionView);
+          if (typeof saved.showConnectionLabels === "boolean")
+            setShowConnectionLabels(saved.showConnectionLabels);
+        }
+      } catch {
+        window.localStorage.removeItem(viewPreferencesKey);
+      } finally {
+        setViewPreferencesReady(true);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [viewPreferencesKey]);
+  useEffect(() => {
+    if (!viewPreferencesReady) return;
+    window.localStorage.setItem(viewPreferencesKey, JSON.stringify({
+      zoom: canvasZoom,
+      connectionView,
+      showConnectionLabels,
+    }));
+  }, [canvasZoom, connectionView, showConnectionLabels, viewPreferencesKey, viewPreferencesReady]);
   useEffect(() => {
     const viewport = canvasViewportRef.current;
     if (!viewport) return;
@@ -616,8 +661,8 @@ export function SystemSchematic({
     const accessories = project.components.filter(
       (item) =>
         !["inverter", "battery", "generator"].includes(item.kind) &&
-        (!["cable", "connector"].includes(item.kind) ||
-          isCanonicalEquipmentImage(text(item.specs["Schematic image"]))) &&
+        !(project.pvArrays.length > 0 && ["panel", "pv_string"].includes(item.kind)) &&
+        isVisibleInstalledAccessory(item) &&
         item.id !== earth?.id &&
         !gridComponents.some((grid) => grid.id === item.id),
     );
@@ -978,15 +1023,7 @@ export function SystemSchematic({
       };
       },
     );
-    const explicitPairs = new Set(
-      explicitConnections.map(
-        (connection) => `${connection.sourceId}:${connection.targetId}`,
-      ),
-    );
-    const unmatchedInferredConnections = connections.filter(
-      (connection) =>
-        !explicitPairs.has(`${connection.sourceId}:${connection.targetId}`),
-    );
+    const unmatchedInferredConnections = removeCoveredInferredLinks(connections, explicitConnections);
     const firstConnectionGuide = project.connections.length
       ? undefined
       : unmatchedInferredConnections.find((connection) => connection.unconfirmed);
@@ -1256,7 +1293,6 @@ export function SystemSchematic({
       <header className="system-workspace-header sticky top-0 z-50 border-b border-line bg-white/98 shadow-sm">
         <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-3 px-4 md:px-6">
           <Link href="/dashboard" className="shrink-0"><BrandLogo /></Link>
-          <Link href={`${base}?view=wattson`} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-2xl bg-brand px-4 text-[11px] font-extrabold text-white"><Zap size={18}/>Ask Wattson</Link>
           <details className="relative hidden shrink-0 md:block"><summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold text-brand"><MapPin size={13}/><span className="max-w-32 truncate">{site.name}</span><ChevronDown size={13}/></summary><div className="absolute left-0 top-11 z-50 w-64 rounded-2xl border border-line bg-white p-3 shadow-xl"><div className="eyebrow px-2 pb-2">My Sites</div>{sites.map((item) => <Link key={item.id} href={`/sites/${item.id}`} className={`block rounded-xl px-3 py-2 text-[11px] font-bold ${item.id === site.id ? "bg-[#fff6cf] text-brand" : "text-muted hover:bg-[#eef3f8]"}`}>{item.name}</Link>)}</div></details>
           <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Primary navigation"><Link href={`/dashboard?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Dashboard</Link><Link href={`/systems?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Systems</Link><Link href={`/how-to?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">How to</Link><Link href={`/monitor?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Monitor</Link><Link href={`/tools?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Tools</Link><Link href={`/settings?site=${site.id}`} className="rounded-xl bg-[#f6c945] px-3 py-2 text-[11px] font-extrabold text-brand">Settings</Link></nav>
           <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="ml-auto grid size-9 shrink-0 place-items-center rounded-xl border border-line bg-white text-muted md:hidden" aria-label={mobileMenuOpen ? "Close navigation" : "Open navigation"} aria-expanded={mobileMenuOpen}>{mobileMenuOpen ? <X size={17}/> : <Menu size={18}/>}</button>
@@ -1347,13 +1383,15 @@ export function SystemSchematic({
           </div>
         </div>
         <div className="schematic-page-intro my-7">
-          <div className="eyebrow">Live system map</div>
-          <h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">
-            {project.name} schematic
-          </h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
-            Select equipment to open its technical card. Select a connection label to inspect its cable, protection, isolation and routing record.
-          </p>
+          <div>
+            <div className="eyebrow">Live system map</div>
+            <h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">
+              {project.name} schematic
+            </h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted">
+              Select equipment to open its technical card. Select a connection label to inspect its cable, protection, isolation and routing record.
+            </p>
+          </div>
           {project.designCalculator?.proposedAsBuiltDraft && <p className="mt-3 max-w-3xl rounded-xl border border-[#8ab0d2] bg-[#f2f8fe] px-3 py-2 text-xs leading-5 text-[#143c63]"><strong>Planning draft available:</strong> the reviewed proposed schematic is saved as a reference. This as-built map still shows only equipment and connections you have confirmed.</p>}
           <p className="mt-2 text-xs font-semibold text-brand">
             Drag a card to arrange it. To connect equipment, select Connect items and tap the two cards; desktop users can also drag a blue + handle.
@@ -1365,7 +1403,7 @@ export function SystemSchematic({
 
         <section className="card overflow-hidden">
           <div className="schematic-canvas-toolbar flex items-center gap-2 overflow-x-auto border-b border-line bg-[#fff9df] px-3 py-2">
-            <div className="schematic-column-labels flex min-w-0 flex-1 items-center gap-5 text-[9px] font-bold uppercase tracking-[.1em] text-muted"><span>Sources and storage</span><span className="ml-auto hidden md:inline">Inverter / charger</span><span className="ml-auto hidden md:inline">AC distribution</span></div>
+            <button type="button" onClick={() => setWattsonOpen(true)} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-brand px-3 text-[10px] font-bold text-white"><Zap size={13}/>Work on this with Wattson</button>
             <div className="relative flex shrink-0 items-center gap-1.5">
               <label className="sr-only" htmlFor="installed-schematic-connection-view">Show schematic connections</label>
               <select id="installed-schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as ConnectionView)} className="h-9 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC only</option><option value="dc">DC only</option><option value="data">Comms only</option><option value="earth">Earth only</option></select>
@@ -1605,6 +1643,7 @@ export function SystemSchematic({
         </div>
       )}
     </main>
+      <SchematicWattsonChat project={project} initialConversationId={initialConversationId} initialMessages={initialMessages} open={wattsonOpen} onClose={() => setWattsonOpen(false)}/>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { ComponentDetail } from "@/components/system-item-detail";
 import { loadSiteWorkspace } from "@/data/cloud-project";
 import type { ComponentSpec } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
+import { resolveComponentRegulatoryBundle } from "@/regulations/component-regulatory-library";
 import { isCanonicalEquipmentImage } from "@/ui/assets";
 
 const kinds = new Set<ComponentSpec["kind"]>(["panel","pv_string","battery","inverter","charger","generator","protection","isolator","cable","connector","combiner","meter","monitoring","load","other"]);
@@ -21,5 +22,12 @@ export default async function EquipmentPage({ params, searchParams }: { params: 
     isCanonicalEquipmentImage(query.image)
       ? query.image
       : undefined;
-  return <ComponentDetail siteId={id} systemId={systemId} systemName={workspace.project.name} component={component} defaults={component ? undefined : { kind, name: query.name?.slice(0,120) || "New equipment", schematicImage }} returnTo={returnTo}/>;
+  const regulatoryBundle = component ? resolveComponentRegulatoryBundle({
+    component,
+    siteLocation: workspace.site.location,
+    siteLocationConfirmed: workspace.site.locationConfirmed,
+    relatedComponents: workspace.project.components,
+    connections: workspace.project.connections,
+  }) : undefined;
+  return <ComponentDetail siteId={id} systemId={systemId} systemName={workspace.project.name} component={component} defaults={component ? undefined : { kind, name: query.name?.slice(0,120) || "New equipment", schematicImage }} returnTo={returnTo} regulatoryBundle={regulatoryBundle}/>;
 }

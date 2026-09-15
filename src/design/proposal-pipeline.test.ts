@@ -7,8 +7,9 @@ import { deterministicProposalActions } from "./proposal-action";
 import { siteDiscoveryActions } from "@/discovery/site-actions";
 import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { PUT } from "@/app/api/design-calculator/route";
-import { createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, ensureSupplementaryMicroinverterRouting, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, repairCustomEquipmentDraft, schematicCanvasSize, schematicCardDetail, schematicConnectionsForView, tidySchematicNodes, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
+import { componentPlanningDetail, createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, ensureSupplementaryMicroinverterRouting, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, repairCustomEquipmentDraft, schematicCanvasSize, schematicCardDetail, schematicConnectionsForView, tidySchematicNodes, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
 import type { DesignCalculatorState, Project } from "@/domain/models";
+import { buildPvArrayPlan, splitPvArrayPlan } from "@/design/pv-array-plan";
 
 const auth = vi.hoisted(() => ({ client: undefined as unknown }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => auth.client }));
@@ -58,6 +59,17 @@ async function build(answers: DiscoveryAnswers, store = projectStore()) {
 }
 
 describe("discovery → stored proposal → calculator save", () => {
+  it("sizes each proposed PV isolator from known string Isc before route configuration", () => {
+    const node = { id: "solar-safety-1", label: "PV1 isolator", detail: "TBC", image: "/schematic-components/dc-disconnect-isolator.jpg", x: 250, y: 20 };
+    const draft = {
+      createdAt: new Date().toISOString(),
+      flow: ["Solar panels", "Inverter"],
+      nodes: [node],
+      connections: [{ from: "solar-pv-1", to: "solar-safety-1", label: "PV1 string", kind: "solar-dc" as const }],
+    };
+    const sized = componentPlanningDetail(node, draft, { panelIscA: 14.4, panelVocV: 39.5, panelsPerString: 5 }, false);
+    expect(sized.detail).toContain("300 V DC · 20 A minimum");
+  });
   it.each([
     ["combined", "combined_hybrid_inverter", "Hybrid inverter"],
     ["modular", "separate_solar_controller_and_inverter", "Inverter / charger"],
@@ -359,6 +371,33 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(formatted.detail).toContain("series/parallel string, MPPT input and combiner arrangement pending");
     expect(formatted.detail).not.toContain("one independent PV string");
     expect(formatted.detail).not.toContain("? x 460 W");
+  });
+
+  it("renders a user-split array as separate rated tiles and isolation paths", () => {
+    const pvArrayPlan = splitPvArrayPlan(
+      buildPvArrayPlan({ panelCount: 10, surfaces: [{ id: "main-roof", name: "Main roof" }] }),
+      0,
+      2,
+    );
+    const design = {
+      architecture: "combined_hybrid_inverter",
+      panelCount: 10,
+      panelWatts: 450,
+      pvArrayPlan,
+    } as DesignCalculatorState;
+    const draft = createProposedAsBuiltDraft(design);
+    const arrays = draft.nodes?.filter((node) => node.id.startsWith("solar-pv-")) ?? [];
+
+    expect(arrays.map((node) => node.label)).toEqual(["Main roof 1", "Main roof 2"]);
+    expect(arrays.map((node) => schematicCardDetail(node, draft, design))).toEqual(["5 × 450 W", "5 × 450 W"]);
+    expect(draft.nodes?.filter((node) => node.id.startsWith("solar-safety-")).map((node) => node.label)).toEqual([
+      "Main roof 1 isolation",
+      "Main roof 2 isolation",
+    ]);
+    expect(draft.connections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: "solar-pv-1", to: "solar-safety-1" }),
+      expect.objectContaining({ from: "solar-pv-2", to: "solar-safety-2" }),
+    ]));
   });
 
   it("shows the multi-unit inverter plan instead of one oversized inverter", () => {

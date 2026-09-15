@@ -1,4 +1,4 @@
-import { ArrowLeft, BookOpen, ChevronRight, CircleHelp, CloudSun, FileText, Images, Leaf, Link2, LockKeyhole, LogOut, MessageSquareText, PackageOpen, SlidersHorizontal, UserRound, Wrench } from "lucide-react";
+import { ArrowLeft, BookOpen, BookOpenCheck, ChevronRight, CircleHelp, CloudSun, FileText, Images, Leaf, Link2, LockKeyhole, LogOut, MessageSquareText, PackageOpen, SlidersHorizontal, UserRound, Wrench } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -41,6 +41,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     { href: "/account", title: "Account & location", detail: "Identity, password, Sites and system map positions", icon: UserRound },
     { href: "/onboarding?edit=1", title: "Onboarding answers", detail: "Review how Wattson adapts to your experience, situation and goals", icon: CircleHelp },
     { href: "/settings/preferences", title: "Preferences", detail: "Measurement units and display settings", icon: SlidersHorizontal },
+    { href: `/settings/regulations${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Rules & regulations", detail: "Local requirements by Site, component category and application", icon: BookOpenCheck },
     { href: `/settings/inventory${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Unused Inventory", detail: "Owned equipment that has not been assigned to a system", icon: PackageOpen },
     { href: `/monitor${requestedSiteId ? `?site=${requestedSiteId}` : ""}`, title: "Monitor", detail: "Daily solar, forecasts, SOC, generator and grid log", icon: SlidersHorizontal },
     { href: "/settings/connections", title: "Connections", detail: "Connect DeyeCloud stations or Junctek battery monitors", icon: Link2 },

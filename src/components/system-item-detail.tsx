@@ -21,7 +21,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { EquipmentLabelExtraction } from "@/ai/equipment-label";
+import { ComponentRegulatoryPanel } from "@/components/component-regulatory-panel";
 import type { ComponentSpec, PVArray } from "@/domain/models";
+import type { ComponentRegulatoryBundle } from "@/regulations/component-regulatory-library";
 
 const componentTypes: Array<[ComponentSpec["kind"], string]> = [
   ["inverter", "Inverter / charger"],
@@ -460,9 +462,11 @@ export function ComponentDetail({
   component,
   defaults,
   returnTo,
+  regulatoryBundle,
 }: BaseProps & {
   component?: ComponentSpec;
   defaults?: { kind: ComponentSpec["kind"]; name: string; schematicImage?: string };
+  regulatoryBundle?: ComponentRegulatoryBundle;
 }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -1014,6 +1018,7 @@ export function ComponentDetail({
           </button>
         </div>
       </form>
+      {component && regulatoryBundle ? <ComponentRegulatoryPanel componentId={component.id} regulationsHref={`/settings/regulations?site=${siteId}&system=${systemId}&component=${component.id}`} bundle={regulatoryBundle}/> : null}
     </PageShell>
   );
 }

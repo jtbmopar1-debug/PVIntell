@@ -1,5 +1,6 @@
 import type { Project } from "@/domain/models";
 import { deriveProposalSizing } from "@/design/proposal-sizing";
+import { compactRegulatoryTopicsForComponents } from "@/regulations/component-regulatory-library";
 import { wattsonActionTools, type WattsonActionRequest } from "./actions";
 import { GLOBAL_PRODUCT_PERSPECTIVE } from "./product-directives";
 
@@ -115,6 +116,7 @@ function compactProjectContext(project: Project) {
     loads: project.loads.map((load) => omitContextFields(load, ["id"])),
     assumptions: project.assumptions.map((assumption) => omitContextFields(assumption, ["id"])),
     components: project.components.map((component) => omitContextFields(component, ["id", "photoUrl"])),
+    componentRegulatoryLibrary: compactRegulatoryTopicsForComponents(project.components),
     connections: project.connections.map((connection) => omitContextFields(connection, ["id", "projectId"])),
     designDiscovery: discovery,
     designCalculator: safeDesign ? {
@@ -158,14 +160,19 @@ const currentInfoPattern =
   /\b(current|latest|today|recent|updated|effective date|datasheet|manual|recall|firmware|approved product|product availability|price)\b/i;
 const technicalPattern =
   /\b(diagnos|fault|commission|design|calculate|cable|conductor|breaker|fuse|isolator|protection|inverter|battery|bms|mppt|string|voltage|current|surge|short circuit|fault current|grid|export|earthing|grounding|wiring|inspection|compliance)\b/i;
+const regulatedComponentPattern =
+  /\b(array|panel|module|mount(?:ing)?|rail|clamp|inverter|charger|controller|battery|bms|busbar|combiner|connector|cable|conductor|fuse|breaker|rcd|rccb|surge|spd|isolator|disconnect|switchboard|meter|generator|transfer switch|earthing|grounding|electrode|enclosure)\b/i;
+const componentDecisionPattern =
+  /\b(how big|what size|which size|sizing|size|sized|rating|rated|type|class|select|choose|choice|suitable|allowed|required|requirement|install|installation|mount|mounting|locat(?:e|ed|ion)|place|placement|clearance|spacing|distance|enclosure|weatherproof|indoor|outdoor|connect|connection|wire|wiring|protect|protection|label|inspection|permit|approval)\b/i;
 
-export function classifyWattsonRequest(message: string, location: string, hasEquipmentSource = false) {
-  const regulatory = regulatoryPattern.test(message);
-  const technical = regulatory || technicalPattern.test(message);
+export function classifyWattsonRequest(message: string, location: string, hasEquipmentSource = false, hasFreshRegulatoryGuidance = false) {
   const locationKnown =
     Boolean(location.trim()) && location.toLowerCase() !== "location not set";
+  const componentDecision = regulatedComponentPattern.test(message) && componentDecisionPattern.test(message);
+  const regulatory = regulatoryPattern.test(message) || (componentDecision && locationKnown);
+  const technical = regulatory || technicalPattern.test(message);
   const search =
-    currentInfoPattern.test(message) || (regulatory && locationKnown) || (technical && hasEquipmentSource);
+    currentInfoPattern.test(message) || (regulatory && locationKnown && !hasFreshRegulatoryGuidance) || (technical && hasEquipmentSource);
   return { regulatory, technical, search, locationKnown };
 }
 
@@ -188,6 +195,40 @@ export function wattsonAudienceInstruction(questionnaireContext: unknown) {
     return "EXPERIENCED: Technical language is appropriate. Keep it concise, identify decisive ratings and assumptions, and avoid elementary explanations unless requested.";
   return "UNCONFIRMED LEVEL: Start in clear plain language, define necessary technical terms, and let the user's replies determine whether to increase technical depth.";
 }
+
+function hasMatchingCurrentRegulatoryGuidance(message: string, questionnaireContext: unknown) {
+  const root = questionnaireContext && typeof questionnaireContext === "object"
+    ? questionnaireContext as Record<string, unknown>
+    : {};
+  const rows = Array.isArray(root.currentRegulatoryGuidance)
+    ? root.currentRegulatoryGuidance.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === "object"))
+    : [];
+  if (!rows.length) return false;
+  const kindMatchers: Array<[string, RegExp]> = [
+    ["protection", /\b(?:fuse|breaker|rcd|rccb|surge|spd|protection)\b/i],
+    ["isolator", /\b(?:isolator|disconnect|shutoff)\b/i],
+    ["connector", /\b(?:busbar|connector|terminal)\b/i],
+    ["combiner", /\bcombiner\b/i],
+    ["cable", /\b(?:cable|conductor|wire|wiring)\b/i],
+    ["battery", /\b(?:battery|batteries|bms)\b/i],
+    ["inverter", /\binverter\b/i],
+    ["charger", /\b(?:charger|charge controller|controller|mppt)\b/i],
+    ["generator", /\bgenerator\b/i],
+    ["meter", /\bmeter\b/i],
+    ["monitoring", /\b(?:monitoring|communications?|telemetry)\b/i],
+    ["panel", /\b(?:panel|module|array|pv string|solar mounting|rail|clamp)\b/i],
+    ["load", /\b(?:load|appliance|pump|heater|motor)\b/i],
+  ];
+  const mentionedKinds = kindMatchers.filter(([, matcher]) => matcher.test(message)).map(([kind]) => kind);
+  if (!mentionedKinds.length) return false;
+  return mentionedKinds.every((kind) => rows.some((row) => row.component_kind === kind || (kind === "panel" && row.component_kind === "pv_string")));
+}
+
+export const WATTSON_FOLLOWUP_POLICY =
+  "Outside an active discovery or explicitly requested step-by-step workflow, do not append a question merely to continue engagement, collect an optional detail, improve an answer that is already useful, or fill a missing record. Ask one focused question only when the missing fact prevents a reliable answer, is necessary to address an immediate credible safety concern, or is required to complete the exact action the user requested. If a bounded technical question can be answered with clearly stated assumptions, conditions or a provisional range, give that answer and stop. You may name what would be needed for a final equipment selection without requiring the user to reply. The one optional exception is a short offer to show the complete applicable regulation details when current rules materially affect the component answer; never combine that offer with another question.";
+
+export const WATTSON_REGULATION_POLICY =
+  "componentRegulatoryLibrary is the single canonical list of regulatory subjects for each equipment type. currentRegulatoryGuidance contains a previously researched, cited jurisdiction overlay when one is fresh. Use that fresh overlay instead of searching again unless the user explicitly asks for the latest/current position, the cached review date is stale, or the requested subject is not covered. A topic checklist is not itself a legal rule or compliance approval. When requestClassification.regulatory is true and no adequate fresh overlay is supplied, research the complete current requirements for the confirmed Site jurisdiction from authoritative primary sources before answering. For an ordinary component question, keep the visible answer concise: give the requested technical result, include any regulatory condition that changes that result, then briefly state that additional local requirements apply and name their subjects. Offer to show the complete applicable regulation details instead of dumping them unasked. If the user asks to see the regulations, present them as one connected requirement: cover scope and exceptions, component class/certification, rating or sizing method, mounting and permitted location, clearances and access, enclosure/environmental conditions, required companion protection/isolation/earthing/labelling, and any inspection, permit, network or qualified-worker requirement that controls the result. Include only sections relevant to the component and installation, but never quote one attractive limit while omitting another condition that changes whether it is permitted. Separate legal or authority requirements from manufacturer limits and general engineering guidance. If authoritative sources do not establish the complete applicable requirement, identify what remains unverified instead of presenting a partial rule as complete.";
 
 function parseInteraction(
   raw: GeminiInteraction,
@@ -291,6 +332,7 @@ export async function askGemini({
     message,
     project.location,
     project.components.some((component) => Boolean(component.manualUrl)),
+    hasMatchingCurrentRegulatoryGuidance(message, questionnaireContext),
   );
   const compactProject = compactProjectContext(project);
   const compactRecentConversation = compactConversation(recentConversation);
@@ -312,6 +354,7 @@ questionnaireContext.conversationState is the authoritative working memory for t
 Never claim that an application page, record, diagram, setting, or equipment item exists unless it is present in supplied application/tool data. Direct schematic creation is handled by the authoritative route before a model call: if a schematic request reaches this prompt, explain or clarify it without claiming that anything was created. Missing specifications may be marked TBC and explained as provisional. Equipment display codes are model-specific; discuss them only when the current conversation explicitly asks about those codes, and say their meanings cannot be confirmed without the controller model/manual. Before suggesting a PV series/parallel arrangement, establish exactly what the panels connect to. If the destination inverter, controller, optimiser or microinverter is not unambiguously identified, ask for its make and model first and stop there—do not bury that question after an example layout. Do not claim electrical compatibility or provide an exact approved wiring design until the necessary controller limits and panel Voc, Vmp, Isc, and Imp are confirmed.
 Recognise boats, vehicles and other 12/24 V battery installations as low-voltage DC systems. A separate solar charge controller is normal in these systems. Never invent an inverter, AC switchboard or AC load path when none was stated. Keep starter and house batteries as distinct roles, preserve the stated physical quantity, and do not combine amp-hours or assert series/parallel wiring unless the user confirms that topology. When topology matters, ask one focused question about the house-bank connection or whether any inverter/AC loads exist.
 Meter boards, revenue meters and smart-meter arrangements are location-specific. Use the selected Site country plus its network/utility or metering provider when known. Do not apply New Zealand terminology or requirements globally. If the jurisdiction is missing, give only neutral definitions and ask for the Site country before providing ownership, installation, interval, tariff, export or compliance-specific advice.
+${WATTSON_REGULATION_POLICY}
 questionnaireContext.applicationCapabilities is the authoritative map of PVIntell pages and their purposes. Do not invent navigation or recommend generic Settings for system setup, equipment recording, design, or schematics. Name only a supplied real page whose stated purpose matches the task, and only after answering in chat.
 Response style:
 - Sound like a capable, personable solar mate: warm, plain-spoken and occasionally dry or lightly cheeky when the moment suits. One small humorous aside is plenty; never force a joke into every reply.
@@ -322,7 +365,8 @@ Response style:
 - Do not repeat or inventory the whole system unless the user asks for a summary.
 - Do not add greetings, apologies, scene-setting, conclusions, or "what would you like to do next?" filler.
 - Avoid headings for simple answers. For a comparison, use a compact table or a few bullets.
-- Ask no more than one focused clarification question at a time. Ask it when a conflicting record or a missing material fact prevents a reliable answer, or when a likely part of the as-built system is not yet recorded. Make the question concrete and easy to answer.
+- ${WATTSON_FOLLOWUP_POLICY}
+- When a question is necessary, ask no more than one at a time and make it concrete and easy to answer.
 - A missing record does not prove that equipment is absent. Phrase checks like: "I cannot see an AC shut-off recorded between the mains feed and Studio inverter. Is one installed?" Do not phrase them as findings or defects.
 - When conversationState.activeIntent is site_discovery, treat the conversation as progressive discovery. Otherwise, do not turn the conversation into discovery. Retain confirmed answers in the supplied conversation state and do not repeatedly ask for them.
 - Do not save, attach, create or update application records unless the current router has supplied mutation tools after explicit user consent. Factual statements and answers are evidence, not permission to mutate a record. When mutation tools are absent, answer the technical question completely and keep any optional record action to one brief sentence after the answer. If you ask the user to approve an optional record action, you must also call offer_optional_record_action in the same response with the exact proposed action and destination; never create a consent question that exists only as prose. If the target or proposed action is not exact yet, ask only for that missing detail and do not call the offer tool.

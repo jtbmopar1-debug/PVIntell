@@ -8,8 +8,8 @@ export default async function HowToPage({ searchParams }: { searchParams: Promis
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") redirect("/login");
   const { site: requestedSiteId } = await searchParams;
-  const sites = await supabase.from("sites").select("id,name,location").eq("owner_id", userId).order("created_at");
+  const sites = await supabase.from("sites").select("id,name,location,location_confirmed").eq("owner_id", userId).order("created_at");
   if (sites.error) throw sites.error;
   const selected = sites.data?.find((site) => site.id === requestedSiteId) ?? sites.data?.[0];
-  return <HowToLibrary siteId={selected?.id} siteName={selected?.name} location={selected?.location ?? undefined}/>;
+  return <HowToLibrary siteId={selected?.id} siteName={selected?.name} location={selected?.location ?? undefined} locationConfirmed={Boolean(selected?.location_confirmed)}/>;
 }
