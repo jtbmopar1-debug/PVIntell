@@ -23,6 +23,7 @@ import {
 import { actionsAllowedByDecision, consumeConfirmedPendingAction, pendingActionRequests, routeWattsonTurn } from "@/ai/conversation-router";
 import { cachedConversationResponse, startedConversationRequest } from "@/ai/conversation-request";
 import { attachImageToRecord, requestsExistingRecordAttachment, resolveRecordAttachmentTarget, type RecordAttachmentTarget } from "@/ai/record-attachment";
+import { systemConfirmationReadiness } from "@/lib/system-confirmation-readiness";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -411,13 +412,16 @@ export async function POST(request: Request) {
         ?? (Number(conversationState.facts.find((fact) => fact.key === "panel.rated_power_w")?.value ?? 0) || undefined);
       let createdArrayRows: Array<{ id: string }> = [];
       if (schematicPlan.pv.totalPanels || panelWatts) {
-        const arrayRows = Array.from({ length: schematicPlan.pv.arrayCount }, (_, index) => ({
+        const requestedArrays = schematicPlan.arrays.length ? schematicPlan.arrays : Array.from({ length: schematicPlan.pv.arrayCount }, (_, index) => ({ name: `PV${index + 1}`, panelCount: schematicPlan.pv.panelsPerArray, panelWatts, panelType: undefined, cableSizeMm2: undefined }));
+        const arrayRows = requestedArrays.map((array, index) => ({
           project_id: createdSystemId,
-          name: `PV${index + 1}`,
-          panel_watts: panelWatts ?? null,
-          panel_count: schematicPlan.pv.panelsPerArray ?? null,
+          name: array.name ?? `PV${index + 1}`,
+          panel_watts: array.panelWatts ?? panelWatts ?? null,
+          panel_count: array.panelCount ?? null,
           strings: 1,
-          panels_per_string: schematicPlan.pv.panelsPerArray ?? null,
+          panels_per_string: array.panelCount ?? null,
+          panel_type: array.panelType ?? null,
+          cable_size_mm2: array.cableSizeMm2 ?? null,
           specifications: {
             "Wiring arrangement": "series",
             "Panel Voc": "TBC",
@@ -470,9 +474,11 @@ export async function POST(request: Request) {
           source_ref: sourceRef,
           target_ref: targetRef,
           name: connection.name,
-          connection_type: "dc",
+          connection_type: connection.connectionType ?? "dc",
           polarity: connection.polarity,
-          notes: "Conceptual connection; cable, protection and route details are TBC.",
+          cable_size: connection.cableDescription ?? (connection.cableSizeMm2 ? `${connection.cableSizeMm2} mm²` : null),
+          breaker_size: connection.protection ?? null,
+          notes: [connection.cableDescription, connection.protection, "Conceptual connection; verify supplied and missing ratings against the selected equipment."].filter(Boolean).join("; "),
           confidence: "estimated",
         }] : [];
       });
@@ -496,7 +502,7 @@ export async function POST(request: Request) {
       if (saved.error) throw saved.error;
       return Response.json({ message: responseMessage, actions: [{ type: "workspace_created", summary: "Created conceptual schematic" }], conversationId, schematicId: createdSystemId, actionUrl: schematicUrl, actionLabel: "Open schematic" });
     } catch (problem) {
-      const detail = problem instanceof Error ? problem.message : "Unknown schematic creation error";
+      const detail = problem instanceof Error ? problem.message : problem && typeof problem === "object" && "message" in problem ? String(problem.message) : "Unknown schematic creation error";
       if (createdSystemByRequest && createdSystemId) await supabase.from("projects").delete().eq("id", createdSystemId).eq("owner_id", userId);
       else {
         if (createdConnectionIds.length) await supabase.from("system_connections").delete().in("id", createdConnectionIds);
@@ -583,7 +589,9 @@ export async function POST(request: Request) {
     const recordedDiscovery = activeSettings.designDiscovery && typeof activeSettings.designDiscovery === "object"
       ? activeSettings.designDiscovery as Record<string, unknown>
       : {};
-    const monitoringOnlyIntent = Boolean(routeDecision.mutationConsent && activeSystem && completedSystemIntent(parsed.data.message));
+    const monitoringOnlyRequested = Boolean(routeDecision.mutationConsent && activeSystem && completedSystemIntent(parsed.data.message));
+    const confirmationReadiness = monitoringOnlyRequested && activeSystem ? await systemConfirmationReadiness(supabase, activeSystem.id) : undefined;
+    const monitoringOnlyIntent = monitoringOnlyRequested && Boolean(confirmationReadiness?.ready);
     if (monitoringOnlyIntent && activeSystem && activeSystem.phase !== "monitor") {
       const phaseUpdated = await supabase.from("projects").update({ phase: "monitor" }).eq("id", activeSystem.id).eq("owner_id", userId);
       if (phaseUpdated.error) throw phaseUpdated.error;
@@ -732,6 +740,8 @@ export async function POST(request: Request) {
     }
     if (monitoringOnlyIntent && activeSystem)
       message = `Understood - I’ve set ${activeSystem.name} to monitor mode. I won’t run design discovery or build prompts for this system; Wattson will treat it as a commissioned as-built installation for monitoring, diagnostics and record-keeping.`;
+    if (monitoringOnlyRequested && !monitoringOnlyIntent)
+      message = confirmationReadiness?.message ?? "Confirm every schematic record before commissioning.";
     if (!message && architectureReply) message = architectureReply;
     if (!message && discoveryReply) message = discoveryReply;
     const proposedDesignUpdated = appliedActions.some((action) =>

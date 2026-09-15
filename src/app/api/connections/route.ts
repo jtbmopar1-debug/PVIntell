@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { assessCableAgainstEndpoints, withCompatibilityWarning } from "@/lib/connection-cable-assessment";
 
 const schema = z.object({
   projectId: z.uuid(),
@@ -42,6 +43,10 @@ export async function POST(request: Request) {
       { error: "A connection between these two items already exists. Open its connection label to review or update it." },
       { status: 409 },
     );
+  const endpointIds = [input.sourceRef, input.targetRef].filter((ref) => ref.startsWith("component:")).map((ref) => ref.slice("component:".length));
+  const endpointResult = endpointIds.length ? await supabase.from("system_components").select("display_name,specifications").eq("project_id", input.projectId).in("id", endpointIds) : { data: [], error: null };
+  if (endpointResult.error) return Response.json({ error: endpointResult.error.message }, { status: 400 });
+  const compatibilityWarning = input.cableSize ? assessCableAgainstEndpoints(input.cableSize, endpointResult.data ?? []) : undefined;
   const created = await supabase
     .from("system_connections")
     .insert({
@@ -57,8 +62,8 @@ export async function POST(request: Request) {
       fuse_size: input.fuseSize || null,
       isolator: input.isolator || null,
       route: input.route || null,
-      notes: input.notes || null,
-      confidence: "confirmed",
+      notes: withCompatibilityWarning(input.notes, compatibilityWarning),
+      confidence: compatibilityWarning ? "estimated" : "confirmed",
     })
     .select("*")
     .single();
@@ -68,5 +73,5 @@ export async function POST(request: Request) {
     .from("projects")
     .update({ updated_at: new Date().toISOString() })
     .eq("id", input.projectId);
-  return Response.json({ connection: created.data }, { status: 201 });
+  return Response.json({ connection: created.data, compatibilityWarning }, { status: 201 });
 }

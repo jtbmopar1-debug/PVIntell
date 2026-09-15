@@ -859,7 +859,8 @@ export function ComponentDetail({
           </button>
         </div>
       )}
-      <form action={save} className="card p-6">
+      {component && component.status !== "confirmed" ? <div className="mb-4 rounded-2xl border border-[#8bc7a0] bg-[#effaf3] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong className="text-sm text-[#17603b]">Proposed record awaiting your confirmation</strong><p className="mt-1 text-[10px] leading-4 text-muted">Review the values below first. Confirming accepts this record as currently shown; any TBC or unverified values remain clearly marked.</p></div><button type="submit" form="component-technical-record" disabled={saving} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#238653] px-5 text-xs font-bold text-white disabled:opacity-50"><ShieldCheck size={16}/>{saving ? "Confirming…" : "Confirm this record"}</button></div></div> : null}
+      <form id="component-technical-record" action={save} className="card p-6">
         {isAcConnection && <><input type="hidden" name="type" value={component?.kind ?? defaults?.kind ?? "other"}/><input type="hidden" name="name" value={component?.name ?? defaults?.name ?? "Grid connection"}/><input type="hidden" name="quantity" value={component?.quantity ?? 1}/></>}
         <div className="grid gap-4 sm:grid-cols-2">
           {!isAcConnection && !showEquipmentType && <input type="hidden" name="type" value={component?.kind ?? defaults?.kind ?? "other"}/>}
@@ -1105,7 +1106,8 @@ export function PVArrayDetail({
       description={`Panel, string, cabling and protection record for ${systemName}.`}
       icon={<Sun size={22} />}
     >
-      <form action={save} className="card p-6">
+      {array && array.confidence !== "confirmed" ? <div className="mb-4 rounded-2xl border border-[#8bc7a0] bg-[#effaf3] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong className="text-sm text-[#17603b]">Proposed PV-array record awaiting your confirmation</strong><p className="mt-1 text-[10px] leading-4 text-muted">Review the panel, string and cable values below. TBC or unverified details remain visible after confirmation.</p></div><button type="submit" form="pv-array-technical-record" disabled={saving} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#238653] px-5 text-xs font-bold text-white disabled:opacity-50"><ShieldCheck size={16}/>{saving ? "Confirming…" : "Confirm this record"}</button></div></div> : null}
+      <form id="pv-array-technical-record" action={save} className="card p-6">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Array name">
             <input

@@ -2,6 +2,7 @@
 
 import {
   ArrowLeft,
+  Ban,
   BatteryCharging,
   ChevronDown,
   CircleAlert,
@@ -72,6 +73,7 @@ type ConnectionDetail = {
   saved?: SystemConnection;
   polarity?: SystemConnection["polarity"];
   connectionType?: SystemConnection["connectionType"];
+  incompatible?: boolean;
 };
 
 type ConnectionView = "all" | "ac" | "dc" | "data" | "earth";
@@ -112,7 +114,6 @@ const imageBase = "/schematic-components";
 
 function componentImage(component: ComponentSpec) {
   const selectedImage = text(component.specs["Schematic image"]);
-  if (isCanonicalEquipmentImage(selectedImage)) return selectedImage;
   const identity = [
     component.kind,
     component.name,
@@ -124,6 +125,13 @@ function componentImage(component: ComponentSpec) {
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+  // An MCB is a device, not its optional DIN-rail enclosure. Prefer the
+  // canonical breaker image even when an older record saved the enclosure.
+  if (component.kind === "protection" && /\bmcb\b|circuit breaker/.test(identity))
+    return identity.includes("ac") || identity.includes("generator")
+      ? `${imageBase}/ac-circuit-breaker-mcb.jpg`
+      : `${imageBase}/dc-circuit-breaker-mcb.jpg`;
+  if (isCanonicalEquipmentImage(selectedImage)) return selectedImage;
   if (component.kind === "inverter") {
     if (identity.includes("micro")) return `${imageBase}/microinverter.jpg`;
     if (identity.includes("string")) return `${imageBase}/string-inverter.jpg`;
@@ -144,6 +152,8 @@ function componentImage(component: ComponentSpec) {
       ? `${imageBase}/ac-disconnect-isolator.jpg`
       : `${imageBase}/dc-disconnect-isolator.jpg`;
   if (component.kind === "protection") {
+    if (identity.includes("mrbf"))
+      return "/guides/protection/mrbf-terminal-fuse.jpg";
     if (identity.includes("surge") || identity.includes("spd"))
       return `${imageBase}/surge-protection-device-spd.jpg`;
     if (identity.includes("fuse holder"))
@@ -163,13 +173,17 @@ function componentImage(component: ComponentSpec) {
     return `${imageBase}/energy-meter.jpg`;
   }
   if (component.kind === "monitoring")
-    return identity.includes("wifi")
+    return identity.includes("coulometer") || identity.includes("junctek") || identity.includes("km140")
+      ? "/guides/battery/battery-shunt-coulometer.png"
+      : identity.includes("wifi")
       ? `${imageBase}/wifi-communication-module.jpg`
       : `${imageBase}/monitoring-device-data-logger.jpg`;
   if (component.kind === "cable")
     return identity.includes("pv") || identity.includes("solar")
       ? `${imageBase}/pv-cable-dc.jpg`
       : DC_CABLE_IMAGE;
+  if (identity.includes("protective-earth") || identity.includes("protective earth") || identity.includes("earthing bar"))
+    return `${imageBase}/earthing-ground-bar.jpg`;
   if (identity.includes("busbar")) return `${imageBase}/busbar.jpg`;
   if (
     identity.includes("grid connection") ||
@@ -325,11 +339,13 @@ function ConnectionPath({
   positions,
   onOpen,
   showLabel,
+  laneOffset = 0,
 }: {
   connection: ConnectionDetail;
   positions: Map<string, { x: number; y: number }>;
   onOpen: (connection: ConnectionDetail) => void;
   showLabel: boolean;
+  laneOffset?: number;
 }) {
   const source = positions.get(connection.sourceId);
   const target = positions.get(connection.targetId);
@@ -341,31 +357,33 @@ function ConnectionPath({
   const y2 = target.y + nodeSize.height / 2;
   const direction = travelsRight ? 1 : -1;
   const bend = Math.max(55, Math.abs(x2 - x1) * 0.45);
-  const path = `M ${x1} ${y1} C ${x1 + direction * bend} ${y1}, ${x2 - direction * bend} ${y2}, ${x2} ${y2}`;
+  const path = `M ${x1} ${y1} C ${x1 + direction * bend} ${y1 + laneOffset}, ${x2 - direction * bend} ${y2 + laneOffset}, ${x2} ${y2}`;
   const labelX = (x1 + x2) / 2 - 43;
-  const labelY = (y1 + y2) / 2 - 13;
+  const labelY = (y1 + y2) / 2 - 13 + laneOffset;
   const isAc =
     connection.saved?.connectionType === "ac" ||
+    connection.connectionType === "ac" ||
     connection.label.toLowerCase().includes("ac");
   const isEarth =
     connection.saved?.connectionType === "earth" ||
+    connection.connectionType === "earth" ||
     connection.label.toLowerCase().includes("earth") ||
     connection.label.toLowerCase().includes("bond");
   const polarity = connection.saved?.polarity ?? connection.polarity ?? "na";
   const stroke = connection.unconfirmed
     ? "#9aabbc"
-    : polarity === "positive"
-      ? "#d64343"
-      : polarity === "negative"
-        ? "#202a35"
     : isEarth
       ? "#2d8a57"
     : isAc
       ? "#d99b13"
+    : polarity === "positive"
+      ? "#d64343"
+      : polarity === "negative"
+        ? "#202a35"
       : "#2f80c1";
   return (
     <g>
-      {polarity === "pair" && !connection.unconfirmed ? (
+      {polarity === "pair" && !isAc && !isEarth && !connection.unconfirmed ? (
         <>
           <path d={path} fill="none" stroke="#d64343" strokeWidth="3" transform="translate(0,-3)" pointerEvents="none" />
           <path d={path} fill="none" stroke="#202a35" strokeWidth="3" transform="translate(0,3)" pointerEvents="none" />
@@ -396,6 +414,19 @@ function ConnectionPath({
             className={`h-7 w-full rounded-full border bg-white px-2 text-[8px] font-extrabold shadow-sm ${connection.unconfirmed ? "border-dashed text-muted" : isAc ? "border-[#e4bd62] text-[#93630a]" : "border-[#8db4d8] text-brand"}`}
           >
             {connection.label}
+          </button>
+        </foreignObject>
+      )}
+      {connection.incompatible && (
+        <foreignObject x={(x1 + x2) / 2 - 15} y={(y1 + y2) / 2 - 15 + laneOffset} width="30" height="30">
+          <button
+            type="button"
+            onClick={() => onOpen(connection)}
+            title="Compatibility check failed — open this connection for details"
+            aria-label="Compatibility check failed; open connection details"
+            className="grid size-7 place-items-center rounded-full border-2 border-white bg-[#c9362b] text-white shadow-md"
+          >
+            <Ban size={17}/>
           </button>
         </foreignObject>
       )}
@@ -991,6 +1022,9 @@ export function SystemSchematic({
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
+        const effectiveConnectionType = connection.connectionType === "dc" && /\bAC\b/i.test(`${connection.name} ${endpointNames}`)
+          ? "ac"
+          : connection.connectionType;
         const polarity =
           connection.polarity && connection.polarity !== "na"
             ? connection.polarity
@@ -998,7 +1032,7 @@ export function SystemSchematic({
               ? "positive"
               : endpointNames.includes("negative")
                 ? "negative"
-                : connection.connectionType === "dc"
+                : effectiveConnectionType === "dc"
                   ? "pair"
                   : "na";
         return {
@@ -1007,7 +1041,7 @@ export function SystemSchematic({
         sourceId: connection.sourceRef,
         targetId: connection.targetRef,
         values: [
-          ["Connection", connection.connectionType.toUpperCase()],
+          ["Connection", effectiveConnectionType.toUpperCase()],
           ["Polarity", polarity],
           ["Cable size", connection.cableSize ?? "Not recorded"],
           ["Cable length", connection.cableLength ?? "Not recorded"],
@@ -1017,9 +1051,10 @@ export function SystemSchematic({
           ["Route", connection.route ?? "Not recorded"],
           ["Notes", connection.notes ?? "Not recorded"],
         ],
-        saved: connection,
         polarity,
-        connectionType: connection.connectionType,
+        connectionType: effectiveConnectionType,
+        saved: { ...connection, connectionType: effectiveConnectionType },
+        incompatible: /cable compatibility warning:/i.test(connection.notes ?? ""),
       };
       },
     );
@@ -1197,6 +1232,29 @@ export function SystemSchematic({
       );
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not save connection");
+      if (body.compatibilityWarning) {
+        setError(`Saved with warning: ${body.compatibilityWarning}`);
+        setSelected((current) => current?.saved ? {
+          ...current,
+          saved: {
+            ...current.saved,
+            name: String(payload.name ?? ""),
+            connectionType: payload.connectionType as SystemConnection["connectionType"],
+            polarity: payload.polarity as SystemConnection["polarity"],
+            cableSize: String(payload.cableSize ?? ""),
+            cableLength: String(payload.cableLength ?? ""),
+            breakerSize: String(payload.breakerSize ?? ""),
+            fuseSize: String(payload.fuseSize ?? ""),
+            isolator: String(payload.isolator ?? ""),
+            route: String(payload.route ?? ""),
+            notes: body.connection?.notes ?? String(payload.notes ?? ""),
+            confidence: "estimated",
+          },
+          incompatible: /cable compatibility warning:/i.test(body.connection?.notes ?? ""),
+        } : current);
+        router.refresh();
+        return;
+      }
       setSelected(undefined);
       setDraftEnds(undefined);
       router.refresh();
@@ -1460,15 +1518,21 @@ export function SystemSchematic({
                 opacity="0.42"
                 pointerEvents="none"
               />
-              {visibleConnections.map((connection) => (
+              {visibleConnections.map((connection) => {
+                const parallel = visibleConnections.filter((candidate) => candidate.sourceId === connection.sourceId && candidate.targetId === connection.targetId);
+                const parallelIndex = parallel.findIndex((candidate) => candidate.id === connection.id);
+                const laneOffset = parallel.length > 1 ? (parallelIndex - (parallel.length - 1) / 2) * 22 : 0;
+                return (
                 <ConnectionPath
                   key={connection.id}
                   connection={connection}
                   positions={displayPositions}
                   onOpen={setSelected}
                   showLabel={showConnectionLabels}
+                  laneOffset={laneOffset}
                 />
-              ))}
+                );
+              })}
               {diagram.sourceNodes.map((node) => {
                 const position = displayPositions.get(node.id)!;
                 return <NodeCard key={node.id} node={node} {...position} connectingFrom={connectingFrom?.id} connectionMode={connectionMode} onConnectionStart={setConnectingFrom} onConnectionDrop={completeConnection} onMoveStart={setMovingNode} onMoveEnd={moveNodeFromPointer} />;
@@ -1538,6 +1602,7 @@ export function SystemSchematic({
       {editorOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[#0b2740]/50 p-5 backdrop-blur-sm">
           <form
+            key={`${editorConnection?.id ?? "new"}:${editorConnection?.cableSize ?? ""}:${editorConnection?.confidence ?? ""}`}
             action={saveConnection}
             className="card my-6 w-full max-w-2xl bg-white p-6 shadow-2xl"
           >

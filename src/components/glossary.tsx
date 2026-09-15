@@ -4,6 +4,7 @@ import Image from "next/image";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AS_BUILT_SCHEMATIC_IMAGE, AUTOMATIC_GENERATOR_START_IMAGE, AZIMUTH_TILT_IMAGE, COEFFICIENT_OF_PERFORMANCE_IMAGE, DC_CABLE_IMAGE, EARTH_ELECTRODE_IMAGE, ELECTRIC_HOT_WATER_CYLINDER_IMAGE, GRID_CONNECTION_IMAGE, METER_BOARD_IMAGE, METERING_REGION_IMAGE, NON_COMMUNICATING_DIGITAL_METER_IMAGE, PLUG_IN_POWER_METER_IMAGE, POOL_CIRCULATION_PUMP_IMAGE, POOL_OR_SPA_COVER_IMAGE, PURE_VS_MODIFIED_SINE_IMAGE, PV_STRING_IMAGE, SMART_ELECTRICITY_METER_IMAGE, THERMAL_VS_ELECTRICAL_IMAGE, UNSAFE_BACKFEED_IMAGE } from "@/ui/assets";
+import { CableSizeReference } from "@/components/cable-size-reference";
 
 const entries = [
   ["As-built record / as-built drawing", AS_BUILT_SCHEMATIC_IMAGE, "System records", "A record of the equipment, wiring, protection, settings and physical arrangement that actually exists after installation.", "It is different from a proposed design, quotation or planning drawing, because it should reflect what was truly installed—including approved changes made during the work. Accurate as-built records help owners, maintainers and fault-finders identify equipment, isolation points and connections without guessing. Update the record whenever the installed system changes."],
@@ -90,6 +91,7 @@ export function Glossary() {
   }, [query]);
   return <div className="space-y-6">
     <div className="relative max-w-xl"><Search className="absolute left-4 top-1/2 -translate-y-1/2 text-muted" size={17}/><input value={query} onChange={(event) => setQuery(event.target.value)} className="field mt-0 pl-11" placeholder="Search a component or term"/></div>
+    {(!query.trim() || /cable|wire|awg|gauge|aught|ought|mm/.test(query.trim().toLowerCase())) ? <CableSizeReference/> : null}
     <div className="grid gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">{visible.map(([term, image, category, what, role]) => <article key={term} className="card grid min-w-0 grid-cols-[7.5rem_minmax(0,1fr)] overflow-hidden sm:block"><div className="relative min-h-36 overflow-hidden border-r border-line bg-white sm:h-44 sm:min-h-0 sm:border-r-0"><Image fill src={glossaryImage(image)} alt={term} sizes="(max-width: 639px) 120px, (max-width: 1279px) 45vw, 30vw" className="object-contain p-2 sm:p-4"/></div><div className="relative min-w-0 bg-white p-3 sm:border-t sm:border-line sm:bg-transparent sm:p-5"><div className="eyebrow">{category}</div><h2 className="mt-1.5 break-words text-[15px] font-extrabold leading-5 sm:mt-2 sm:text-base">{term}</h2><p className="mt-2 text-[13px] leading-5 text-ink sm:mt-3 sm:text-xs">{what}</p><p className="mt-1.5 text-[13px] leading-5 text-muted sm:mt-2 sm:text-[11px]">{role}</p></div></article>)}</div>
     {!visible.length && <div className="card p-8 text-sm text-muted">No glossary entries match “{query}”.</div>}
   </div>;

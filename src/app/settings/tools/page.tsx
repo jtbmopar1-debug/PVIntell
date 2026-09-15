@@ -6,6 +6,7 @@ import { ApplianceRunningCalculator } from "@/components/appliance-running-calcu
 import { AzimuthCalculator } from "@/components/azimuth-calculator";
 import { BrandLogo } from "@/components/brand-logo";
 import { CableProtectionCalculator } from "@/components/cable-protection-calculator";
+import { CableSizeReference } from "@/components/cable-size-reference";
 import { PoolHeatingCalculator } from "@/components/pool-heating-calculator";
 import { SystemFinancials } from "@/components/system-financials";
 import type { SystemFinancialsState } from "@/domain/models";
@@ -58,7 +59,7 @@ export default async function ToolsPage({ searchParams }: { searchParams: Promis
     </ToolDisclosure>
 
     <ToolDisclosure icon={<Cable size={16}/>} eyebrow="Electrical planning" title="Cable size & voltage-drop calculator" description="Check a planning conductor size and voltage drop for a circuit." defaultOpen={query.calculator === "cable"}>
-      <ToolBody><CableProtectionCalculator/></ToolBody>
+      <ToolBody><div className="space-y-4"><CableProtectionCalculator/><CableSizeReference/></div></ToolBody>
     </ToolDisclosure>
     </div>
   </div></main>;

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { systemConfirmationReadiness } from "@/lib/system-confirmation-readiness";
 
 const detailsUpdateSchema = z.object({ name: z.string().trim().min(1).max(120), projectType: z.enum(["off-grid", "grid-tied", "hybrid"]) });
 const lifecycleUpdateSchema = z.object({ phase: z.literal("monitor") });
@@ -11,6 +12,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const supabase = await createClient(); const claims = await supabase.auth.getClaims(); if (claims.error || typeof claims.data?.claims?.sub !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
   if ("phase" in parsed.data) {
+    const confirmation = await systemConfirmationReadiness(supabase, id);
+    if (!confirmation.ready) return Response.json({ error: confirmation.message, blockers: confirmation }, { status: 409 });
     const [steps, checks, projectRow, existingComponents, existingConnections] = await Promise.all([
       supabase.from("installation_steps").select("completed_at").eq("project_id", id),
       supabase.from("commissioning_records").select("result").eq("project_id", id),

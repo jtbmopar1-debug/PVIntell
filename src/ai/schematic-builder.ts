@@ -30,13 +30,16 @@ export async function persistRequestedSchematic({ supabase, projectId, message, 
   try {
     let createdArrays: Array<{ id: string; name: string }> = [];
     if (plan.pv.totalPanels || panelWatts) {
-      const rows = Array.from({ length: plan.pv.arrayCount }, (_, index) => ({
+      const requestedArrays = plan.arrays.length ? plan.arrays : Array.from({ length: plan.pv.arrayCount }, (_, index) => ({ name: `PV${index + 1}`, panelCount: plan.pv.panelsPerArray, panelWatts, panelType: undefined, cableSizeMm2: undefined }));
+      const rows = requestedArrays.map((array, index) => ({
         project_id: projectId,
-        name: `PV${index + 1}`,
-        panel_watts: panelWatts ?? null,
-        panel_count: plan.pv.panelsPerArray ?? null,
+        name: array.name ?? `PV${index + 1}`,
+        panel_watts: array.panelWatts ?? panelWatts ?? null,
+        panel_count: array.panelCount ?? null,
         strings: 1,
-        panels_per_string: plan.pv.panelsPerArray ?? null,
+        panels_per_string: array.panelCount ?? null,
+        panel_type: array.panelType ?? null,
+        cable_size_mm2: array.cableSizeMm2 ?? null,
         specifications: {
           "Wiring arrangement": "series string",
           "Panel Voc": "TBC",
@@ -94,9 +97,11 @@ export async function persistRequestedSchematic({ supabase, projectId, message, 
         source_ref: sourceRef,
         target_ref: targetRef,
         name: connection.name,
-        connection_type: "dc",
-        polarity: connection.polarity,
-        notes: "Conceptual connection; cable, protection and route details are TBC.",
+        connection_type: connection.connectionType ?? "dc",
+        polarity: connection.connectionType && connection.connectionType !== "dc" ? "na" : connection.polarity,
+        cable_size: connection.cableDescription ?? (connection.cableSizeMm2 ? `${connection.cableSizeMm2} mm²` : null),
+        breaker_size: connection.protection ?? null,
+        notes: [connection.cableDescription, connection.protection, "Conceptual connection; verify supplied and missing ratings against the selected equipment."].filter(Boolean).join("; "),
         confidence: "estimated",
       }] : [];
     });

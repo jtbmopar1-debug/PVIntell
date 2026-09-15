@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { assessCableAgainstEndpoints, withCompatibilityWarning } from "@/lib/connection-cable-assessment";
 
 const schema = z.object({
   projectId: z.uuid(),
@@ -28,6 +29,12 @@ export async function PATCH(
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
   const input = parsed.data;
+  const current = await supabase.from("system_connections").select("source_ref,target_ref").eq("id", id).eq("project_id", input.projectId).single();
+  if (current.error) return Response.json({ error: current.error.message }, { status: 400 });
+  const endpointIds = [current.data.source_ref, current.data.target_ref].filter((ref) => ref.startsWith("component:")).map((ref) => ref.slice("component:".length));
+  const endpointResult = endpointIds.length ? await supabase.from("system_components").select("display_name,specifications").eq("project_id", input.projectId).in("id", endpointIds) : { data: [], error: null };
+  if (endpointResult.error) return Response.json({ error: endpointResult.error.message }, { status: 400 });
+  const compatibilityWarning = input.cableSize ? assessCableAgainstEndpoints(input.cableSize, endpointResult.data ?? []) : undefined;
   const updated = await supabase
     .from("system_connections")
     .update({
@@ -40,8 +47,8 @@ export async function PATCH(
       fuse_size: input.fuseSize || null,
       isolator: input.isolator || null,
       route: input.route || null,
-      notes: input.notes || null,
-      confidence: "confirmed",
+      notes: withCompatibilityWarning(input.notes, compatibilityWarning),
+      confidence: compatibilityWarning ? "estimated" : "confirmed",
     })
     .eq("id", id)
     .eq("project_id", input.projectId)
@@ -53,7 +60,7 @@ export async function PATCH(
     .from("projects")
     .update({ updated_at: new Date().toISOString() })
     .eq("id", input.projectId);
-  return Response.json({ connection: updated.data });
+  return Response.json({ connection: updated.data, compatibilityWarning });
 }
 
 export async function DELETE(

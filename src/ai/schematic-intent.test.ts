@@ -67,6 +67,39 @@ describe("conceptual schematic extraction", () => {
     ]);
   });
 
+  it("retains a fully specified commissioned-system topology", () => {
+    const plan = requestedSchematicPlan("Build me a schematic, 10 × 590w bifacials in 2 strings of 5, 6 mm² PV cable. (PV1 and PV2) PV3 is 6 × 450w bifacial panels - 4 mm² PV cable. all 3 come down to a fusebox with 3 × 32A MCB, and then to the Deye 10kW Single-Phase 3 MPPT Hybrid Inverter SUN-10K-SG02LP1-AU. the AC from inverter goes on 16 mm² AC cable to a 63A MCB and then to the house switch board. I have 3 × Micromall 48v 210Ah lifepo4 batteries that are run through pos and neg busbars, the busbar battery connections are protected with MRBF fuses each and 1 MRBF for the POS busbar 4awg cable to the inverter. I also have a 8.5kw inverted generator connected through a 63 A Wi-Fi MCB. monitoring is managed by a Junctek KM140F coulometer");
+    expect(plan.arrays).toEqual([
+      expect.objectContaining({ name: "PV1", panelCount: 5, panelWatts: 590, panelType: "bifacial", cableSizeMm2: 6 }),
+      expect.objectContaining({ name: "PV2", panelCount: 5, panelWatts: 590, panelType: "bifacial", cableSizeMm2: 6 }),
+      expect.objectContaining({ name: "PV3", panelCount: 6, panelWatts: 450, panelType: "bifacial", cableSizeMm2: 4 }),
+    ]);
+    expect(plan.components.map((component) => component.key)).toEqual(expect.arrayContaining([
+      "inverter", "combiner", "battery-1", "battery-2", "battery-3", "battery-fuse-1", "battery-fuse-2", "battery-fuse-3", "main-battery-fuse", "positive-busbar", "negative-busbar", "inverter-ac-mcb", "house-switchboard", "generator", "generator-mcb", "battery-monitor",
+    ]));
+    expect(plan.components.find((component) => component.key === "inverter")).toMatchObject({
+      displayName: "Deye 10 kW hybrid inverter SUN-10K-SG02LP1-AU",
+      specifications: { "Rated power": "10000 W", Phase: "Single-phase", "MPPT count": "3", Model: "SUN-10K-SG02LP1-AU" },
+    });
+    expect(plan.components.find((component) => component.key === "battery-fuse-1")?.specifications).toMatchObject({
+      "Rated current": "100 A provisional",
+      "Fuse class / family": "MRBF",
+    });
+    expect(plan.components.find((component) => component.key === "main-battery-fuse")?.specifications).toMatchObject({
+      "Rated current": expect.stringContaining("300 A"),
+      "Cable / terminal capacity": expect.stringContaining("4/0 AWG"),
+    });
+    expect(plan.connections).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceKey: "pv-1", targetKey: "combiner", cableSizeMm2: 6 }),
+      expect.objectContaining({ sourceKey: "pv-3", targetKey: "combiner", cableSizeMm2: 4 }),
+      expect.objectContaining({ sourceKey: "inverter", targetKey: "inverter-ac-mcb", connectionType: "ac", cableSizeMm2: 16 }),
+      expect.objectContaining({ sourceKey: "generator-mcb", targetKey: "inverter", connectionType: "ac" }),
+      expect.objectContaining({ sourceKey: "combiner", targetKey: "inverter", name: "PV1 fusebox output", cableSizeMm2: 6 }),
+      expect.objectContaining({ sourceKey: "combiner", targetKey: "inverter", name: "PV2 fusebox output", cableSizeMm2: 6 }),
+      expect.objectContaining({ sourceKey: "combiner", targetKey: "inverter", name: "PV3 fusebox output", cableSizeMm2: 4 }),
+    ]));
+  });
+
   it("prefers the inverter explicitly identified by the user", () => {
     expect(explicitInverterMention("The inverter is a MrPow 5400w")).toEqual({ manufacturer: "MrPow", ratedPowerW: 5400 });
   });

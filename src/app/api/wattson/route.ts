@@ -29,6 +29,10 @@ import { attachImageToRecord, requestsExistingRecordAttachment, resolveRecordAtt
 import { persistRequestedSchematic } from "@/ai/schematic-builder";
 import { COMPONENT_REGULATORY_LIBRARY_VERSION, regulatoryJurisdictionKey } from "@/regulations/component-regulatory-library";
 import { reconfigurePvTopology, requestedPvTopology } from "@/ai/pv-topology-editor";
+import { addWholeSystemEarthing, requestsWholeSystemEarthing } from "@/ai/earthing-topology-editor";
+import { insertGeneratorMcb, requestedGeneratorMcb } from "@/ai/generator-protection-editor";
+import { requestsMrbfCardUpdate, updateMrbfTechnicalCards } from "@/ai/mrbf-specification-editor";
+import { systemConfirmationReadiness } from "@/lib/system-confirmation-readiness";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -304,6 +308,61 @@ export async function POST(request: Request) {
       return Response.json({ conversationId, message, actions: [] });
     }
   }
+  // The deterministic matcher itself requires an explicit mutation verb such as
+  // add/install/connect/wire. Do not let the broader conversational classifier
+  // veto a clear schematic command such as "install earth wiring and pegs".
+  if (parsed.data.surface === "schematic" && requestsWholeSystemEarthing(parsed.data.message)) {
+    try {
+      const earthing = await addWholeSystemEarthing(supabase, parsed.data.projectId, parsed.data.message);
+      conversationState.completedActions.push({ kind: "record_equipment", revision: conversationState.revision, description: earthing.summary, siteId: owned.data.site_id, systemId: parsed.data.projectId });
+      conversationState = recordWattsonAssistantTurn(conversationState, earthing.summary);
+      const stateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
+      if (stateSaved.error) throw stateSaved.error;
+      const replySaved = await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: earthing.summary, structured_context: { evidenceRevision: conversationState.revision, earthing }, response_to_request_id: parsed.data.requestId });
+      if (replySaved.error) throw replySaved.error;
+      return Response.json({ conversationId, message: earthing.summary, actions: [{ type: "earthing_topology_updated", summary: earthing.summary }] });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : error && typeof error === "object" && "message" in error ? String(error.message) : "The earthing topology could not be saved";
+      const message = `I haven’t changed the schematic because the whole-system earthing topology could not be saved safely. ${detail}`;
+      await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { evidenceRevision: conversationState.revision, earthingError: detail }, response_to_request_id: parsed.data.requestId });
+      return Response.json({ conversationId, message, actions: [] });
+    }
+  }
+  const generatorMcbRequest = parsed.data.surface === "schematic" ? requestedGeneratorMcb(parsed.data.message) : null;
+  if (generatorMcbRequest) {
+    try {
+      const result = await insertGeneratorMcb(supabase, parsed.data.projectId, generatorMcbRequest.ratingA, generatorMcbRequest.wifi);
+      conversationState.completedActions.push({ kind: "record_equipment", revision: conversationState.revision, description: result.summary, siteId: owned.data.site_id, systemId: parsed.data.projectId });
+      conversationState = recordWattsonAssistantTurn(conversationState, result.summary);
+      const stateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
+      if (stateSaved.error) throw stateSaved.error;
+      const replySaved = await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: result.summary, structured_context: { evidenceRevision: conversationState.revision, generatorMcb: result }, response_to_request_id: parsed.data.requestId });
+      if (replySaved.error) throw replySaved.error;
+      return Response.json({ conversationId, message: result.summary, actions: [{ type: "generator_protection_inserted", summary: result.summary }] });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : error && typeof error === "object" && "message" in error ? String(error.message) : "The generator-input protection could not be saved";
+      const message = `I haven’t changed the schematic because the generator-input MCB could not be inserted safely. ${detail}`;
+      await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { evidenceRevision: conversationState.revision, generatorMcbError: detail }, response_to_request_id: parsed.data.requestId });
+      return Response.json({ conversationId, message, actions: [] });
+    }
+  }
+  if (parsed.data.surface === "schematic" && requestsMrbfCardUpdate(parsed.data.message, priorAssistantMessage)) {
+    try {
+      const result = await updateMrbfTechnicalCards(supabase, parsed.data.projectId);
+      conversationState.completedActions.push({ kind: "record_equipment", revision: conversationState.revision, description: result.summary, siteId: owned.data.site_id, systemId: parsed.data.projectId });
+      conversationState = recordWattsonAssistantTurn(conversationState, result.summary);
+      const stateSaved = await supabase.from("conversations").update({ conversation_state: conversationState }).eq("id", conversationId);
+      if (stateSaved.error) throw stateSaved.error;
+      const replySaved = await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: result.summary, structured_context: { evidenceRevision: conversationState.revision, mrbfCardUpdate: result }, response_to_request_id: parsed.data.requestId });
+      if (replySaved.error) throw replySaved.error;
+      return Response.json({ conversationId, message: result.summary, actions: [{ type: "component_specifications_updated", summary: result.summary }] });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : error && typeof error === "object" && "message" in error ? String(error.message) : "The MRBF technical cards could not be updated";
+      const message = `I haven’t changed the technical cards because the MRBF specifications could not be saved safely. ${detail}`;
+      await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { evidenceRevision: conversationState.revision, mrbfCardUpdateError: detail }, response_to_request_id: parsed.data.requestId });
+      return Response.json({ conversationId, message, actions: [] });
+    }
+  }
   if (routeDecision.intent === "schematic" && routeDecision.mode === "execute" && requestsSchematicCreation(parsed.data.message, priorAssistantMessage)) {
     const schematicId = parsed.data.projectId;
     const actionUrl = `/sites/${owned.data.site_id}/systems/${schematicId}/schematic`;
@@ -325,7 +384,7 @@ export async function POST(request: Request) {
         message = `Built the requested installed-system schematic${pvSummary ? ` with ${pvSummary}` : ""}. Missing electrical ratings remain TBC until verified. Open it below.`;
         schematicAction = { type: "schematic_built", summary: "Created requested schematic records", ...built };
       } catch (problem) {
-        const detail = problem instanceof Error ? problem.message : "Unknown schematic creation error";
+        const detail = problem instanceof Error ? problem.message : problem && typeof problem === "object" && "message" in problem ? String(problem.message) : "Unknown schematic creation error";
         const errorMessage = `I could not create the schematic because PVIntell returned this technical error: ${detail}`;
         await supabase.from("chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: errorMessage, structured_context: { evidenceRevision: conversationState.revision, schematicCreationError: detail }, response_to_request_id: parsed.data.requestId });
         return Response.json({ conversationId, message: errorMessage, actions: [] });
@@ -546,7 +605,9 @@ export async function POST(request: Request) {
       .gt("refresh_after", new Date().toISOString());
     if (!regulatoryCache.error) currentRegulatoryGuidance = regulatoryCache.data ?? [];
   }
-  const monitoringOnlyIntent = routeDecision.mutationConsent && completedSystemIntent(parsed.data.message);
+  const monitoringOnlyRequested = routeDecision.mutationConsent && completedSystemIntent(parsed.data.message);
+  const confirmationReadiness = monitoringOnlyRequested ? await systemConfirmationReadiness(supabase, parsed.data.projectId) : undefined;
+  const monitoringOnlyIntent = monitoringOnlyRequested && Boolean(confirmationReadiness?.ready);
   let phaseMovedToMonitor = false;
   if (monitoringOnlyIntent && selectedSystem?.phase !== "monitor") {
     const phaseUpdated = await supabase.from("projects").update({ phase: "monitor" }).eq("id", parsed.data.projectId).eq("owner_id", userId);
@@ -641,6 +702,8 @@ export async function POST(request: Request) {
         message = `No problem—I haven’t saved that as an answer. ${currentDiscovery ? discoveryGuidance(currentDiscovery[0]) : "Tell me which part is unclear and I’ll explain it another way."}`;
       if (monitoringOnlyIntent)
         message = `Understood - I’ve set ${selectedSystem?.name ?? canonicalProject.name} to monitor mode. I won’t run design discovery or build prompts for this system; Wattson will treat it as a commissioned as-built installation for monitoring, diagnostics and record-keeping.`;
+      if (monitoringOnlyRequested && !monitoringOnlyIntent)
+        message = confirmationReadiness?.message ?? "Confirm every schematic record before commissioning.";
       if (updateSummary && message !== architectureReply && message !== discoveryReply)
         message = message
           ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`

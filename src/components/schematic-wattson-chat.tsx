@@ -81,7 +81,7 @@ export function SchematicWattsonChat({
 
   if (!open) return null;
   return (
-    <section className="fixed inset-x-2 bottom-2 z-[90] flex max-h-[min(78dvh,720px)] flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[min(430px,calc(100vw-2rem))]" role="dialog" aria-label={`Work on ${project.name} schematic with Wattson`}>
+    <section className="fixed inset-x-2 bottom-2 z-[90] flex h-[min(82dvh,780px)] max-h-[calc(100dvh-1rem)] flex-col overflow-hidden rounded-2xl border border-line bg-white shadow-2xl sm:inset-x-auto sm:bottom-4 sm:right-4 sm:max-h-[calc(100dvh-2rem)] sm:w-[min(620px,calc(100vw-2rem))]" role="dialog" aria-label={`Work on ${project.name} schematic with Wattson`}>
       <header className="flex items-start gap-3 border-b border-line bg-[linear-gradient(105deg,#eaf3fb,#fff6ce)] p-4">
         <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-brand text-white"><Bot size={17}/></span>
         <div className="min-w-0 flex-1"><div className="eyebrow">Schematic-specific Wattson</div><h2 className="mt-1 truncate text-sm font-extrabold">Work on {project.name}</h2><p className="mt-1 text-[10px] leading-4 text-muted">The schematic stays open. Ask to add, update or reconfigure its recorded items and connections.</p></div>
@@ -93,7 +93,7 @@ export function SchematicWattsonChat({
         <div ref={bottomRef}/>
       </div>
       <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="flex items-end gap-2 border-t border-line bg-white p-3">
-        <textarea autoFocus value={input} onChange={(event) => setInput(event.target.value)} rows={2} placeholder="Tell Wattson what to change…" className="field mt-0 min-h-14 flex-1 resize-none py-3 text-sm leading-5"/>
+        <textarea autoFocus value={input} onChange={(event) => setInput(event.target.value)} rows={4} placeholder="Tell Wattson what to change…" className="field mt-0 min-h-24 max-h-48 flex-1 resize-y py-3 text-sm leading-5"/>
         <button disabled={!input.trim() || sending} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send to Wattson"><Send size={17}/></button>
       </form>
     </section>
