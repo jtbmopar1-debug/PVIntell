@@ -159,6 +159,15 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ],
   },
   {
+    id: "existing_proposal_status", stage: "discovery", title: "Do you already have a proposed system or component in mind?",
+    noviceHelp: "Discovery is designed to work out a complete system from your needs. If you already know the equipment, quantities or layout you want, Wattson can record and validate that proposal directly instead.",
+    technicalHelp: "Use proposal intake for an existing concept, equipment schedule, quotation, marked-up plan or specified component set. Continue Discovery when you want PVIntell to calculate the system from requirements.",
+    type: "choice", options: [
+      { value: "yes", label: "Yes — I already have a plan", description: "Review the recommended Wattson proposal-intake route before continuing." },
+      { value: "no", label: "No — design it for me", description: "Continue through full-system Discovery and let PVIntell calculate a proposal." },
+    ],
+  },
+  {
     id: "system_name", stage: "discovery", title: "What should we call this power setup?",
     noviceHelp: "A simple name is fine, such as House solar, Main home or Workshop.", type: "text",
   },

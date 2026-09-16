@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { classifyWattsonRequest, WATTSON_FOLLOWUP_POLICY, WATTSON_REGULATION_POLICY, wattsonAudienceInstruction } from "./gemini";
+import { classifyWattsonRequest, visibleGeminiMessage, WATTSON_FOLLOWUP_POLICY, WATTSON_REGULATION_POLICY, wattsonAudienceInstruction } from "./gemini";
+
+describe("Gemini visible response parsing", () => {
+  it("uses model-output text when the top-level output is blank", () => {
+    expect(visibleGeminiMessage({
+      output_text: "   ",
+      steps: [{ type: "model_output", content: [{ type: "text", text: "The MRBF sizes remain provisional." }] }],
+    })).toBe("The MRBF sizes remain provisional.");
+  });
+
+  it("trims the top-level visible response", () => {
+    expect(visibleGeminiMessage({ output_text: "  Confirm the battery fault current first.  " }))
+      .toBe("Confirm the battery fault current first.");
+  });
+});
 
 describe("classifyWattsonRequest", () => {
   it("keeps ordinary discovery on the economical model without search", () => {
@@ -139,6 +153,13 @@ describe("Wattson follow-up policy", () => {
     expect(WATTSON_FOLLOWUP_POLICY).toContain("prevents a reliable answer");
     expect(WATTSON_FOLLOWUP_POLICY).toContain("immediate credible safety concern");
     expect(WATTSON_FOLLOWUP_POLICY).toContain("complete the exact action the user requested");
+  });
+
+  it("uses supplied specifications to finish the active technical question", () => {
+    expect(WATTSON_FOLLOWUP_POLICY).toContain("apply that evidence to the same question and answer it");
+    expect(WATTSON_FOLLOWUP_POLICY).toContain("unless the user explicitly asks to save or update a record");
+    expect(WATTSON_FOLLOWUP_POLICY).toContain("Use unidentified specifications as candidate evidence only");
+    expect(WATTSON_FOLLOWUP_POLICY).toContain("never associate them with an application record");
   });
 
   it("permits only a concise offer to expand materially applicable regulations", () => {

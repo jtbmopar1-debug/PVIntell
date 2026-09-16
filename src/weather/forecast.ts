@@ -126,6 +126,28 @@ function dayOfYear(date: Date) {
   return Math.floor((Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) - start) / 86_400_000);
 }
 
+function solarCosZenith(date: Date, context: SolarForecastContext) {
+  if (typeof context.latitude !== "number" || typeof context.longitude !== "number" || !context.timezone) return undefined;
+  const latitude = context.latitude * Math.PI / 180;
+  const utcHour = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  const fractionalYear = 2 * Math.PI / 365 * (dayOfYear(date) - 1 + (utcHour - 12) / 24);
+  const declination = 0.006918 - 0.399912 * Math.cos(fractionalYear) + 0.070257 * Math.sin(fractionalYear) - 0.006758 * Math.cos(2 * fractionalYear) + 0.000907 * Math.sin(2 * fractionalYear) - 0.002697 * Math.cos(3 * fractionalYear) + 0.00148 * Math.sin(3 * fractionalYear);
+  const equationOfTime = 229.18 * (0.000075 + 0.001868 * Math.cos(fractionalYear) - 0.032077 * Math.sin(fractionalYear) - 0.014615 * Math.cos(2 * fractionalYear) - 0.040849 * Math.sin(2 * fractionalYear));
+  const offset = timezoneOffsetMinutes(date, context.timezone);
+  const localMinutes = ((date.getUTCHours() * 60 + date.getUTCMinutes() + offset) % 1440 + 1440) % 1440;
+  const trueSolarMinutes = localMinutes + equationOfTime + 4 * context.longitude - offset;
+  const hourAngle = (trueSolarMinutes / 4 - 180) * Math.PI / 180;
+  return Math.sin(latitude) * Math.sin(declination) + Math.cos(latitude) * Math.cos(declination) * Math.cos(hourAngle);
+}
+
+function horizonCorrectedHours(hours: SolarWeatherHour[], context: SolarForecastContext) {
+  if (typeof context.latitude !== "number" || typeof context.longitude !== "number" || !context.timezone) return hours;
+  return hours.map((hour) => {
+    const cosZenith = solarCosZenith(new Date(hour.time), context);
+    return cosZenith !== undefined && cosZenith <= 0 ? { ...hour, irradiance: 0, uvIndex: 0 } : hour;
+  });
+}
+
 function planeOfArrayGain(hour: SolarWeatherHour, array: SolarArrayForecastInput, context: SolarForecastContext) {
   if (
     typeof context.latitude !== "number" ||
@@ -200,10 +222,13 @@ function remainingSolarKwh(hours: SolarWeatherHour[], arrayInput: SolarForecastI
   }, 0);
 }
 
-export function latestForecastHour(hours: SolarWeatherHour[], now = new Date()) {
+export function latestForecastHour(hours: SolarWeatherHour[], now = new Date(), context: SolarForecastContext = {}) {
   const ordered = sortedHours(hours);
   const nowMs = now.getTime();
-  return [...ordered].reverse().find((hour) => Date.parse(hour.time) <= nowMs) ?? ordered[0];
+  const latest = [...ordered].reverse().find((hour) => Date.parse(hour.time) <= nowMs) ?? ordered[0];
+  if (!latest) return undefined;
+  const cosZenith = solarCosZenith(now, context);
+  return cosZenith !== undefined && cosZenith <= 0 ? { ...latest, irradiance: 0, uvIndex: 0 } : latest;
 }
 
 export function groupForecastDays(hours: SolarWeatherHour[], timezone: string) {
@@ -254,7 +279,7 @@ export function fiveDaySolarOutlook(
 ) {
   const forecastContext = { ...context, timezone: context.timezone ?? timezone };
   const todayKey = localDateKey(now, timezone);
-  return [...groupForecastDays(hours, timezone).entries()]
+  return [...groupForecastDays(horizonCorrectedHours(hours, forecastContext), timezone).entries()]
     .filter(([dateKey]) => dateKey >= todayKey)
     .slice(0, 5)
     .map(([dateKey, dayHours]) => summarizeSolarDay(dateKey, dayHours, arrayInput, now, forecastContext));

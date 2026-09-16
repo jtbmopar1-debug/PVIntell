@@ -23,6 +23,7 @@ import { useState } from "react";
 import type { EquipmentLabelExtraction } from "@/ai/equipment-label";
 import { ComponentRegulatoryPanel } from "@/components/component-regulatory-panel";
 import type { ComponentSpec, PVArray } from "@/domain/models";
+import { inverterPowerInputKw } from "@/lib/power-units";
 import type { ComponentRegulatoryBundle } from "@/regulations/component-regulatory-library";
 
 const componentTypes: Array<[ComponentSpec["kind"], string]> = [
@@ -624,7 +625,9 @@ export function ComponentDetail({
         : defaults?.schematicImage;
     if (schematicImage) specifications["Schematic image"] = schematicImage;
     const ratedPower = String(form.get("ratedPower") ?? "").trim();
-    if (ratedPower) specifications[isPanel ? "Panel wattage" : "Rated power"] = `${ratedPower} W`;
+    if (ratedPower) {
+      specifications[isPanel ? "Panel wattage" : "Rated power"] = `${ratedPower} ${isInverter ? "kW" : "W"}`;
+    }
     else {
       delete specifications["Panel wattage"];
       delete specifications["Rated power"];
@@ -910,8 +913,8 @@ export function ComponentDetail({
                   className="field"
                 />
               </Field>
-              {(isPanel || isInverter) && <Field label={isPanel ? "Panel wattage" : "Rated output"}>
-                <div className="relative"><input name="ratedPower" type="number" min="0" step="any" defaultValue={String(component?.specs[isPanel ? "Panel wattage" : "Rated power"] ?? "").replace(/[^0-9.]/g, "")} className="field pr-12" placeholder={isPanel ? "e.g. 450" : "e.g. 5000"}/><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">W</span></div>
+              {(isPanel || isInverter) && <Field label={isPanel ? "Panel wattage" : "Continuous rating"}>
+                <div className="relative"><input name="ratedPower" type="number" min="0" step="any" defaultValue={isInverter ? inverterPowerInputKw(component?.specs["Rated power"]) : String(component?.specs["Panel wattage"] ?? "").replace(/[^0-9.]/g, "")} className="field pr-12" placeholder={isPanel ? "e.g. 450" : "e.g. 20"}/><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">{isInverter ? "kW" : "W"}</span></div>
               </Field>}
               {isPanel && <Field label="Panels per array">
                 <input name="panelsPerArray" type="number" min="1" defaultValue="1" className="field" placeholder="e.g. 6"/>

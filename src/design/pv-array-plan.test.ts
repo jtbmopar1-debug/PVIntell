@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { balancedPanelAllocation, buildPvArrayPlan, resizeUserPvArrayPlan, splitPvArrayPlan } from "./pv-array-plan";
+import { balancedPanelAllocation, buildPvArrayPlan, resizeUserPvArrayPlan, setPvArrayPanelCount, splitPvArrayPlan } from "./pv-array-plan";
 
 describe("PV array proposal hierarchy", () => {
+  it("changes only the selected mounting array quantity", () => {
+    const plan = buildPvArrayPlan({ panelCount: 35, surfaces: [
+      { id: "garage", name: "Garage", capacity: 10 },
+      { id: "house-long", name: "House long roof", capacity: 15 },
+      { id: "house-right", name: "House right roof", capacity: 14 },
+    ] });
+    const changed = setPvArrayPanelCount(plan, 1, 15);
+
+    expect(changed.arrays.map((array) => array.name)).toEqual(plan.arrays.map((array) => array.name));
+    expect(changed.arrays[0].allocatedPanelCount).toBe(plan.arrays[0].allocatedPanelCount);
+    expect(changed.arrays[1].allocatedPanelCount).toBe(15);
+    expect(changed.arrays[2].allocatedPanelCount).toBe(plan.arrays[2].allocatedPanelCount);
+    expect(changed.configurationSource).toBe("user");
+  });
+
   it("allocates the exact proposed panel count across multiple mounting surfaces", () => {
     const plan = buildPvArrayPlan({
       panelCount: 35,

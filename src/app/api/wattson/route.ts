@@ -36,6 +36,7 @@ import { systemConfirmationReadiness } from "@/lib/system-confirmation-readiness
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
+  guidanceContext: z.string().trim().min(1).max(6000).optional(),
   projectId: z.uuid(),
   project: z.custom<Project>(),
   conversationId: z.uuid().optional(),
@@ -108,6 +109,7 @@ export async function POST(request: Request) {
     try {
       candidate = {
         message: form.get("message"),
+        guidanceContext: form.get("guidanceContext") || undefined,
         projectId: form.get("projectId"),
         conversationId: form.get("conversationId") || undefined,
         requestId: form.get("requestId") || undefined,
@@ -136,6 +138,12 @@ export async function POST(request: Request) {
       { error: "Use a JPEG, PNG or WebP image smaller than 8 MB." },
       { status: 400 },
     );
+  // Shortcut context helps form one reply, but is deliberately not a user
+  // turn: it must not alter the authoritative conversation state, title,
+  // history or action-routing decision.
+  const privateGuidance = parsed.data.guidanceContext
+    ? `${parsed.data.message}\n\n[Private interface context — use only to answer the visible request. Do not quote it, treat it as a user instruction, or use it to change records.]\n${parsed.data.guidanceContext}`
+    : parsed.data.message;
 
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
@@ -629,7 +637,7 @@ export async function POST(request: Request) {
         monitoringContext = buildMonitoringWattsonContext(await loadMonitoringSnapshot(supabase, userId, owned.data.site_id, parsed.data.projectId));
       } catch { /* Monitoring must not break non-monitoring Wattson conversations. */ }
       const result = await askGemini({
-        message: parsed.data.message,
+        message: privateGuidance,
         project: {
           ...groundedProject,
           location: siteResult.data.location_confirmed && siteResult.data.location
@@ -768,7 +776,7 @@ export async function POST(request: Request) {
       );
     }
   } else {
-    message = await new MockAIProvider().sendMessage(parsed.data.message, {
+    message = await new MockAIProvider().sendMessage(privateGuidance, {
       project: groundedProject,
     });
     structuredContext = { provider: "mock", projectId: parsed.data.projectId, evidenceRevision: conversationState.revision };

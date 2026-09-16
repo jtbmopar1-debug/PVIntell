@@ -26,7 +26,7 @@ export function SolarWeather({ site, solarArrayKw, solarArrays = [] }: { site: S
     { latitude: site.latitude, longitude: site.longitude, timezone },
   ), [data, forecastInput, forecastNow, site.latitude, site.longitude, timezone]);
   const outlook = days[0];
-  const current = outlook ? latestForecastHour(outlook.hours, forecastNow) : undefined;
+  const current = outlook ? latestForecastHour(outlook.hours, forecastNow, { latitude: site.latitude, longitude: site.longitude, timezone }) : undefined;
   const daylightHours = outlook?.hours.filter((hour) => (hour.irradiance ?? 0) > 0) ?? [];
   const forecastBasisDetail = outlook?.forecastBasis === "array-geometry" ? "recorded panel angle" : "basic horizontal estimate";
 
@@ -76,7 +76,8 @@ function SolarCurves({ days, timezone, arrayKw, units }: { days: ReturnType<type
 function SolarCurveDay({ day, timezone, arrayKw, units }: { day: ReturnType<typeof fiveDaySolarOutlook>[number]; timezone: string; arrayKw: number; units: UnitPreferences }) {
   const hours = day.hours.filter((hour) => (hour.irradiance ?? 0) > 0);
   const width = 1000; const height = 270; const left = 38; const right = 24; const top = 28; const baseline = 218;
-  const maxFlux = Math.max(100, ...hours.map((hour) => hour.irradiance ?? 0));
+  const peakFlux = Math.max(0, ...hours.map((hour) => hour.irradiance ?? 0));
+  const maxFlux = Math.max(100, peakFlux);
   const points = hours.map((hour, index) => ({ x: left + index / Math.max(1, hours.length - 1) * (width - left - right), y: baseline - Math.max(0, hour.irradiance ?? 0) / maxFlux * (baseline - top), hour }));
   const curve = points.length ? points.slice(1).reduce((path, point, index) => { const previous = points[index]; const midpointX = (previous.x + point.x) / 2; const midpointY = (previous.y + point.y) / 2; return `${path} Q ${previous.x} ${previous.y} ${midpointX} ${midpointY}`; }, `M ${points[0].x} ${points[0].y}`) + ` T ${points.at(-1)?.x} ${points.at(-1)?.y}` : "";
   const area = points.length ? `M ${points[0].x} ${baseline} L ${points[0].x} ${points[0].y} ${curve.replace(/^M [\d.]+ [\d.]+/, "")} L ${points.at(-1)?.x} ${baseline} Z` : "";

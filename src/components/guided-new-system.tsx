@@ -54,6 +54,8 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const [returningToReview, setReturningToReview] = useState(false);
   const [buildingProposal, setBuildingProposal] = useState(false);
   const [mobileGuideOpen, setMobileGuideOpen] = useState(false);
+  const [proposalStopgateOpen, setProposalStopgateOpen] = useState(false);
+  const [proposalStopgateAcknowledged, setProposalStopgateAcknowledged] = useState(false);
   const questions = useMemo(() => questionsFor(answers), [answers, stageFilter, siteDiscoveryId]);
   const reviewing = index >= questions.length;
   const question = reviewing ? undefined : questions[Math.min(index, questions.length - 1)];
@@ -163,6 +165,10 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
       router.push("/record-installed");
       return;
     }
+    if (question.id === "existing_proposal_status" && answers.existing_proposal_status === "yes" && !proposalStopgateAcknowledged) {
+      setProposalStopgateOpen(true);
+      return;
+    }
     if (returningToReview) {
       await save(answers);
       setReturningToReview(false);
@@ -172,6 +178,22 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     const nextIndex = Math.min(index + 1, nextQuestions.length);
     await save(answers, nextQuestions[nextIndex]?.id);
     setIndex(nextIndex);
+  }
+
+  async function continueDiscoveryWithKnownProposal() {
+    if (!question) return;
+    setProposalStopgateAcknowledged(true);
+    setProposalStopgateOpen(false);
+    const nextQuestions = questionsFor(answers);
+    const nextIndex = Math.min(index + 1, nextQuestions.length);
+    await save(answers, nextQuestions[nextIndex]?.id);
+    setIndex(nextIndex);
+  }
+
+  async function openProposalIntake() {
+    await save(answers, question?.id);
+    const selectedSiteId = siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined);
+    router.push(`/proposals/new${selectedSiteId ? `?site=${encodeURIComponent(selectedSiteId)}` : ""}`);
   }
 
   async function back() {
@@ -252,6 +274,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     </div>
     {helpQuestion ? <DiscoveryHelpDialog question={helpQuestion} discoveryAnswers={answers} conversationId={discoveryConversationId} discoveryDraftId={discoveryDraftId} onConversation={setDiscoveryConversationId} onSafetyDecision={(decision) => setAnswers((current) => ({ ...current, custom_battery_assessment: decision }))} siteId={siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined)} projectId={existingSystemId} onClose={() => setHelpQuestion(undefined)}/> : null}
     {buildingProposal ? <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#f3f6fa]/95 p-6 backdrop-blur-sm"><div className="card w-full max-w-lg p-8 text-center shadow-2xl"><span className="mx-auto grid size-16 place-items-center rounded-2xl bg-[#eaf2fb] text-brand"><LoaderCircle className="animate-spin" size={30}/></span><div className="eyebrow mt-6">Discovery complete</div><h2 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">Building your system proposal…</h2><p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted">Wattson is turning your confirmed requirements into the proposed system page. Nothing is being marked as purchased or installed.</p></div></div> : null}
+    {proposalStopgateOpen ? <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#102a43]/55 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="proposal-route-title"><div className="card w-full max-w-xl border-[#edc552] p-6 shadow-2xl md:p-8"><div className="eyebrow text-[#8a6500]">You already have a plan</div><h2 id="proposal-route-title" className="mt-3 font-display text-2xl font-extrabold tracking-[-.035em] text-ink">Use the proposed-system intake</h2><p className="mt-3 text-sm leading-6 text-muted">Discovery designs and sizes a complete system from your needs. If you already know the panels, quantities, equipment or layout you want, specify those items first. PVIntell will check the recorded compatibility limits and only build the proposed schematic after your review. It will not be marked installed or commissioned.</p><div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => void openProposalIntake()} disabled={saving} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#f6c945] px-4 py-3 text-sm font-extrabold text-[#17283d] disabled:opacity-50"><Bot size={17}/>Specify my proposed plan</button><button type="button" onClick={() => void continueDiscoveryWithKnownProposal()} disabled={saving} className="min-h-12 rounded-xl border border-line bg-white px-4 py-3 text-sm font-bold text-brand disabled:opacity-50">Continue full Discovery</button></div><button type="button" onClick={() => setProposalStopgateOpen(false)} className="mt-4 w-full text-xs font-bold text-muted">Go back and change my answer</button></div></div> : null}
   </div>;
 }
 

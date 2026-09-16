@@ -117,6 +117,21 @@ export function splitPvArrayPlan(plan: PvArrayPlan, arrayIndex: number, arrayCou
   };
 }
 
+/** Change one mounting array without redistributing or removing its neighbours. */
+export function setPvArrayPanelCount(plan: PvArrayPlan, arrayIndex: number, panelCount: number): PvArrayPlan {
+  const source = plan.arrays[arrayIndex];
+  const count = Math.round(panelCount);
+  if (!source) throw new RangeError("The selected PV array does not exist.");
+  if (count < 1) throw new RangeError("An array must contain at least one panel.");
+  return {
+    status: "topology_unresolved",
+    configurationSource: "user",
+    arrays: plan.arrays.map((array, index) => index === arrayIndex
+      ? { ...array, allocatedPanelCount: count, topology: unresolvedTopology() }
+      : array),
+  };
+}
+
 /** Keep a user-selected array grouping when the proposal's total panel count changes. */
 export function resizeUserPvArrayPlan(plan: PvArrayPlan, panelCount: number): PvArrayPlan {
   const total = Math.max(0, Math.round(panelCount));

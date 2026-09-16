@@ -1,6 +1,6 @@
 "use client";
 
-import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, Eye, EyeOff, Link2, Minus, Plus, RotateCcw, Save, Smartphone, Sun, X, Zap } from "lucide-react";
+import { BatteryCharging, Cable, Calculator, CheckCircle2, Circle, CircleHelp, Eye, EyeOff, Link2, Minus, Plus, RotateCcw, Save, Smartphone, Sun, X, Zap } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
@@ -14,7 +14,7 @@ import { recommendedPanelOrientation } from "@/design/panel-orientation";
 import { generatorFromDiscovery, proposalIncludesSolar } from "@/design/proposal-inputs";
 import { assessPanelSurfaces } from "@/design/panel-surfaces";
 import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
-import { balancedPanelAllocation, buildPvArrayPlan, resizeUserPvArrayPlan, splitPvArrayPlan } from "@/design/pv-array-plan";
+import { balancedPanelAllocation, buildPvArrayPlan, resizeUserPvArrayPlan, setPvArrayPanelCount, splitPvArrayPlan } from "@/design/pv-array-plan";
 import { suggestPvDcStringCable } from "@/design/pv-dc-cable-sizing";
 import type { DesignCalculatorState, Project, Site } from "@/domain/models";
 import { EARTH_ELECTRODE_IMAGE, GRID_CONNECTION_IMAGE } from "@/ui/assets";
@@ -397,8 +397,10 @@ function suggestedInverterKw(project: Project) {
 function proposedInverterKw(project: Project, saved: DesignCalculatorState) {
   const calculated = suggestedInverterKw(project);
   if (!saved.inverterKw) return calculated;
-  if (saved.updatedBy !== "wattson") return saved.inverterKw;
-  return calculated;
+  // A recorded rating is a user/system fact, even where Wattson originally
+  // helped record it. Sizing can recommend a different class but must never
+  // silently replace the selected inverter on a subsequent visit.
+  return saved.inverterKw;
 }
 
 function proposedGeneratorKw(generator: DiscoveredGenerator, inverterKw?: number) {
@@ -1446,6 +1448,7 @@ function ProposedPlan({ project, design, onToggle }: { project: Project; design:
 export function ProposedBuildSchematic({ project, site, showIntro = false, initialConversationId, initialMessages = [] }: { project: Project; site: Site; showIntro?: boolean; initialConversationId?: string; initialMessages?: import("@/domain/models").ChatMessage[] }) {
   const router = useRouter();
   const [wattsonOpen, setWattsonOpen] = useState(false);
+  const [guidanceRequest, setGuidanceRequest] = useState<{ id: number; message: string; displayMessage?: string }>();
   const includeBattery = proposalIncludesBattery(project);
   const [design, setDesign] = useState<DesignCalculatorState>(() => {
     const stored = { ...project.designCalculator, ...recommendedPanelOrientation(project.designCalculator ?? {}, site.latitude) };
@@ -1492,6 +1495,14 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
   const [introPortalTarget, setIntroPortalTarget] = useState<HTMLElement | null>(null);
   const base = `/sites/${project.siteId}/systems/${project.id}`;
   const reviewed = design.proposedChecklist?.["proposed-schematic"] ?? false;
+  const askWhatsNext = () => {
+    setGuidanceRequest({
+      id: Date.now(),
+      displayMessage: "What’s next?",
+      message: "What is the next smallest action to complete this proposed system safely? Reply as a short working checklist, not a report. Start with **Do this now:** and give one clear action such as confirm a panel model, check inverter limits, size the generator, or complete a connection record. Then give at most two later actions. Use plain language. Do not list the whole system, raw electrical calculations, lifecycle background, URLs, or standards unless they are essential to the immediate action. Reassess the saved record every time this button is clicked. Do not treat proposed equipment as purchased, installed, confirmed, or commissioned.",
+    });
+    setWattsonOpen(true);
+  };
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setIntroPortalTarget(document.body));
     return () => window.cancelAnimationFrame(frame);
@@ -1561,10 +1572,10 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
   };
   return <div className="proposed-schematic-page animate-rise space-y-5">
     {introOpen && introPortalTarget ? createPortal(<div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-[#0b2742]/55 p-4 pt-[max(1rem,env(safe-area-inset-top))] sm:items-center sm:py-8" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissIntro(); }}><section role="dialog" aria-modal="true" aria-labelledby="proposal-intro-title" className="my-auto max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-3xl border border-[#bad0e4] bg-white p-6 shadow-2xl md:p-8"><div className="flex items-start justify-between gap-4"><div><div className="eyebrow">Your proposal is ready</div><h2 id="proposal-intro-title" className="mt-2 font-display text-2xl font-extrabold tracking-[-.04em]">Here is how your proposed system works</h2></div><button type="button" onClick={dismissIntro} className="grid size-10 shrink-0 place-items-center rounded-xl border border-line text-muted" aria-label="Dismiss proposal introduction"><X size={18}/></button></div><div className="mt-5 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design} site={site}/></div></div><button type="button" onClick={dismissIntro} className="mt-5 h-12 w-full rounded-xl bg-brand px-5 text-sm font-extrabold text-white">Explore and adjust my schematic</button></section></div>, introPortalTarget) : null}
-    <div className="schematic-page-intro"><div><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p></div><div className="mt-4 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design} site={site}/></div></div></div><section className="proposed-schematic-shell card overflow-hidden"><ProposedSchematic project={project} projectName={project.name} gridConnected={proposalUsesPublicGrid(project)} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`} onOpenWattson={() => setWattsonOpen(true)}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}<SchematicWattsonChat project={project} initialConversationId={initialConversationId} initialMessages={initialMessages} open={wattsonOpen} onClose={() => setWattsonOpen(false)}/></div>;
+    <div className="schematic-page-intro"><div><div className="eyebrow">Working system centrepoint</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} system schematic</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted">Discovery has defined the proposed equipment and capacity. Use each component and connection to move from proposal into the Build It record.</p></div><div className="mt-4 rounded-2xl border border-line bg-[#eef5fc] p-4"><div className="eyebrow">System scope</div><div className="mt-2"><ProposalScopeOverview project={project} design={design} site={site}/></div></div></div><section className="proposed-schematic-shell card overflow-hidden"><ProposedSchematic project={project} projectName={project.name} gridConnected={proposalUsesPublicGrid(project)} includeBattery={includeBattery} design={design} reviewed={reviewed} onToggle={(draft) => void acceptAndContinue(draft)} onDraftChange={(draft) => void saveWorkingDraft(draft)} onRedesign={(nextDesign, draft) => void saveRedesign(nextDesign, draft)} wattsonHref={`${base}?view=wattson`} onOpenWattson={() => setWattsonOpen(true)} onWhatsNext={askWhatsNext}/></section>{status && <p className="text-xs font-semibold text-brand">{status}</p>}<SchematicWattsonChat project={project} initialConversationId={initialConversationId} initialMessages={initialMessages} open={wattsonOpen} onClose={() => setWattsonOpen(false)} guidanceRequest={guidanceRequest}/></div>;
 }
 
-function ProposedSchematic({ project, projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref, onOpenWattson }: { project: Project; projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string; onOpenWattson: () => void }) {
+function ProposedSchematic({ project, projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref, onOpenWattson, onWhatsNext }: { project: Project; projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string; onOpenWattson: () => void; onWhatsNext: () => void }) {
   const rawDraft = ensureGeneratorSupply(ensureGridSupply(proposalDraftForCurrentDesign(design, gridConnected), gridConnected), design, gridConnected);
   const upgradedDraft = upgradePvStringIsolationDraft(rawDraft, design);
   const repairedDraft = repairCustomEquipmentDraft(upgradedDraft);
@@ -1594,6 +1605,9 @@ function ProposedSchematic({ project, projectName, gridConnected, includeBattery
       </div>
     </div>
 
+    <div className="mt-5 flex justify-start">
+      <button type="button" onClick={onWhatsNext} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-[#f6c945] px-3 text-[10px] font-extrabold text-brand"><CircleHelp size={13}/>What&apos;s next?</button>
+    </div>
     <DraftProposedSchematicCanvas draft={draft} design={design} project={project} gridConnected={gridConnected} systemName={projectName} onChange={onDraftChange} onRedesign={onRedesign} wattsonHref={wattsonHref} onOpenWattson={onOpenWattson}/>
 
     <div className="mt-5 rounded-2xl border border-line bg-white p-4">
@@ -1848,9 +1862,20 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
       setQuickEditMessage("Enter a whole number of panels greater than zero.");
       return;
     }
+    const selectedArrayIndex = selectedStringNumber ? selectedStringNumber - 1 : -1;
+    const editingPlannedArray = Boolean(selectedPlannedArray && design.pvArrayPlan && selectedArrayIndex >= 0);
     const editingUniformString = Boolean(selectedStringNumber && !design.pvArrayPlan && n(design.pvStrings) > 1);
-    const panelCount = editingUniformString ? enteredPanelCount * n(design.pvStrings) : enteredPanelCount;
-    if (panelCount === design.panelCount) {
+    if (editingPlannedArray && enteredPanelCount === selectedArrayPanelCount) {
+      setQuickEditMessage("That quantity is already saved for this array.");
+      return;
+    }
+    const pvArrayPlan = editingPlannedArray && design.pvArrayPlan
+      ? setPvArrayPanelCount(design.pvArrayPlan, selectedArrayIndex, enteredPanelCount)
+      : undefined;
+    const panelCount = pvArrayPlan
+      ? pvArrayPlan.arrays.reduce((total, array) => total + n(array.allocatedPanelCount), 0)
+      : editingUniformString ? enteredPanelCount * n(design.pvStrings) : enteredPanelCount;
+    if (!editingPlannedArray && panelCount === design.panelCount) {
       setQuickEditMessage(editingUniformString ? "That per-array quantity is already in the proposal." : "That quantity is already in the proposal.");
       return;
     }
@@ -1872,7 +1897,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
       fitLimited: sizing.fitLimited,
       requiredPanelAreaM2: design.panelLengthMm && design.panelWidthMm ? Number((panelCount * design.panelLengthMm * design.panelWidthMm / 1_000_000).toFixed(1)) : undefined,
       fitStatus: sizing.fitLimited ? "does_not_fit" : "unverified",
-      pvArrayPlan: pendingPvArrayPlan(project, design, panelCount),
+      pvArrayPlan: pvArrayPlan ?? pendingPvArrayPlan(project, design, panelCount),
       pvStrings: undefined,
       panelsPerString: undefined,
       stringDesign: undefined,
@@ -1910,7 +1935,9 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     };
     const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected);
     onRedesign(nextDesign, nextDraft);
-    setQuickEditMessage(editingUniformString
+    setQuickEditMessage(editingPlannedArray
+      ? `Saved ${enteredPanelCount} panels in this array. The system total is now ${panelCount} panels; all other arrays were retained.`
+      : editingUniformString
       ? `Saved ${enteredPanelCount} panels in each of ${n(design.pvStrings)} arrays (${panelCount} panels total). Dependent planning figures were refreshed.`
       : `Saved ${panelCount} panels. Array, string, inverter and storage planning figures were refreshed.`);
   };
@@ -2063,8 +2090,8 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5">
       {selectedNodeIsSolar && !supplementaryArray(design) ? <div className="rounded-2xl border border-[#9fc6e7] bg-[#eef6fd] p-4">
         <div className="eyebrow">Quick edit</div>
-        <label className="mt-3 block text-xs font-bold">{selectedStringNumber ? "Panels in this array" : "Total panel quantity"}<div className="mt-1.5 flex gap-2"><input type="number" min="1" max="10000" step="1" inputMode="numeric" value={quickPanelCount} onChange={(event) => { setQuickPanelCount(event.target.value); setQuickEditMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={saveQuickPanelQuantity} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">Save quantity</button></div></label>
-        <p className="mt-2 text-[10px] leading-4 text-muted">{selectedStringNumber && !design.pvArrayPlan && n(design.pvStrings) > 1 ? `This proposal uses ${n(design.pvStrings)} equal arrays. Saving changes each array to this quantity and refreshes the total and dependent planning figures.` : "This refreshes array capacity, string layout and the dependent inverter and storage planning figures. A user-selected array grouping is retained."}</p>
+        <label className="mt-3 block text-xs font-bold">{selectedStringNumber ? "Panels in this array" : "Total panel quantity"}<div className="mt-1.5 flex gap-2"><input type="number" min="1" max="10000" step="1" inputMode="numeric" value={quickPanelCount} onChange={(event) => { setQuickPanelCount(event.target.value); setQuickEditMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={saveQuickPanelQuantity} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">{selectedPlannedArray ? "Save this array" : "Save quantity"}</button></div></label>
+        <p className="mt-2 text-[10px] leading-4 text-muted">{selectedPlannedArray ? "This changes only this selected mounting array. Every other roof and ground array stays in the proposal; the system total and dependent planning figures are then refreshed." : selectedStringNumber && !design.pvArrayPlan && n(design.pvStrings) > 1 ? `This proposal uses ${n(design.pvStrings)} equal arrays. Saving changes each array to this quantity and refreshes the total and dependent planning figures.` : "This refreshes array capacity, string layout and the dependent inverter and storage planning figures. A user-selected array grouping is retained."}</p>
         {quickEditMessage ? <p className="mt-2 text-[10px] font-semibold text-brand" role="status">{quickEditMessage}</p> : null}
       </div> : null}
       {configurationOpen && selectedPlannedArray ? <div className="mt-4 rounded-2xl border border-[#d4b85f] bg-[#fff9df] p-4">

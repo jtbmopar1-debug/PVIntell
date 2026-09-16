@@ -12,12 +12,14 @@ export function SchematicWattsonChat({
   initialMessages = [],
   open,
   onClose,
+  guidanceRequest,
 }: {
   project: Project;
   initialConversationId?: string;
   initialMessages?: ChatMessage[];
   open: boolean;
   onClose: () => void;
+  guidanceRequest?: { id: number; message: string; displayMessage?: string };
 }) {
   const router = useRouter();
   const [conversationId, setConversationId] = useState(initialConversationId);
@@ -25,21 +27,29 @@ export function SchematicWattsonChat({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const handledGuidanceRequestRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, open, sending]);
 
-  async function send() {
-    const message = input.trim();
+  async function send(messageOverride?: string, displayMessage?: string | false) {
+    const isGuidanceShortcut = typeof messageOverride === "string";
+    const guidanceContext = isGuidanceShortcut ? messageOverride.trim() : undefined;
+    const message = (isGuidanceShortcut
+      ? displayMessage || "Help me with this system"
+      : input).trim();
     if (!message || sending) return;
-    setMessages((current) => [...current, {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: message,
-      createdAt: new Date().toISOString(),
-    }]);
-    setInput("");
+    const visibleMessage = displayMessage === undefined ? message : displayMessage;
+    if (visibleMessage) {
+      setMessages((current) => [...current, {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: visibleMessage,
+        createdAt: new Date().toISOString(),
+      }]);
+    }
+    if (!messageOverride) setInput("");
     setSending(true);
     try {
       const response = await fetch("/api/wattson", {
@@ -47,6 +57,7 @@ export function SchematicWattsonChat({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           message,
+          guidanceContext: displayMessage === undefined ? undefined : guidanceContext,
           projectId: project.id,
           project,
           conversationId,
@@ -78,6 +89,14 @@ export function SchematicWattsonChat({
       setSending(false);
     }
   }
+
+  useEffect(() => {
+    if (!open || !guidanceRequest || sending || handledGuidanceRequestRef.current === guidanceRequest.id) return;
+    handledGuidanceRequestRef.current = guidanceRequest.id;
+    void send(guidanceRequest.message, guidanceRequest.displayMessage ?? false);
+    // `send` intentionally uses the current conversation and project context.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guidanceRequest, open]);
 
   if (!open) return null;
   return (

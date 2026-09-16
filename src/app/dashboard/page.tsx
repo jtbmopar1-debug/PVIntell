@@ -3,7 +3,7 @@ import { Dashboard } from "@/components/dashboard";
 import type { ChatMessage, Site, SystemSummary } from "@/domain/models";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { createClient } from "@/lib/supabase/server";
-import type { SolarArrayForecastInput } from "@/weather/forecast";
+import { dashboardSolarArraysBySystem } from "@/weather/dashboard-forecast";
 import { isFutureJwtError } from "@/lib/supabase/auth-errors";
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ site?: string; conversation?: string; start?: string; wattson?: string; welcome?: string }> }) {
@@ -48,17 +48,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   if (arrays.error) throw arrays.error;
   if (activeConnections.error) throw activeConnections.error;
   if (installationSteps.error) throw installationSteps.error;
-  const solarArraysBySite: Record<string, SolarArrayForecastInput[]> = Object.fromEntries(sites.map((site) => [site.id, (arrays.data ?? []).flatMap((array) => {
-    const system = systems.find((item) => item.id === array.project_id);
-    const capacityKw = Number(array.panel_watts ?? 0) * Number(array.panel_count ?? 0) / 1000;
-    if (system?.siteId !== site.id || capacityKw <= 0) return [];
-    return [{
-      capacityKw,
-      azimuthDegrees: array.orientation_degrees == null ? null : Number(array.orientation_degrees),
-      tiltDegrees: array.tilt_degrees == null ? null : Number(array.tilt_degrees),
-    }];
-  })]));
-  const solarBySite = Object.fromEntries(Object.entries(solarArraysBySite).map(([siteId, siteArrays]) => [siteId, siteArrays.reduce((sum, array) => sum + array.capacityKw, 0)]));
+  const solarArraysBySystem = dashboardSolarArraysBySystem(systemIds, arrays.data ?? []);
+  const solarBySystem = Object.fromEntries(Object.entries(solarArraysBySystem).map(([systemId, systemArrays]) => [systemId, systemArrays.reduce((sum, array) => sum + array.capacityKw, 0)]));
   let messages: ChatMessage[] = [];
   if (activeConversation?.id) {
     const rows = await supabase.from("user_chat_messages").select("id,role,content,created_at,structured_context").eq("conversation_id", activeConversation.id).order("created_at").limit(30);
@@ -67,10 +58,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
   const resumeHrefs = Object.fromEntries(systems.filter((system) => ["discover", "design", "build", "check", "commission"].includes(system.phase)).map((system) => {
     const unfinished = (installationSteps.data ?? []).find((step) => step.project_id === system.id && !step.completed_at);
-    const href = system.phase === "discover" ? `/sites/${system.siteId}/discovery?system=${system.id}` : system.phase === "design" ? `/sites/${system.siteId}/systems/${system.id}/design` : unfinished ? `/sites/${system.siteId}/systems/${system.id}/build/${unfinished.id}` : `/sites/${system.siteId}/systems/${system.id}?view=build`;
+    const href = system.phase === "discover" ? `/sites/${system.siteId}/discovery?system=${system.id}` : system.phase === "design" ? `/sites/${system.siteId}/systems/${system.id}/schematic` : unfinished ? `/sites/${system.siteId}/systems/${system.id}/build/${unfinished.id}` : `/sites/${system.siteId}/systems/${system.id}?view=build`;
     return [system.id, href];
   }));
   const defaultSystemSiteId = systems.find((system) => system.id === profile.data.dashboard_default_system_id)?.siteId;
   const initialSiteId = requestedSiteId ?? (requestedConversationId ? activeConversation?.site_id ?? undefined : undefined) ?? defaultSystemSiteId ?? profile.data.dashboard_default_site_id ?? activeConversation?.site_id ?? undefined;
-  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} discoveryDrafts={(discoveryDraftRows.data ?? []).map((draft) => ({ id: draft.id, status: draft.status, questionId: draft.question_id, answers: (draft.answers ?? {}) as Record<string, string | number | string[]>, updatedAt: draft.updated_at }))} connectedSystemIds={(activeConnections.data ?? []).map((connection) => connection.project_id)} resumeHrefs={resumeHrefs} solarBySite={solarBySite} solarArraysBySite={solarArraysBySite} initialMessages={messages} conversationId={activeConversation?.id} initialSiteId={initialSiteId} initialWattsonOpen={wattson === "open"} autoStartProposal={start === "proposal"} showWelcome={welcome === "1"} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
+  return <Dashboard profile={{ displayName: profile.data.display_name || "", location: profile.data.home_location || "", timezone: profile.data.timezone || "UTC", assessment: (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers }} sites={sites} systems={systems} discoveryDrafts={(discoveryDraftRows.data ?? []).map((draft) => ({ id: draft.id, status: draft.status, questionId: draft.question_id, answers: (draft.answers ?? {}) as Record<string, string | number | string[]>, updatedAt: draft.updated_at }))} connectedSystemIds={(activeConnections.data ?? []).map((connection) => connection.project_id)} resumeHrefs={resumeHrefs} solarBySystem={solarBySystem} solarArraysBySystem={solarArraysBySystem} dashboardDefaultSystemId={profile.data.dashboard_default_system_id ?? undefined} initialMessages={messages} conversationId={activeConversation?.id} initialSiteId={initialSiteId} initialWattsonOpen={wattson === "open"} autoStartProposal={start === "proposal"} showWelcome={welcome === "1"} email={typeof claims.data?.claims?.email === "string" ? claims.data.claims.email : ""} />;
 }

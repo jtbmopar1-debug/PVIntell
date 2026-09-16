@@ -358,8 +358,8 @@ export async function POST(request: Request) {
       ? completedSchematic.result.actionUrl
       : typeof priorStructuredContext.actionUrl === "string" ? priorStructuredContext.actionUrl : undefined;
     if (existingSchematicId && existingSchematicUrl) {
-      const responseMessage = "It is already built. Open the schematic below.";
-      if (!completedSchematic) conversationState.completedActions.push({ kind: "create_schematic", revision: conversationState.revision, description: "Existing installed-system schematic", siteId: conversationState.activeSubject?.siteId, systemId: existingSchematicId, result: { actionUrl: existingSchematicUrl } });
+      const responseMessage = "That proposed schematic has already been created. Open it below.";
+      if (!completedSchematic) conversationState.completedActions.push({ kind: "create_schematic", revision: conversationState.revision, description: "Existing Wattson-created proposal schematic", siteId: conversationState.activeSubject?.siteId, systemId: existingSchematicId, result: { actionUrl: existingSchematicUrl } });
       conversationState = recordWattsonAssistantTurn(conversationState, responseMessage);
       const stateSaved = await supabase.from("user_conversations").update({ conversation_state: conversationState }).eq("id", conversationId).eq("owner_id", userId);
       if (stateSaved.error) return Response.json({ error: stateSaved.error.message, conversationId }, { status: 400 });
@@ -390,18 +390,18 @@ export async function POST(request: Request) {
       createdSystemId = associatedSystemId;
       if (!createdSystemId) {
         const systemName = nextNumberedName("System", connectedSystems.filter((system) => system.site_id === createdSiteId).map((system) => system.name));
-        createdSystemId = await createSystem(supabase, userId, createdSiteId!, systemName, "off-grid", "Installed-system schematic created by Wattson; unconfirmed specifications are TBC.");
+        createdSystemId = await createSystem(supabase, userId, createdSiteId!, systemName, "off-grid", "Proposed-system schematic created by Wattson; unconfirmed specifications are TBC.");
         createdSystemByRequest = true;
       }
       if (createdSystemByRequest) {
-        const existingSettings = { autonomyDays: 2, priorities: [], startingGoal: "Installed-system schematic created by Wattson; unconfirmed specifications are TBC.", goal: "Installed-system schematic created by Wattson; unconfirmed specifications are TBC." };
-        const installedPhase = await supabase.from("projects").update({
-          phase: "check",
-          description: "Installed-system schematic created by Wattson; unconfirmed specifications are TBC.",
-          settings: { ...existingSettings, schematicOrigin: "wattson_conceptual", systemStatus: "unconfirmed", gridRelationship: "unconfirmed" },
+        const existingSettings = { autonomyDays: 2, priorities: [], startingGoal: "Proposed-system schematic created by Wattson; unconfirmed specifications are TBC.", goal: "Proposed-system schematic created by Wattson; unconfirmed specifications are TBC." };
+        const proposedPhase = await supabase.from("projects").update({
+          phase: "design",
+          description: "Proposed-system schematic created by Wattson; unconfirmed specifications are TBC.",
+          settings: { ...existingSettings, schematicOrigin: "wattson_proposal", systemStatus: "proposed", gridRelationship: "unconfirmed" },
           updated_at: new Date().toISOString(),
         }).eq("id", createdSystemId).eq("owner_id", userId);
-        if (installedPhase.error) throw installedPhase.error;
+        if (proposedPhase.error) throw proposedPhase.error;
       }
       const userConversationText = [...prior.filter((item) => item.role === "user").map((item) => item.content), parsed.data.message].join("\n");
       const currentPlan = requestedSchematicPlan(parsed.data.message);
@@ -488,10 +488,10 @@ export async function POST(request: Request) {
         createdConnectionIds = (createdConnections.data ?? []).map((row) => row.id);
       }
       const schematicUrl = `/sites/${createdSiteId}/systems/${createdSystemId}/schematic`;
-      const responseMessage = "Built as an installed-system schematic. I marked the missing electrical ratings as TBC, so those details remain provisional until verified. Open it below.";
+      const responseMessage = "Built as a proposed-system schematic. I marked the missing electrical ratings as TBC, so those details remain provisional until verified. It has not been marked installed or commissioned. Open it below.";
       conversationState.pendingAction = undefined;
-      conversationState.activeSubject = { kind: "setup", description: "Installed-system schematic requested in this conversation", association: "system", siteId: createdSiteId, systemId: createdSystemId };
-      conversationState.completedActions.push({ kind: "create_schematic", revision: conversationState.revision, description: "Created installed-system schematic", siteId: createdSiteId, systemId: createdSystemId, result: { actionUrl: schematicUrl } });
+      conversationState.activeSubject = { kind: "setup", description: "Proposed-system schematic requested in this conversation", association: "system", siteId: createdSiteId, systemId: createdSystemId };
+      conversationState.completedActions.push({ kind: "create_schematic", revision: conversationState.revision, description: "Created proposed-system schematic", siteId: createdSiteId, systemId: createdSystemId, result: { actionUrl: schematicUrl } });
       conversationState = recordWattsonAssistantTurn(conversationState, responseMessage);
       const structuredContext = { evidenceRevision: conversationState.revision, schematicId: createdSystemId, actionUrl: schematicUrl, actionLabel: "Open schematic" };
       const linked = await supabase.from("user_conversations").update({ site_id: createdSiteId, project_id: createdSystemId }).eq("id", conversationId).eq("owner_id", userId);

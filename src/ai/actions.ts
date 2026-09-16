@@ -1384,7 +1384,12 @@ export async function applyWattsonActions(
       delete calculator.stringDesign;
       calculator.sizingInputs = dependentSizing.sizingInputs;
       calculator.sizingAssumptions = dependentSizing.sizingAssumptions;
-      calculator.inverterKw = dependentSizing.inverterKw;
+      // A panel-count change may produce a different planning recommendation,
+      // but it must never replace a rating already recorded for an inverter.
+      // The recommendation remains in inverterPlan and the warning below.
+      const recordedInverterKw = Number(calculator.inverterKw);
+      const hasRecordedInverter = Number.isFinite(recordedInverterKw) && recordedInverterKw > 0;
+      if (!hasRecordedInverter) calculator.inverterKw = dependentSizing.inverterKw;
       const priorInverterPlan = calculator.inverterPlan as { jurisdiction?: string } | undefined;
       calculator.inverterPlan = inverterArrangementAdvice({
         requiredKw: dependentSizing.inverterKw,
@@ -1421,6 +1426,9 @@ export async function applyWattsonActions(
         ...dependentSizing.sizingWarnings
           .filter((warning) => !warning.startsWith("Panel count adjusted to ")),
         `Panel count adjusted to ${panelCount} at the user's request; verify the final string layout against the selected inverter MPPT limits and cold-weather module voltage.`,
+        ...(hasRecordedInverter && dependentSizing.inverterKw && dependentSizing.inverterKw !== recordedInverterKw
+          ? [`The recorded ${recordedInverterKw} kW inverter was retained. Current planning indicates a ${dependentSizing.inverterKw} kW inverter class should be assessed before changing equipment.`]
+          : []),
         ...((calculator.inverterPlan as { message?: string } | undefined)?.message ? [(calculator.inverterPlan as { message: string }).message] : []),
       ];
       delete calculator.proposedAsBuiltDraft;

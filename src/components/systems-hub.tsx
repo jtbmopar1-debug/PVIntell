@@ -21,7 +21,7 @@ function actionHref(system: SystemSummary, action: string) {
   const root = `/sites/${system.siteId}/systems/${system.id}`;
   if (action === "schematic") return `${root}/schematic`;
   if (action === "design") return `${root}/design`;
-  if (action === "proposed-schematic") return `${root}/design/schematic`;
+  if (action === "proposed-schematic") return `${root}/schematic`;
   if (action === "as-built") return `${root}?view=system`;
   if (action === "overview") return root;
   if (action === "financials") return `${root}/financials`;
@@ -76,15 +76,22 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
     if (!response.ok) { window.alert(body.error ?? "Could not delete this item."); return; }
     router.refresh();
   }
-  async function setDashboardDefault(systemId: string, checked: boolean) {
+  async function setDashboardDefault(systemId: string) {
     if (savingDefault) return;
+    const previousSystemId = dashboardDefaultSystemId;
+    setDashboardDefaultSystemId(systemId);
     setSavingDefault(true);
-    const response = await fetch("/api/account/dashboard-system", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ systemId: checked ? systemId : null }) });
-    const body = await response.json();
-    setSavingDefault(false);
-    if (!response.ok) { window.alert(body.error ?? "Could not update the dashboard default."); return; }
-    setDashboardDefaultSystemId(checked ? systemId : undefined);
-    router.refresh();
+    try {
+      const response = await fetch("/api/account/dashboard-system", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ systemId }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not update the dashboard default.");
+      router.refresh();
+    } catch (problem) {
+      setDashboardDefaultSystemId(previousSystemId);
+      window.alert(problem instanceof Error ? problem.message : "Could not update the dashboard default.");
+    } finally {
+      setSavingDefault(false);
+    }
   }
   async function renameSite() {
     if (!selectedSite) return;
@@ -129,14 +136,15 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
       <section className="systems-card-list mt-5 grid gap-3">
         {visibleDrafts.map((draft) => <article key={`draft-${draft.id}`} className="card overflow-hidden border-[#76abd0]"><div className="theme-continue-discovery-header flex flex-wrap items-center justify-between gap-3 border-b p-3"><div className="flex items-center gap-3"><span className="grid size-11 place-items-center rounded-2xl bg-white/60 text-brand"><Sparkles size={20}/></span><div><h2 className="font-display text-lg font-extrabold">{draft.name}</h2><p className="mt-1 text-[10px] font-bold uppercase tracking-[.1em] text-muted">Discovery in progress · not yet proposed</p></div></div><div className="flex items-center gap-2"><Link href={`/discovery/new-system?draft=${draft.id}`} className="flex items-center gap-2 text-[11px] font-bold text-brand">Continue discovery <ArrowRight size={14}/></Link><button type="button" onClick={() => void remove("draft", draft.id, draft.name)} className="grid size-8 place-items-center rounded-lg border border-[#c56f61] bg-white/60 text-[#a7442d]" aria-label={`Delete ${draft.name}`}><Trash2 size={14}/></button></div></div><div className="p-2"><Link href={`/discovery/new-system?draft=${draft.id}`} className="flex min-h-14 items-center gap-2.5 rounded-lg border border-line bg-white px-2.5 py-2"><span className="grid size-8 place-items-center rounded-lg bg-[#eaf2fb] text-brand"><FileSearch size={15}/></span><span><strong className="block text-[11px]">Discovery</strong><span className="text-[9px] text-muted">Return to the exact question where you stopped.</span></span><ArrowRight size={12} className="ml-auto text-[#9aabba]"/></Link></div></article>)}
         {visibleSystems.map((system) => {
-          const installed = operationalPhases.has(system.phase);
+          const proposed = system.statusProposed;
+          const installed = !proposed && operationalPhases.has(system.phase);
           const awaitingConfirmation = system.statusUnconfirmed || system.phase === "check";
-          const installedStyle = installed || awaitingConfirmation;
+          const installedStyle = installed || (!proposed && awaitingConfirmation);
           const actions = installedStyle ? installedActions : discoveryActions;
           return <article key={system.id} className="card overflow-hidden">
-            <div className={`flex flex-wrap items-center justify-between gap-2 border-b border-line p-3 ${installed ? "bg-[linear-gradient(105deg,#eef7f2,#ffffff)]" : awaitingConfirmation ? "bg-[linear-gradient(105deg,#fff6cf,#ffffff)]" : "bg-[linear-gradient(105deg,#eef5fc,#ffffff)]"}`}>
-              <div className="flex items-center gap-3"><span className={`grid size-11 place-items-center rounded-2xl ${installed ? "bg-[#dff3e8] text-[#20724b]" : awaitingConfirmation ? "bg-[#fff0a9] text-brand" : "bg-[#eaf2fb] text-brand"}`}>{installed ? <Activity size={20}/> : <Sparkles size={20}/>}</span><div><div className="flex items-center gap-2"><h2 className="font-display text-lg font-extrabold">{system.name}</h2><button type="button" onClick={() => void renameSystem(system)} className="grid size-7 place-items-center rounded-lg border border-line bg-white text-brand" aria-label={`Rename ${system.name}`}><Pencil size={12}/></button></div><p className="mt-1 text-[10px] font-bold uppercase tracking-[.1em] text-muted">{awaitingConfirmation ? "Installed details unconfirmed" : installed ? "Installed · commissioned" : `Discovery/design · ${system.phase}`} · {system.gridRelationshipUnconfirmed ? "Grid relationship TBC" : system.projectType}</p></div></div>
-              <div className="flex flex-wrap items-center justify-end gap-2"><label className="flex min-h-8 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-muted"><input type="checkbox" checked={dashboardDefaultSystemId === system.id} disabled={savingDefault} onChange={(event) => void setDashboardDefault(system.id, event.target.checked)} className="size-3.5 accent-[#1768a6]"/>Dashboard default</label><Link href={actionHref(system, installedStyle ? "overview" : system.phase === "discover" ? "setup" : "proposed-schematic")} className="flex items-center gap-2 text-[11px] font-bold text-brand">Open system <ArrowRight size={14}/></Link><button type="button" onClick={() => void remove("system", system.id, system.name)} className="grid size-8 place-items-center rounded-lg border border-[#e7b7af] text-[#a7442d]" aria-label={`Delete ${system.name}`}><Trash2 size={14}/></button></div>
+            <div className={`flex flex-wrap items-center justify-between gap-2 border-b border-line p-3 ${installed ? "bg-[linear-gradient(105deg,#eef7f2,#ffffff)]" : awaitingConfirmation || proposed ? "bg-[linear-gradient(105deg,#fff6cf,#ffffff)]" : "bg-[linear-gradient(105deg,#eef5fc,#ffffff)]"}`}>
+              <div className="flex items-center gap-3"><span className={`grid size-11 place-items-center rounded-2xl ${installed ? "bg-[#dff3e8] text-[#20724b]" : awaitingConfirmation || proposed ? "bg-[#fff0a9] text-brand" : "bg-[#eaf2fb] text-brand"}`}>{installed ? <Activity size={20}/> : <Sparkles size={20}/>}</span><div><div className="flex items-center gap-2"><h2 className="font-display text-lg font-extrabold">{system.name}</h2><button type="button" onClick={() => void renameSystem(system)} className="grid size-7 place-items-center rounded-lg border border-line bg-white text-brand" aria-label={`Rename ${system.name}`}><Pencil size={12}/></button></div><p className="mt-1 text-[10px] font-bold uppercase tracking-[.1em] text-muted">{proposed ? "Proposed · not installed" : awaitingConfirmation ? "Installed details unconfirmed" : installed ? "Installed · commissioned" : `Discovery/design · ${system.phase}`} · {system.gridRelationshipUnconfirmed ? "Grid relationship TBC" : system.projectType}</p></div></div>
+              <div className="flex flex-wrap items-center justify-end gap-2"><label className="flex min-h-8 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-muted"><input type="radio" name="dashboard-default-system" checked={dashboardDefaultSystemId === system.id} disabled={savingDefault} onChange={() => void setDashboardDefault(system.id)} className="size-3.5 accent-[#1768a6]"/>Dashboard default</label><Link href={actionHref(system, installedStyle ? "overview" : system.phase === "discover" ? "setup" : "proposed-schematic")} className="flex items-center gap-2 text-[11px] font-bold text-brand">Open system <ArrowRight size={14}/></Link><button type="button" onClick={() => void remove("system", system.id, system.name)} className="grid size-8 place-items-center rounded-lg border border-[#e7b7af] text-[#a7442d]" aria-label={`Delete ${system.name}`}><Trash2 size={14}/></button></div>
             </div>
             <div className={`grid gap-2 p-2 sm:grid-cols-2 ${installedStyle ? "lg:grid-cols-5" : "lg:grid-cols-3"}`}>
               {actions.map(([id, title, detail, Icon]) => { const complete = system.completedAreas?.includes(id) || (id === "build" && locallyCompletedBuilds[system.id]); return <Link key={id} href={actionHref(system, id)} className={`group flex min-h-14 items-center gap-2.5 rounded-lg border px-2.5 py-2 ${complete ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-line bg-white hover:border-[#8ab0d2] hover:bg-[#f8fbfe]"}`}><span className={`grid size-8 shrink-0 place-items-center rounded-lg ${complete ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#eaf2fb] text-brand"}`}>{complete ? <CheckCircle2 size={16}/> : <Icon size={15}/>}</span><span className="min-w-0"><strong className="block text-[11px] leading-4">{title}</strong><span className="block truncate text-[9px] leading-4 text-muted">{complete ? "Complete" : detail}</span></span><ArrowRight size={12} className="ml-auto shrink-0 text-[#9aabba] group-hover:text-brand"/></Link>; })}

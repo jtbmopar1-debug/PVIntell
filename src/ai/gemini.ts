@@ -225,10 +225,23 @@ function hasMatchingCurrentRegulatoryGuidance(message: string, questionnaireCont
 }
 
 export const WATTSON_FOLLOWUP_POLICY =
-  "Outside an active discovery or explicitly requested step-by-step workflow, do not append a question merely to continue engagement, collect an optional detail, improve an answer that is already useful, or fill a missing record. Ask one focused question only when the missing fact prevents a reliable answer, is necessary to address an immediate credible safety concern, or is required to complete the exact action the user requested. If a bounded technical question can be answered with clearly stated assumptions, conditions or a provisional range, give that answer and stop. You may name what would be needed for a final equipment selection without requiring the user to reply. The one optional exception is a short offer to show the complete applicable regulation details when current rules materially affect the component answer; never combine that offer with another question.";
+  "Outside an active discovery or explicitly requested step-by-step workflow, do not append a question merely to continue engagement, collect an optional detail, improve an answer that is already useful, or fill a missing record. Ask one focused question only when the missing fact prevents a reliable answer, is necessary to address an immediate credible safety concern, or is required to complete the exact action the user requested. If the latest message supplies specifications, measurements, label values or other evidence requested by the preceding technical question, apply that evidence to the same question and answer it; do not divert the turn into equipment capture or an optional record action unless the user explicitly asks to save or update a record. Technical evidence does not establish which physical item it describes, that the user owns it, that it is installed, or that it belongs to the selected system. Use unidentified specifications as candidate evidence only and never associate them with an application record without explicit identification and save/update consent. If a bounded technical question can be answered with clearly stated assumptions, conditions or a provisional range, give that answer and stop. You may name what would be needed for a final equipment selection without requiring the user to reply. The one optional exception is a short offer to show the complete applicable regulation details when current rules materially affect the component answer; never combine that offer with another question.";
 
 export const WATTSON_REGULATION_POLICY =
   "componentRegulatoryLibrary is the single canonical list of regulatory subjects for each equipment type. currentRegulatoryGuidance contains a previously researched, cited jurisdiction overlay when one is fresh. Use that fresh overlay instead of searching again unless the user explicitly asks for the latest/current position, the cached review date is stale, or the requested subject is not covered. A topic checklist is not itself a legal rule or compliance approval. When requestClassification.regulatory is true and no adequate fresh overlay is supplied, research the complete current requirements for the confirmed Site jurisdiction from authoritative primary sources before answering. For an ordinary component question, keep the visible answer concise: give the requested technical result, include any regulatory condition that changes that result, then briefly state that additional local requirements apply and name their subjects. Offer to show the complete applicable regulation details instead of dumping them unasked. If the user asks to see the regulations, present them as one connected requirement: cover scope and exceptions, component class/certification, rating or sizing method, mounting and permitted location, clearances and access, enclosure/environmental conditions, required companion protection/isolation/earthing/labelling, and any inspection, permit, network or qualified-worker requirement that controls the result. Include only sections relevant to the component and installation, but never quote one attractive limit while omitting another condition that changes whether it is permitted. Separate legal or authority requirements from manufacturer limits and general engineering guidance. If authoritative sources do not establish the complete applicable requirement, identify what remains unverified instead of presenting a partial rule as complete.";
+
+export function visibleGeminiMessage(raw: Pick<GeminiInteraction, "output_text" | "steps">) {
+  const direct = raw.output_text?.trim();
+  if (direct) return direct;
+  return (raw.steps ?? [])
+    .filter((step) => step.type === "model_output")
+    .flatMap((step) => step.content ?? [])
+    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .map((block) => block.text?.trim() ?? "")
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
 
 function parseInteraction(
   raw: GeminiInteraction,
@@ -239,12 +252,7 @@ function parseInteraction(
     .filter((step) => step.type === "model_output")
     .flatMap((step) => step.content ?? [])
     .filter((block) => block.type === "text" && typeof block.text === "string");
-  const message =
-    raw.output_text ??
-    outputBlocks
-      .map((block) => block.text)
-      .join("\n")
-      .trim();
+  const message = visibleGeminiMessage(raw);
   const functionCalls = (raw.steps ?? [])
     .filter((step) => step.type === "function_call" && step.name)
     .map((step) => ({ name: step.name as string, arguments: step.arguments }));
@@ -317,6 +325,7 @@ export async function askGemini({
   monitoringContext,
   image,
   allowActions = true,
+  allowOptionalRecordAction = true,
 }: {
   message: string;
   project: Project;
@@ -325,6 +334,7 @@ export async function askGemini({
   monitoringContext?: unknown;
   image?: { data: string; mimeType: string };
   allowActions?: boolean;
+  allowOptionalRecordAction?: boolean;
 }): Promise<GeminiWattsonResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
@@ -465,22 +475,23 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
   const tools: unknown[] = allowActions
     ? wattsonActionTools.filter((tool) => designToolNames.has(tool.name))
     : [];
-  tools.push({
-    type: "function",
-    name: "offer_optional_record_action",
-    description: "Create typed pending consent state when—and only when—the response explicitly asks the user whether Wattson should make one exact application-record change. This tool does not perform the change.",
-    parameters: {
-      type: "object",
-      properties: {
-        kind: { type: "string", enum: ["record_equipment", "attach_record", "create_system"] },
-        description: { type: "string" },
-        action_name: { type: "string", enum: [...designToolNames] },
-        action_arguments: { type: "object", additionalProperties: true },
+  if (allowOptionalRecordAction)
+    tools.push({
+      type: "function",
+      name: "offer_optional_record_action",
+      description: "Create typed pending consent state when—and only when—the visible response asks whether Wattson should make one exact application-record change. Never use this tool instead of answering the user's question in visible text.",
+      parameters: {
+        type: "object",
+        properties: {
+          kind: { type: "string", enum: ["record_equipment", "attach_record", "create_system"] },
+          description: { type: "string" },
+          action_name: { type: "string", enum: [...designToolNames] },
+          action_arguments: { type: "object", additionalProperties: true },
+        },
+        required: ["kind", "description"],
+        additionalProperties: false,
       },
-      required: ["kind", "description"],
-      additionalProperties: false,
-    },
-  });
+    });
   if (route.search)
     tools.unshift({ type: "google_search", search_types: ["web_search"] });
   const body: Record<string, unknown> = {
@@ -502,7 +513,7 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
     "https://generativelanguage.googleapis.com/v1beta/interactions",
     {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey, "Api-Revision": "2026-05-20" },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(25_000),
     },
@@ -515,5 +526,18 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
         : raw.error?.message ??
         `Gemini request failed with status ${response.status}.`,
     );
-  return parseInteraction(raw, model, route.search);
+  const result = parseInteraction(raw, model, route.search);
+  if (!result.message && result.offeredAction && allowOptionalRecordAction) {
+    return askGemini({
+      message: `${message}\n\nReturn the useful plain-language answer in visible text. Do not call or offer any record action in this response, and do not claim that any record was changed.`,
+      project,
+      recentConversation,
+      questionnaireContext,
+      monitoringContext,
+      image,
+      allowActions: false,
+      allowOptionalRecordAction: false,
+    });
+  }
+  return result;
 }

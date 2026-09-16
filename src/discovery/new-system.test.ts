@@ -47,6 +47,13 @@ describe("new-system discovery", () => {
         expect.objectContaining({ value: "installed_change_planned" }),
       ],
     });
+    expect(questions[1]).toMatchObject({
+      id: "existing_proposal_status",
+      options: [
+        expect.objectContaining({ value: "yes" }),
+        expect.objectContaining({ value: "no" }),
+      ],
+    });
   });
 
   it("uses floor area only as a fallback when reliable measured energy is unavailable", () => {

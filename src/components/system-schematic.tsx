@@ -6,6 +6,7 @@ import {
   BatteryCharging,
   ChevronDown,
   CircleAlert,
+  CircleHelp,
   Eye,
   EyeOff,
   Fuel,
@@ -42,6 +43,8 @@ import { SchematicWattsonChat } from "@/components/schematic-wattson-chat";
 import { allHowToGuides } from "@/components/pvintell-workspace";
 import { GRID_CONNECTION_IMAGE } from "@/ui/assets";
 import { isVisibleInstalledAccessory, removeCoveredInferredLinks } from "@/schematic/installed-layout";
+import { hasUnresolvedSuitabilityIssue } from "@/lib/suitability-status";
+import { formatPower } from "@/lib/power-units";
 
 type DiagramNode = {
   id: string;
@@ -59,6 +62,7 @@ type DiagramNode = {
   href?: string;
   imageSrc?: string;
   proposed?: boolean;
+  incompatible?: boolean;
   placement?: "pv-inline" | "battery-inline" | "busbar" | "general";
 };
 
@@ -101,13 +105,21 @@ function componentRating(component: ComponentSpec) {
       component.specs["Rated output"] ??
       component.specs.continuousW,
   );
-  const rating = rawRating && /^\d+(?:\.\d+)?$/.test(rawRating) ? `${rawRating} W` : rawRating;
+  const rating = rawRating && component.kind === "inverter" ? formatPower(rawRating) : rawRating && /^\d+(?:\.\d+)?$/.test(rawRating) ? `${rawRating} W` : rawRating;
   const quantity = component.quantity > 1 ? `${component.quantity} × ` : "";
   return rating
     ? `${quantity}${rating}`
     : component.quantity > 1
       ? `Qty ${component.quantity}`
       : undefined;
+}
+
+function componentSuitabilityUnresolved(component: ComponentSpec) {
+  return hasUnresolvedSuitabilityIssue(component.notes, component.specs);
+}
+
+function arraySuitabilityUnresolved(array: PVArray) {
+  return hasUnresolvedSuitabilityIssue(array.installationNotes, array.specifications);
 }
 
 const imageBase = "/schematic-components";
@@ -290,6 +302,7 @@ function NodeCard({
         className={`relative flex h-full w-full touch-none flex-col items-center rounded-2xl border bg-transparent px-2 py-1 text-center transition hover:-translate-y-0.5 hover:bg-white/55 ${node.proposed ? "border-dashed border-[#8db4d8]" : "border-transparent"} ${connectingFrom === node.id ? "border-[#f6c945] bg-[#fff9df] ring-2 ring-[#f6c945]/35" : ""} ${node.href ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
       >
         {node.proposed && <span className="absolute left-1 top-1 z-10 rounded-full bg-[#fff6cf] px-2 py-1 text-[8px] font-extrabold uppercase tracking-wide text-[#8b6512]">Proposed</span>}
+        {node.incompatible && <span className="absolute left-1/2 top-[58px] z-20 grid size-8 -translate-x-1/2 place-items-center rounded-full border-2 border-white bg-[#c9362b] text-white shadow-md" title="Suitability has not passed — open this technical card for details" aria-label="Suitability has not passed"><Ban size={18}/></span>}
         <span
           draggable
           title="Drag to another item to connect"
@@ -574,6 +587,16 @@ export function SystemSchematic({
   const [canvasFrameWidth, setCanvasFrameWidth] = useState(1100);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [wattsonOpen, setWattsonOpen] = useState(false);
+  const [guidanceRequest, setGuidanceRequest] = useState<{ id: number; message: string; displayMessage?: string }>();
+
+  const askWhatsNext = () => {
+    setGuidanceRequest({
+      id: Date.now(),
+      displayMessage: "What’s next?",
+      message: "What is the next smallest action to complete this system safely? Reply as a short working checklist, not a report. Start with **Do this now:** and give one clear action such as confirm a panel model, check inverter limits, size the generator, or complete a connection record. Then give at most two later actions. Use plain language. Do not list the whole system, raw electrical calculations, lifecycle background, URLs, or standards unless they are essential to the immediate action. Reassess the saved record every time this button is clicked. Do not mark anything installed, confirmed, or commissioned unless the records prove it.",
+    });
+    setWattsonOpen(true);
+  };
   const canvasViewportRef = useRef<HTMLDivElement>(null);
   const initialCanvasFitDone = useRef(false);
   const [viewPreferencesReady, setViewPreferencesReady] = useState(false);
@@ -707,6 +730,7 @@ export function SystemSchematic({
         href: `${base}/pv-strings/${array.id}`,
         imageSrc: `${imageBase}/solar-panel-pv-module.jpg`,
         proposed: array.confidence !== "confirmed",
+        incompatible: arraySuitabilityUnresolved(array),
       })),
       ...batteries.flatMap((battery) => Array.from({ length: Math.max(1, battery.quantity) }, (_, index) => ({
         id: index ? `component:${battery.id}:unit-${index + 1}` : `component:${battery.id}`,
@@ -716,6 +740,7 @@ export function SystemSchematic({
         href: componentHref(base, battery),
         imageSrc: componentImage(battery),
         proposed: battery.status !== "confirmed",
+        incompatible: componentSuitabilityUnresolved(battery),
       }))),
       ...generators.map((generator) => ({
         id: `component:${generator.id}`,
@@ -725,6 +750,7 @@ export function SystemSchematic({
         href: componentHref(base, generator),
         imageSrc: componentImage(generator),
         proposed: generator.status !== "confirmed",
+        incompatible: componentSuitabilityUnresolved(generator),
       })),
       ...gridComponents.map((grid) => ({
         id: `component:${grid.id}`,
@@ -758,6 +784,7 @@ export function SystemSchematic({
           href: componentHref(base, inverter),
           imageSrc: componentImage(inverter),
           proposed: inverter.status !== "confirmed",
+          incompatible: componentSuitabilityUnresolved(inverter),
         }));
     const outputNode = undefined as DiagramNode | undefined;
     const earthNode: DiagramNode | undefined = earth
@@ -790,6 +817,7 @@ export function SystemSchematic({
         href: componentHref(base, component),
         imageSrc: componentImage(component),
         proposed: component.status !== "confirmed",
+        incompatible: componentSuitabilityUnresolved(component),
         placement,
       };
     });
@@ -920,6 +948,7 @@ export function SystemSchematic({
           editHref: componentHref(base, component),
           polarity: "pair",
           connectionType: "dc",
+          unconfirmed: true,
         },
         {
           id: `inline-out:${component.id}`,
@@ -930,6 +959,7 @@ export function SystemSchematic({
           editHref: componentHref(base, component),
           polarity: "pair",
           connectionType: "dc",
+          unconfirmed: true,
         },
       );
     }
@@ -944,6 +974,7 @@ export function SystemSchematic({
           values: pvDetails(array),
           editHref: `${base}/pv-strings/${array.id}`,
           connectionType: "dc",
+          unconfirmed: true,
         });
     }
     for (const battery of batteries) {
@@ -956,7 +987,7 @@ export function SystemSchematic({
           targetId: target.id,
           values: componentDetails(batteryLinks),
           editHref: componentHref(base, batteryLinks[0]),
-          unconfirmed: !batteryLinks.length,
+          unconfirmed: true,
           connectionType: "dc",
         });
     }
@@ -979,6 +1010,7 @@ export function SystemSchematic({
           values: componentDetails([generator]),
           editHref: componentHref(base, generator),
           connectionType: "ac",
+          unconfirmed: true,
         });
     }
     if (upstreamAcName) {
@@ -1003,6 +1035,7 @@ export function SystemSchematic({
           values: componentDetails(acLinks),
           editHref: componentHref(base, acLinks[0]),
           connectionType: "ac",
+          unconfirmed: true,
         });
     }
     const explicitConnections: ConnectionDetail[] = project.connections.map(
@@ -1054,7 +1087,7 @@ export function SystemSchematic({
         polarity,
         connectionType: effectiveConnectionType,
         saved: { ...connection, connectionType: effectiveConnectionType },
-        incompatible: /cable compatibility warning:/i.test(connection.notes ?? ""),
+        incompatible: hasUnresolvedSuitabilityIssue(connection.notes),
       };
       },
     );
@@ -1070,7 +1103,6 @@ export function SystemSchematic({
       earthNode,
       positions,
       connections: [
-        ...unmatchedInferredConnections.filter((connection) => !connection.unconfirmed),
         ...(firstConnectionGuide ? [firstConnectionGuide] : []),
         ...explicitConnections,
       ],
@@ -1081,6 +1113,28 @@ export function SystemSchematic({
   const visibleConnections = diagram.connections.filter((connection) =>
     connectionView === "all" || connection.connectionType === connectionView,
   );
+
+  function openConnectionEditor(connection: ConnectionDetail) {
+    if (connection.saved) {
+      setSelected(connection);
+      setDraftEnds(undefined);
+      return;
+    }
+    const nodes = [
+      ...diagram.sourceNodes,
+      ...diagram.inverterNodes,
+      ...(diagram.outputNode ? [diagram.outputNode] : []),
+      ...diagram.accessoryNodes,
+      ...(diagram.earthNode ? [diagram.earthNode] : []),
+    ];
+    const source = nodes.find((node) => node.id === connection.sourceId);
+    const target = nodes.find((node) => node.id === connection.targetId);
+    if (!source || !target) return;
+    setSelected(undefined);
+    setDraftEnds({ source, target });
+    setEditorConnectionType(connection.connectionType ?? "dc");
+    setError("");
+  }
 
   const canvasWidth = Math.max(1100, canvasFrameWidth / canvasZoom);
   const horizontalExpansion = canvasWidth / 1100;
@@ -1250,7 +1304,7 @@ export function SystemSchematic({
             notes: body.connection?.notes ?? String(payload.notes ?? ""),
             confidence: "estimated",
           },
-          incompatible: /cable compatibility warning:/i.test(body.connection?.notes ?? ""),
+          incompatible: hasUnresolvedSuitabilityIssue(body.connection?.notes),
         } : current);
         router.refresh();
         return;
@@ -1461,6 +1515,7 @@ export function SystemSchematic({
 
         <section className="card overflow-hidden">
           <div className="schematic-canvas-toolbar flex items-center gap-2 overflow-x-auto border-b border-line bg-[#fff9df] px-3 py-2">
+            <button type="button" onClick={askWhatsNext} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#f6c945] px-3 text-[10px] font-extrabold text-brand"><CircleHelp size={13}/>What&apos;s next?</button>
             <button type="button" onClick={() => setWattsonOpen(true)} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-brand px-3 text-[10px] font-bold text-white"><Zap size={13}/>Work on this with Wattson</button>
             <div className="relative flex shrink-0 items-center gap-1.5">
               <label className="sr-only" htmlFor="installed-schematic-connection-view">Show schematic connections</label>
@@ -1527,7 +1582,7 @@ export function SystemSchematic({
                   key={connection.id}
                   connection={connection}
                   positions={displayPositions}
-                  onOpen={setSelected}
+                  onOpen={openConnectionEditor}
                   showLabel={showConnectionLabels}
                   laneOffset={laneOffset}
                 />
@@ -1708,7 +1763,7 @@ export function SystemSchematic({
         </div>
       )}
     </main>
-      <SchematicWattsonChat project={project} initialConversationId={initialConversationId} initialMessages={initialMessages} open={wattsonOpen} onClose={() => setWattsonOpen(false)}/>
+      <SchematicWattsonChat project={project} initialConversationId={initialConversationId} initialMessages={initialMessages} open={wattsonOpen} onClose={() => setWattsonOpen(false)} guidanceRequest={guidanceRequest}/>
     </div>
   );
 }

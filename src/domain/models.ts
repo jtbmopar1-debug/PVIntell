@@ -31,6 +31,7 @@ export interface SystemSummary {
   phase: LifecyclePhase;
   completedAreas?: string[];
   statusUnconfirmed?: boolean;
+  statusProposed?: boolean;
   gridRelationshipUnconfirmed?: boolean;
 }
 
