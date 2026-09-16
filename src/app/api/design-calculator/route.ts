@@ -15,7 +15,7 @@ const calculatorSchema = z.object({
       connections: z.array(z.object({ from: z.string().max(50), to: z.string().max(50), label: z.string().max(200), kind: z.enum(["solar-dc", "battery-dc", "ac", "earth"]), lengthM: finite.optional(), lengthBasis: z.enum(["estimated", "measured"]).optional(), cableSizeMm2: finite.optional(), protectionAmps: finite.optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional(), configured: z.boolean().optional() })).max(200).optional(),
       panelCount: finite.optional(), panelWatts: finite.optional(), pvStrings: finite.optional(), panelsPerString: finite.optional(),
       panelVmpV: finite.optional(), panelVocV: finite.optional(), panelImpA: finite.optional(), panelIscA: finite.optional(), batteryVoltage: finite.optional(),
-      batteryAh: finite.optional(), batteryQuantity: finite.optional(), inverterKw: finite.optional(), generatorContinuousKw: finite.optional(), generatorSurgeKw: finite.optional(),
+      batteryAh: finite.optional(), batteryQuantity: finite.optional(), inverterKw: finite.optional(), evChargingKw: finite.optional(), evChargingPhase: z.enum(["single", "three"]).optional(), generatorContinuousKw: finite.optional(), generatorSurgeKw: finite.optional(),
     }).optional(),
     architecture: z.enum(["combined_hybrid_inverter", "separate_solar_controller_and_inverter", "ac_coupled", "not_decided"]).optional(),
     designBasis: z.string().max(2000).optional(),
@@ -65,7 +65,7 @@ const calculatorSchema = z.object({
     fitStatus: z.enum(["verified", "unverified", "does_not_fit"]).optional(),
     azimuthDegrees: finite.max(360).optional(), tiltDegrees: finite.max(90).optional(),
     peakSunHours: finite.max(24).optional(), systemEfficiencyPercent: finite.max(100).optional(),
-    inverterKw: finite.optional(), batteryChemistry: z.string().max(100).optional(), batteryVoltage: finite.optional(),
+    inverterKw: finite.optional(), evChargingKw: finite.optional(), evChargingPhase: z.enum(["single", "three"]).optional(), batteryChemistry: z.string().max(100).optional(), batteryVoltage: finite.optional(),
     inverterPlan: z.object({
       jurisdiction: z.enum(["nz", "local_review"]),
       selectionStatus: z.enum(["candidate_selected", "candidate_selected_pending_local_approval"]),

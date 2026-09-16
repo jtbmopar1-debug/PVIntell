@@ -23,6 +23,60 @@ export interface DiscoveryQuestion {
   showWhen?: (answers: DiscoveryAnswers) => boolean;
 }
 
+export const evVehicleSizeOptions = [
+  { value: "small", label: "Small EV", description: "Hatchbacks and other smaller electric vehicles." },
+  { value: "medium", label: "Medium EV", description: "Sedans, crossovers and smaller SUVs." },
+  { value: "large", label: "Large EV", description: "Large SUVs, utility vehicles and pickups." },
+];
+
+export const evChargingWindowOptions = [
+  { value: "overnight", label: "Plug in overnight", description: "Use the longer overnight charging window." },
+  { value: "daytime", label: "Plug in during the day", description: "Use available daytime solar while the vehicle is parked." },
+];
+
+export const evChargingPriorityOptions = [
+  { value: "solar_surplus", label: "Use spare solar first", description: "Vary charging around measured solar that the property is not using." },
+  { value: "departure_target", label: "Be ready by departure", description: "Permit another source when necessary to reach the required energy by a chosen time." },
+  { value: "low_tariff", label: "Use lower-price periods", description: "Schedule grid charging where a real time tariff supports it." },
+  { value: "protect_site_capacity", label: "Never overload the property", description: "Dynamically reduce EV current as other loads rise." },
+  { value: "preserve_backup", label: "Preserve home-battery reserve", description: "Do not silently drain outage or off-grid reserve into the vehicle." },
+];
+
+export const evAvailableSupplyOptions = [
+  { value: "portable_outlet", label: "Portable charger and outlet", description: "The outlet, circuit, plug temperature and continuous-load suitability still need checking." },
+  { value: "fixed_single_phase", label: "Fixed single-phase wallbox", description: "Its real model, circuit and configured current still need confirmation." },
+  { value: "fixed_three_phase", label: "Fixed three-phase wallbox", description: "Vehicle, Site and charging equipment must all support the intended arrangement." },
+  { value: "no_supply", label: "No charging supply available", description: "Plan the parking position, cable route, circuit and power management from scratch." },
+];
+
+export const evBidirectionalOptions = [
+  { value: "no", label: "Normal charging only", description: "The vehicle receives energy but is not planned as a property power source." },
+  { value: "v2l", label: "Vehicle-to-load interests me", description: "Use the vehicle’s supported outlet for compatible individual loads." },
+  { value: "consider_v2h", label: "Keep V2H/V2G possible", description: "Check the complete vehicle, bidirectional charger, transfer/export and local approval ecosystem." },
+  { value: "existing_supported", label: "I already have supported V2X equipment", description: "Capture every exact model and commissioned connection before treating it as available." },
+];
+
+export const evPlanningPowerBands: Record<string, string> = {
+  up_to_3_6_kw: "Up to 3.6 kW",
+  "3_7_to_7_4_kw": "3.7–7.4 kW",
+  "7_5_to_11_kw": "7.5–11 kW",
+  "11_to_22_kw": "11–22 kW",
+};
+
+export function evPlanningPowerBand(answers: DiscoveryAnswers) {
+  const efficiencyKwhPerKm: Record<string, number> = { small: 0.17, medium: 0.2, large: 0.24 };
+  const distanceKm: Record<string, number> = { short: 30, average: 50, long: 100 };
+  const sizeEfficiency = efficiencyKwhPerKm[String(answers.ev_vehicle_size)];
+  const distance = distanceKm[String(answers.ev_travel_profile)];
+  const windowHours = answerValues(answers.ev_charging_window).includes("daytime") ? 6 : 8;
+  if (!sizeEfficiency || !distance || !answerValues(answers.ev_charging_window).length) return undefined;
+  const requiredKw = distance * sizeEfficiency * 1.1 / windowHours;
+  if (requiredKw <= 3.6) return "up_to_3_6_kw";
+  if (requiredKw <= 7.4) return "3_7_to_7_4_kw";
+  if (requiredKw <= 11) return "7_5_to_11_kw";
+  return "11_to_22_kw";
+}
+
 function includesSolarPanels(answers: DiscoveryAnswers) {
   const locations = answers.panel_location;
   return !(locations === "none" || (Array.isArray(locations) && locations.includes("none")));
@@ -53,7 +107,7 @@ function hasPoolEquipmentToRate(answers: DiscoveryAnswers) {
 }
 
 function hasHouseholdMotorLoads(answers: DiscoveryAnswers) {
-  return answerValues(answers.heavy_loads).some((value) => value !== "none");
+  return highPowerOptionsForEverydayNeeds(answers).length > 0;
 }
 
 function isPoolOnly(answers: DiscoveryAnswers) {
@@ -84,20 +138,24 @@ function answerValues(value: string | number | string[] | undefined) {
   return (Array.isArray(value) ? value : value === undefined ? [] : [value]).map(String);
 }
 
-function hasLargeLoadCandidates(answers: DiscoveryAnswers) {
-  const selected = [answers.everyday_needs, answers.cooking_energy, answers.water_heating_energy, answers.space_heating_energy, answers.pool_equipment, answers.pool_heating_method]
-    .flatMap(answerValues);
-  return selected.some((value) => [
-    "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "tools", "compressor", "fridge_freezer", "chest_freezer", "cooling", "ev",
-    "electric_oven", "electric_cooktop", "induction", "air_fryer", "microwave",
-    "electric_resistive", "instant_electric", "heat_pump", "resistive", "pool_heat_pump", "resistive_electric", "spa_inline_heater",
-    "filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature",
-  ].includes(value)) || answerValues(answers.building_type).some((value) => ["shed_workshop", "farm_building"].includes(value));
+export function highPowerOptionsForEverydayNeeds(answers: DiscoveryAnswers): NonNullable<DiscoveryQuestion["options"]> {
+  const everyday = new Set(answerValues(answers.everyday_needs));
+  const options: NonNullable<DiscoveryQuestion["options"]> = [];
+  const add = (value: string, label: string, description: string) => options.push({ value, label, description });
+  if (everyday.has("water_pump")) add("water_pump", "Water, bore or pressure pump", "A selected day-to-day pump load that may start automatically.");
+  if (everyday.has("septic_pump")) add("septic_pump", "Sewage or septic pump", "A selected day-to-day wastewater pump load.");
+  if (everyday.has("septic_aerator")) add("septic_aerator", "Septic aerator or treatment blower", "A selected day-to-day motor load.");
+  if (everyday.has("sump_drainage_pump")) add("sump_drainage_pump", "Sump or drainage pump", "A selected day-to-day drainage pump load.");
+  if (everyday.has("tools")) add("saw_tools", "Workshop tools", "The workshop tools selected in the day-to-day load list.");
+  if (everyday.has("compressor")) add("compressor", "Compressor, motor or welder", "The motor, compressor or welder category selected in the day-to-day load list.");
+  if (everyday.has("fridge_freezer")) add("refrigeration", "Fridge or upright freezer", "The refrigeration load selected in the day-to-day load list.");
+  if (everyday.has("chest_freezer")) add("chest_freezer", "Chest freezer", "The chest freezer selected in the day-to-day load list.");
+  if (everyday.has("cooling")) add("heat_pump", "Cooling or ventilation", "The cooling or ventilation load selected in the day-to-day load list.");
+  return options;
 }
 
-function needsStandaloneHighPowerSupply(answers: DiscoveryAnswers) {
-  return replacesGrid(answers)
-    || (answers.utility_relationship === "grid_connected" && Boolean(answers.backup_preference) && answers.backup_preference !== "none");
+function hasLargeLoadCandidates(answers: DiscoveryAnswers) {
+  return highPowerOptionsForEverydayNeeds(answers).length > 0;
 }
 
 function hasGeneratorRequirement(answers: DiscoveryAnswers) {
@@ -148,24 +206,33 @@ export function sequentialDiscoveryStageProgress(questions: DiscoveryQuestion[],
 
 export const newSystemQuestions: DiscoveryQuestion[] = [
   {
-    id: "existing_system_status", stage: "discovery", title: "Do you already have an installed solar or battery system at this site?",
-    noviceHelp: "PVIntell records what is physically installed before creating any proposal. This keeps existing equipment separate from equipment you may add, replace or compare later.",
-    technicalHelp: "Use the as-built workflow first for installed or partly installed equipment. Any later expansion or replacement proposal must reference that installed baseline rather than recreating it as proposed equipment.",
+    id: "existing_system_status", stage: "discovery", title: "Is a system or part-system installed at this Site?",
+    noviceHelp: "Choose Yes when any solar, battery or related equipment is physically installed, even when it is incomplete or you know very little about it.",
+    technicalHelp: "Installed and partly installed equipment establishes an as-built baseline. The next question records the user’s knowledge separately from the physical state of the system.",
     type: "choice", options: [
-      { value: "none", label: "No installed system", description: "Continue into discovery for a completely new proposal." },
-      { value: "installed", label: "Yes - already installed", description: "Record the existing system, equipment and connections first." },
-      { value: "partly_installed", label: "Partly installed", description: "Record what physically exists and its current completion state first." },
-      { value: "installed_change_planned", label: "Yes - I want changes", description: "Record the existing baseline first, then create a linked expansion or replacement proposal." },
+      { value: "installed", label: "Yes — a system or part-system is installed", description: "Continue in Discovery and tell us how much you know about it." },
+      { value: "none", label: "No — nothing is installed", description: "Continue to the panels and parts question." },
     ],
   },
   {
-    id: "existing_proposal_status", stage: "discovery", title: "Do you already have a proposed system or component in mind?",
-    noviceHelp: "Discovery is designed to work out a complete system from your needs. If you already know the equipment, quantities or layout you want, Wattson can record and validate that proposal directly instead.",
-    technicalHelp: "Use proposal intake for an existing concept, equipment schedule, quotation, marked-up plan or specified component set. Continue Discovery when you want PVIntell to calculate the system from requirements.",
+    id: "installed_system_knowledge", stage: "discovery", title: "Do you know enough about this installed system to record it?",
+    noviceHelp: "Answer for this particular system. Knowing solar generally does not mean you know what was installed here, and uncertainty will never be treated as a confirmed fact.",
+    technicalHelp: "Route by the user’s ability to describe this as-built system from reliable evidence, not by ownership or general technical experience.",
     type: "choice", options: [
-      { value: "yes", label: "Yes — I already have a plan", description: "Review the recommended Wattson proposal-intake route before continuing." },
-      { value: "no", label: "No — design it for me", description: "Continue through full-system Discovery and let PVIntell calculate a proposal." },
-    ],
+      { value: "know_well", label: "Yes — I know the system very well", description: "Open System Capture and document the installed equipment and connections." },
+      { value: "know_main", label: "Yes — I know the main equipment and connections", description: "Open System Capture, enter the known baseline and leave unsupported details unconfirmed." },
+      { value: "know_little", label: "I know a few details but need help", description: "Stay in guided Discovery so PVIntell can establish what you know and what still needs checking." },
+      { value: "know_nothing", label: "I know little or nothing about it", description: "Stay in guided Discovery with explanations and no assumed system details." },
+    ], showWhen: (answers) => answers.existing_system_status === "installed",
+  },
+  {
+    id: "existing_proposal_status", stage: "discovery", title: "Do you have panels or other parts you want to use?",
+    noviceHelp: "Choose Yes for panels, batteries, an inverter, a controller or other equipment you already have or have selected. Equipment here is proposed—not installed—until the installed record says otherwise.",
+    technicalHelp: "Route known candidate equipment through proposal intake so model, quantity and compatibility constraints are recorded before PVIntell builds the design.",
+    type: "choice", options: [
+      { value: "yes", label: "Yes — I have panels or parts", description: "Open the yellow proposal intake and record the equipment you want the proposal to use." },
+      { value: "no", label: "No — choose everything for me", description: "Continue through Discovery and let PVIntell calculate the proposal from your needs." },
+    ], showWhen: (answers) => answers.existing_system_status === "none",
   },
   {
     id: "system_name", stage: "discovery", title: "What should we call this power setup?",
@@ -291,9 +358,9 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: includesSolarPanels,
   },
   {
-    id: "existing_panel_selection", stage: "site", title: "Which existing panels should this proposal use?",
-    noviceHelp: "Select panels already saved in Site equipment, or enter the panel group here if it has not been recorded yet. Then decide explicitly how the proposal should treat it.",
-    technicalHelp: "Link or create one homogeneous module group, record its quantity, construction and STC wattage, and set its proposal disposition. Exact voltage, current and temperature values remain required before string design.",
+    id: "existing_panel_selection", stage: "site", title: "What existing panels do you have?",
+    noviceHelp: "Enter the total number of panels. If you know how they are divided, also enter the number of separate arrays or panel groups; otherwise choose ‘I don’t know’ for that layout detail. Discovery will decide how many are suitable for this proposal later.",
+    technicalHelp: "Record the inventory total and known array or homogeneous module-group count without asking the user to allocate a proposal quantity. Exact model, voltage, current, temperature, condition and compatibility evidence remain required before string design.",
     type: "textarea", showWhen: hasExistingPanelInterest,
   },
   {
@@ -362,6 +429,21 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     id: "structure_condition", stage: "site", title: "What do you know about the roof or supporting structure?",
     noviceHelp: "Choose the surface or support type, approximate age and current condition for each possible panel area. If an inspection is needed, gather that evidence before completing discovery.",
     technicalHelp: "Record each possible mounting structure separately. These selections identify where structural condition or mounting compatibility still needs verification.", type: "textarea", showWhen: includesSolarPanels,
+  },
+  {
+    id: "existing_power_equipment_status", stage: "site", title: "Is there an inverter, charge controller or similar equipment you want to include?",
+    noviceHelp: "This is a final equipment check. Choose Yes for an inverter, inverter/charger, solar charge controller, microinverters, optimisers, DC-DC charger or similar equipment you already have and want assessed with this system.",
+    technicalHelp: "Treat user-owned power-conversion equipment as an in-scope candidate until its exact ratings, condition, firmware, topology and compatibility are verified.",
+    type: "choice", options: [
+      { value: "yes", label: "Yes — I have equipment to include", description: "List each item and record the identifying and rating information you know." },
+      { value: "no", label: "No — continue without existing equipment", description: "Continue to the battery-storage question." },
+    ],
+  },
+  {
+    id: "existing_power_equipment", stage: "site", title: "What inverter or control equipment do you have?",
+    noviceHelp: "Give each item a clear name, choose its type, and copy the make, model and rating from its label when available. Use ‘I don’t know the rating’ instead of guessing.",
+    technicalHelp: "Record each candidate separately. Nameplate power or current is discovery evidence only; input windows, MPPT limits, battery voltage, surge duty, phase, communications and supported operating modes still require exact documentation.",
+    type: "textarea", showWhen: (answers) => answers.existing_power_equipment_status === "yes",
   },
   {
     id: "battery_requirement", stage: "needs", title: "Should this system design include battery storage?",
@@ -540,6 +622,28 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: (answers) => !isPoolOnly(answers),
   },
   {
+    id: "household_motor_ratings", stage: "needs", title: "What electrical input do the selected high-power loads use?",
+    noviceHelp: "This follows your day-to-day load selection. Enter the normal electrical input shown on each selected equipment label. Wattson estimates startup demand for motor and compressor loads; use a manufacturer maximum value when available.",
+    technicalHelp: "Record quantity and continuous electrical input for every selected day-to-day high-power load. Apply equipment-specific starting demand only to motor/compressor loads, and use the welder's rated input and duty-cycle evidence rather than treating its output rating as supply demand.",
+    type: "textarea", showWhen: hasHouseholdMotorLoads,
+  },
+  {
+    id: "heavy_loads", stage: "needs", title: "Which high-power loads could operate together?",
+    noviceHelp: "Select the loads that could realistically be on at the same time. This helps Wattson plan inverter peak power and motor-starting surge; it does not calculate daily energy use.", type: "multi_choice", options: [
+      { value: "water_pump", label: "Water or bore pump", description: "Includes pressure and irrigation pumps." },
+      { value: "compressor", label: "Air compressor", description: "A motor load with a startup surge." },
+      { value: "welder", label: "Welder", description: "A high-demand workshop load." },
+      { value: "saw_tools", label: "Large saws or workshop tools", description: "Bench saws, planers, grinders and similar tools." },
+      { value: "refrigeration", label: "Refrigerator or upright freezer", description: "A household refrigeration compressor that may start automatically." },
+      { value: "chest_freezer", label: "Chest freezer", description: "A separate compressor load that can start while the refrigerator or other loads are running." },
+      { value: "heat_pump", label: "Heat pump or air conditioning", description: "Heating/cooling compressor load." },
+      { value: "electric_water", label: "Electric water heating", description: "Cylinder, instant heater or heat-pump water heater." },
+      { value: "pool_heat_pump", label: "Pool or spa heat pump", description: "A seasonal compressor load that may run for many hours." },
+      { value: "ev", label: "EV charging", description: "Vehicle charging currently used or being added as part of this system." },
+      { value: "none", label: "None of these", description: "No known large or high-surge loads." },
+    ], showWhen: hasLargeLoadCandidates,
+  },
+  {
     id: "backup_preference", stage: "needs", title: "What should happen during a public power outage?",
     noviceHelp: "Backup requires batteries and suitable electrical separation. Supplying more of the home generally costs more.", type: "choice", options: [
       { value: "none", label: "No outage backup needed", description: "Solar is mainly for savings or daytime use." },
@@ -592,90 +696,32 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       : answers.backup_preference !== undefined && answers.backup_preference !== "none",
   },
   {
-    id: "heavy_loads", stage: "needs", title: "Which high-power loads could operate together?",
-    noviceHelp: "Select the loads that could realistically be on at the same time. This helps Wattson plan inverter peak power and motor-starting surge; it does not calculate daily energy use.", type: "multi_choice", options: [
-      { value: "water_pump", label: "Water or bore pump", description: "Includes pressure and irrigation pumps." },
-      { value: "compressor", label: "Air compressor", description: "A motor load with a startup surge." },
-      { value: "welder", label: "Welder", description: "A high-demand workshop load." },
-      { value: "saw_tools", label: "Large saws or workshop tools", description: "Bench saws, planers, grinders and similar tools." },
-      { value: "refrigeration", label: "Refrigerator or upright freezer", description: "A household refrigeration compressor that may start automatically." },
-      { value: "chest_freezer", label: "Chest freezer", description: "A separate compressor load that can start while the refrigerator or other loads are running." },
-      { value: "heat_pump", label: "Heat pump or air conditioning", description: "Heating/cooling compressor load." },
-      { value: "electric_water", label: "Electric water heating", description: "Cylinder, instant heater or heat-pump water heater." },
-      { value: "pool_heat_pump", label: "Pool or spa heat pump", description: "A seasonal compressor load that may run for many hours." },
-      { value: "ev", label: "EV charging", description: "Vehicle charging currently used or being added as part of this system." },
-      { value: "none", label: "None of these", description: "No known large or high-surge loads." },
-    ], showWhen: (answers) => hasLargeLoadCandidates(answers) && needsStandaloneHighPowerSupply(answers),
+    id: "ev_status", stage: "needs", title: "What EV charging setup do you have or plan?",
+    noviceHelp: "Four simple choices establish how much daily EV charging the system should accommodate. No electrical details are required.", type: "choice", options: [
+      { value: "have_ev", label: "I already have an EV", description: "Plan around a vehicle used now." },
+      { value: "planned_ev", label: "I plan to get an EV soon", description: "Include a realistic near-term charging requirement." },
+      { value: "future_ev", label: "Just thinking about the future", description: "Leave sensible capacity for EV charging later." },
+    ], showWhen: hasEvUse,
   },
   {
-    id: "household_motor_ratings", stage: "needs", title: "What electrical input do the selected high-power loads use?",
-    noviceHelp: "This follows your high-power-load selection. Enter the normal electrical input shown on each selected equipment label. Wattson estimates startup demand for motor and compressor loads; use a manufacturer maximum value when available.",
-    technicalHelp: "Record quantity and continuous electrical input for every selected high-power load. Apply equipment-specific starting demand only to motor/compressor loads, and use the welder's rated input and duty-cycle evidence rather than treating its output rating as supply demand.",
-    type: "textarea", showWhen: hasHouseholdMotorLoads,
+    id: "ev_travel_profile", stage: "needs", title: "What EV charging equipment is available or planned?",
+    noviceHelp: "Choose the charging equipment at the parking position and what it needs to do. PVIntell combines this with the first page to show the charging power the system should accommodate.",
+    type: "choice", options: [
+      { value: "short", label: "Short daily driving", description: "About 30 km / 18 mi on a normal day." },
+      { value: "average", label: "Average daily driving", description: "About 40–50 km / 25–30 mi on a normal day." },
+      { value: "long", label: "Longer daily driving", description: "About 70–100 km / 43–62 mi on a normal day." },
+    ], showWhen: hasEvUse,
   },
   {
     id: "future_changes", stage: "design", title: "What might be added in the future?",
     noviceHelp: "Choose every realistic future addition. This keeps the proposed system expandable without pretending those loads exist today.", type: "multi_choice", options: [
       { value: "ev", label: "EV charging", description: "A vehicle charger at this Site." }, { value: "workshop", label: "More workshop tools", description: "Larger tools, motors or machinery." },
       { value: "water_pump", label: "Water or irrigation pump", description: "A future pump or water system." }, { value: "extra_dwelling", label: "Another dwelling or building", description: "A cabin, studio, shed or additional home." },
-      { value: "electric_hot_water", label: "Electric hot water", description: "Changing or adding water heating." }, { value: "more_storage", label: "More battery storage", description: "Increasing reserve or self-use later." },
+      { value: "heat_pump_ac", label: "Heat pump or air conditioning", description: "Future electric space heating, cooling or both." }, { value: "electric_hot_water", label: "Electric hot water", description: "Changing or adding water heating." },
+      { value: "more_storage", label: "More battery storage", description: "Increasing reserve or self-use later." },
       { value: "heated_pool", label: "Pool, spa or pool heating", description: "Future circulation, solar-thermal collectors, heat pump or another heating method." },
       { value: "more_pv", label: "More solar panels", description: "Expanding the array later." }, { value: "none", label: "Nothing planned yet", description: "Keep the design focused on current needs." },
     ],
-  },
-  {
-    id: "ev_status", stage: "design", title: "Where are you up to with EV charging?",
-    noviceHelp: "This separates a real load from a future allowance. PVIntell will not pretend a future vehicle already consumes electricity.", type: "choice", options: [
-      { value: "vehicle_and_charger", label: "Vehicle and charger already here", description: "Record the real vehicle, charging equipment and measured use where possible." },
-      { value: "vehicle_no_charger", label: "Vehicle here, charger not chosen", description: "Use the vehicle inlet and daily travel to plan a suitable charging option." },
-      { value: "vehicle_planned", label: "Vehicle planned", description: "Keep expandable capacity without adding invented present-day energy use." },
-      { value: "charger_provision_only", label: "Prepare the property only", description: "Allow routes, board space and capacity while leaving the vehicle and charger unselected." },
-    ], showWhen: hasEvUse,
-  },
-  {
-    id: "ev_vehicle_details", stage: "design", title: "What vehicle or charging equipment do you already know?",
-    noviceHelp: "A model/year, photo of the charging inlet, charger label or simple ‘not chosen yet’ is enough. Wattson uses this to check connector and charging limits instead of guessing.", type: "textarea", showWhen: hasEvUse,
-  },
-  {
-    id: "ev_travel_profile", stage: "design", title: "How much driving normally needs to be replaced at home?",
-    noviceHelp: "Describe a typical day and the occasional longest day, including kilometres or miles. If the car already reports charging energy, enter that too. This determines daily energy; battery size alone does not.", technicalHelp: "Prefer measured wall energy in kWh. Otherwise retain distance and vehicle consumption as separate evidence, include charging losses explicitly and do not infer daily energy from traction-battery capacity.", type: "textarea", showWhen: hasEvUse,
-  },
-  {
-    id: "ev_charging_window", stage: "design", title: "When is the vehicle usually parked long enough to charge?",
-    noviceHelp: "Choose every realistic window. A long overnight stay may need less charging power than a short turnaround, while daytime parking can use more direct solar.", type: "multi_choice", options: [
-      { value: "daytime", label: "Daytime at home", description: "Can follow available solar while the vehicle is parked." },
-      { value: "overnight", label: "Overnight", description: "A long window can reduce the required charging rate." },
-      { value: "short_turnaround", label: "Short turnaround", description: "The vehicle sometimes needs substantial energy in only a few hours." },
-      { value: "irregular", label: "It varies", description: "Use a flexible energy target and departure deadline rather than one fixed clock." },
-    ], showWhen: hasEvUse,
-  },
-  {
-    id: "ev_charging_priority", stage: "design", title: "What matters most when the EV charges?",
-    noviceHelp: "These choices tell Wattson whether to favour spare solar, guarantee a departure target, protect backup energy or limit property demand.", type: "multi_choice", options: [
-      { value: "solar_surplus", label: "Use spare solar first", description: "Vary charging around measured solar that the property is not using." },
-      { value: "departure_target", label: "Be ready by departure", description: "Permit another source when necessary to reach the required energy by a chosen time." },
-      { value: "low_tariff", label: "Use lower-price periods", description: "Schedule grid charging where a real time tariff supports it." },
-      { value: "protect_site_capacity", label: "Never overload the property", description: "Dynamically reduce EV current as other loads rise." },
-      { value: "preserve_backup", label: "Preserve home-battery reserve", description: "Do not silently drain outage or off-grid reserve into the vehicle." },
-    ], showWhen: hasEvUse,
-  },
-  {
-    id: "ev_available_supply", stage: "design", title: "What charging supply is already available at the parking position?",
-    noviceHelp: "Choose what is physically present—not what might be possible. A charger label or switchboard/circuit photo can be reviewed later.", type: "choice", options: [
-      { value: "portable_outlet", label: "Portable charger and outlet", description: "The outlet, circuit, plug temperature and continuous-load suitability still need checking." },
-      { value: "fixed_single_phase", label: "Fixed single-phase wallbox", description: "Record its real model, circuit and configured current." },
-      { value: "fixed_three_phase", label: "Fixed three-phase wallbox", description: "Vehicle, Site and EVSE must all support the intended arrangement." },
-      { value: "no_supply", label: "No charging supply available", description: "Plan the parking position, cable route, circuit and power management from scratch." },
-    ], showWhen: hasEvUse,
-  },
-  {
-    id: "ev_bidirectional_goal", stage: "design", title: "Should vehicle-to-home or vehicle-to-grid remain an option?",
-    noviceHelp: "Only some vehicle, charger and regional combinations can send energy outward. Choosing ‘consider it’ records a compatibility goal, not a promised feature.", type: "choice", options: [
-      { value: "no", label: "Normal charging only", description: "The vehicle receives energy but is not planned as a property power source." },
-      { value: "v2l", label: "Vehicle-to-load interests me", description: "Use the vehicle’s supported outlet for compatible individual loads." },
-      { value: "consider_v2h", label: "Keep V2H/V2G possible", description: "Check the complete vehicle, bidirectional charger, transfer/export and local approval ecosystem." },
-      { value: "existing_supported", label: "I already have supported V2X equipment", description: "Capture every exact model and commissioned connection before treating it as available." },
-    ], showWhen: hasEvUse,
   },
   {
     id: "delivery_approach", stage: "design", title: "How do you want to approach the build?",
@@ -686,14 +732,13 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
   },
   {
     id: "architecture_preference", stage: "design", title: "Which solar and inverter arrangement should Wattson consider?",
-    noviceHelp: "Choose how the panels should convert and deliver power, or compare the suitable options. This choice is independent of whether a battery is included now. Microinverters perform the panel-level inverter function, while DC optimisers still feed a compatible string or hybrid inverter.", type: "choice", options: [
+    noviceHelp: "Choose how the panels should convert and deliver power. This choice is independent of whether a battery is included now. Microinverters perform the panel-level inverter function, while DC optimisers still feed a compatible string or hybrid inverter.", type: "choice", options: [
       { value: "existing", label: "Assess a specific inverter I have", description: "Treat it as a candidate and include it only if its documented limits suit the design." },
       { value: "string_inverter", label: "Solar-only string inverter", description: "Panels connect in DC strings to one central inverter. Unlike a hybrid inverter, it has no direct battery connection." },
       { value: "combined", label: "Hybrid solar inverter", description: "A central solar inverter with battery-ready or integrated battery-control capability; it can still be assessed when no battery is included now." },
       { value: "optimiser_string", label: "DC optimisers with string inverter", description: "Panel-level DC optimisers feed a specifically compatible central inverter." },
       { value: "microinverters", label: "Microinverters", description: "Panel-level inverters produce AC from each module or small module group." },
       { value: "modular", label: "Separate inverter and solar controllers", description: "Separate MPPT solar controllers and inverter or inverter-charger equipment designed to work together." },
-      { value: "compare", label: "Compare suitable arrangements", description: "Let Wattson compare practical, electrical, monitoring, maintenance and compatibility trade-offs." },
     ], showWhen: includesSolarPanels,
   },
   {
@@ -762,40 +807,8 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
         return { ...question, options: question.options?.filter((option) => option.value !== "workshop" || workshopRelevant) };
       }
       if (question.id === "heavy_loads") {
-        const everyday = new Set(answerValues(answers.everyday_needs));
-        const cooking = new Set(answerValues(answers.cooking_energy));
-        const waterHeating = new Set(answerValues(answers.water_heating_energy));
-        const spaceHeating = new Set(answerValues(answers.space_heating_energy));
-        const poolHeating = new Set(answerValues(answers.pool_heating_method));
-        const buildings = new Set(answerValues(answers.building_type));
-        const options: NonNullable<DiscoveryQuestion["options"]> = [];
-        const add = (value: string, label: string, description: string) => options.push({ value, label, description });
-        if (everyday.has("water_pump")) add("water_pump", "Water or bore pump", "A pressure, bore or irrigation pump that may start automatically.");
-        if (everyday.has("septic_pump")) add("septic_pump", "Sewage or septic pump", "An automatic wastewater pump with a starting surge.");
-        if (everyday.has("septic_aerator")) add("septic_aerator", "Septic aerator or treatment blower", "A motor load that may run for long periods.");
-        if (everyday.has("sump_drainage_pump")) add("sump_drainage_pump", "Sump or drainage pump", "An automatic drainage pump that may start while other loads are running.");
-        if (everyday.has("compressor") || buildings.has("shed_workshop") || buildings.has("farm_building")) {
-          add("compressor", "Air compressor", "A motor load with a startup surge.");
-          add("welder", "Welder", "A high-demand workshop load.");
-        }
-        if (everyday.has("tools") || buildings.has("shed_workshop") || buildings.has("farm_building")) add("saw_tools", "Large saws or workshop tools", "Bench saws, planers, grinders and similar tools.");
-        if (everyday.has("fridge_freezer")) {
-          add("refrigeration", "Refrigerator or upright freezer", "A refrigeration compressor may start while another appliance is running.");
-          add("chest_freezer", "Chest freezer", "Select this separately if a chest freezer can start while the refrigerator or another load is running.");
-        } else if (everyday.has("chest_freezer")) add("chest_freezer", "Chest freezer", "A compressor load that may start automatically while another load is running.");
-        if (spaceHeating.has("heat_pump") || everyday.has("cooling")) add("heat_pump", "Heat pump or air conditioning", "A heating or cooling compressor load.");
-        if (["electric_resistive", "heat_pump", "instant_electric"].some((value) => waterHeating.has(value))) add("electric_water", "Electric water heating", "Cylinder, instant heater or heat-pump water heater.");
-        if (["heat_pump", "resistive_electric", "spa_inline_heater"].some((value) => poolHeating.has(value))) add("pool_heat_pump", "Pool or spa electrical heating", "A pool heat pump, resistance heater or spa-bath inline heater.");
-        if (hasEvUse(answers)) add("ev", "EV charging", "Vehicle charging that may overlap with household demand.");
-        const cookingOptions: Array<[string, string, string]> = [
-          ["electric_oven", "Electric oven", "May cycle or heat while other cooking loads operate."],
-          ["electric_cooktop", "Electric cooktop", "One or more cooking zones may overlap with other appliances."],
-          ["induction", "Induction cooktop", "Can create a substantial cooking-time peak."],
-          ["air_fryer", "Air fryer", "Often used alongside another short-duration cooking appliance."],
-          ["microwave", "Microwave", "A short-duration load that may overlap with cooking and automatic loads."],
-        ];
-        cookingOptions.filter(([value]) => cooking.has(value)).forEach(([value, label, description]) => add(value, label, description));
-        add("none", "None of these overlap", "The listed larger loads are not expected to run at the same time.");
+        const options = highPowerOptionsForEverydayNeeds(answers);
+        options.push({ value: "none", label: "None of these overlap", description: "The listed larger loads are not expected to run at the same time." });
         const batteryFreeGenerator = replacesGrid(answers)
           && answers.battery_requirement === "none"
           && ["include", "existing", "planned"].includes(String(answers.generator_requirement));
@@ -885,7 +898,7 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
           : option),
       };
     })
-    .filter((question) => question.id !== "heavy_loads" || (question.options?.filter((option) => option.value !== "none").length ?? 0) >= 1);
+    .filter((question) => question.id !== "heavy_loads" || (question.options?.filter((option) => option.value !== "none").length ?? 0) >= 2);
 }
 
 export function helpForExperience(question: DiscoveryQuestion, profile: OnboardingAnswers) {

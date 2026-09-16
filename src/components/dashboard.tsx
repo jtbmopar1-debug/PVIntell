@@ -120,7 +120,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
     });
     steps.push({ title: "I already have a proposed plan", detail: "Specify the panels, arrays, inverter, battery, generator and other equipment you want, then build the proposed schematic.", href: `/proposals/new${selectedSite ? `?site=${selectedSite.id}` : ""}`, kind: "planned" });
     steps.push({ title: steps.length ? "Build another system for me" : "Build a system for me", detail: "Have a full system layout designed for your needs.", href: "/discovery/new-system?new=1", kind: "new" });
-    steps.push({ title: "Record equipment already installed", detail: "Use the as-built path only for equipment and connections that physically exist now.", href: installedHref, kind: "installed" });
+    steps.push({ title: "System Capture", detail: "Document equipment and connections that physically exist now.", href: installedHref, kind: "installed" });
     return steps;
   }, [discoveryDrafts, profile.assessment.guidedNewSystem, selectedSite, systems, resumeHrefs]);
 
@@ -294,7 +294,7 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             <div className="eyebrow">Let’s get started</div>
             <div className={`mt-5 grid gap-4 ${connectedSiteSystems.length ? "md:grid-cols-3" : "sm:grid-cols-2"}`}>
               {nextSteps.map((step) => (
-                <Link key={`${step.kind}:${step.href}`} href={step.href} className={`min-h-36 rounded-2xl border p-5 transition hover:-translate-y-0.5 hover:shadow-md md:p-6 ${step.kind === "planned" || (step.kind === "continue" && step.href.includes("/systems/")) ? "border-[#e5b92e] bg-[#f6c945] hover:bg-[#f9d65b]" : step.kind === "new" ? "theme-new-system-action border-[#76abd0] bg-[#b9dcf5] hover:bg-[#c9e5f7]" : step.kind === "continue" ? "theme-continue-discovery-action border-[#76abd0] bg-[#b9dcf5] hover:bg-[#c9e5f7]" : "border-[#d98243] bg-[#f4b183] hover:bg-[#f8c39d]"}`}>
+                <Link key={`${step.kind}:${step.href}`} href={step.href} className={`min-h-36 rounded-2xl border p-5 transition hover:-translate-y-0.5 hover:shadow-md md:p-6 ${step.kind === "planned" ? "border-[#e5b92e] bg-[#f6c945] hover:bg-[#f9d65b]" : step.kind === "new" ? "theme-new-system-action border-[#76abd0] bg-[#b9dcf5] hover:bg-[#c9e5f7]" : step.kind === "continue" ? "theme-continue-discovery-action border-[#76abd0] bg-[#b9dcf5] hover:bg-[#c9e5f7]" : "border-[#d98243] bg-[#f4b183] hover:bg-[#f8c39d]"}`}>
                   <div className="flex items-center justify-between gap-3"><strong className={`text-base ${step.kind === "new" ? "text-[#123d2b]" : step.kind === "continue" ? "text-[#103b5b]" : "text-brand"}`}>{step.title}</strong><span className={`grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 ${step.kind === "new" ? "text-[#123d2b]" : step.kind === "continue" ? "text-[#103b5b]" : "text-brand"}`}><ArrowRight size={17} /></span></div>
                   <p className={`mt-3 max-w-xl text-xs leading-5 ${step.kind === "new" ? "text-[#294f3d]" : step.kind === "continue" ? "text-[#284f6b]" : "text-[#3f5870]"}`}>{step.detail}</p>
                 </Link>
@@ -357,7 +357,7 @@ function Logo() {
 function FirstRunWelcome({ name, onClose }: { name: string; onClose: () => void }) {
   const steps = [
     ["Build a system", <>Select the green dashboard tile to begin discovery. Your answers define a custom system for your needs, and you can edit them later. Ask Wattson at any point if something is unclear.</>],
-    ["Record an already-installed system", <>Select the yellow dashboard tile to build your existing system one component at a time on a schematic and record the details for each item.</>],
+    ["Use System Capture for an existing system", <>Select the System Capture dashboard tile to document existing equipment and connections one component at a time.</>],
     ["Find everything under Systems", <>Installed or commissioned systems, new-system discovery, proposals, schematics, Build It sheets and eventual as-built records stay together under Systems.</>],
     ["Wattson is your solar guardian", <>Use <strong className="text-ink">Ask Wattson</strong> if you get stuck, need the current item explained using your Site and system records, or have a general question. You can also describe what exists or what you want to power; your answers can become a proposed design that you can edit, build on or change. Wattson is a powerful tool designed to help you.</>],
     ["Learn with How to", <>How to provides detailed explanations for installing solar components, including electrical and regulatory guidance selected from the system’s confirmed Site location. You can also use it simply to improve your solar knowledge.</>],

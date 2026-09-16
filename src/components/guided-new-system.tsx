@@ -4,15 +4,35 @@ import { ArrowLeft, ArrowRight, Bot, Calculator, Check, ChevronDown, CircleHelp,
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
 import { PoolHeatingCalculator } from "@/components/pool-heating-calculator";
-import { discoveryStages, helpForExperience, sequentialDiscoveryStageProgress, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers, type DiscoveryQuestion } from "@/discovery/new-system";
+import { discoveryStages, evAvailableSupplyOptions, evBidirectionalOptions, evChargingPriorityOptions, evChargingWindowOptions, evPlanningPowerBand, evPlanningPowerBands, evVehicleSizeOptions, helpForExperience, highPowerOptionsForEverydayNeeds, sequentialDiscoveryStageProgress, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers, type DiscoveryQuestion } from "@/discovery/new-system";
 import { reconcileDiscoveryDependencies } from "@/discovery/dependencies";
 import { timerRuntimeMinutes } from "@/discovery/load-schedule";
+import { locationSearchPath, type LocationMatch } from "@/location/search";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
+import { useUnitPreferences, type UnitPreferences } from "@/preferences/units";
 
 const EditableSiteMap = dynamic(() => import("@/components/editable-site-map"), { ssr: false });
+
+const evTravelLabels: Record<UnitPreferences["distance"], Record<string, string>> = {
+  km: {
+    short: "Short - about 30 km per day",
+    average: "Average - about 40-50 km per day",
+    long: "Longer - about 70-100 km per day",
+  },
+  mi: {
+    short: "Short - about 18 mi per day",
+    average: "Average - about 25-30 mi per day",
+    long: "Longer - about 43-62 mi per day",
+  },
+};
+
+function discoveryQuestionForUnits(question: DiscoveryQuestion, distance: UnitPreferences["distance"]): DiscoveryQuestion {
+  if (question.id !== "ev_travel_profile" || !question.options) return question;
+  return { ...question, options: question.options.map((option) => ({ ...option, label: evTravelLabels[distance][option.value] ?? option.label })) };
+}
 
 export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestionId, discoveryDraftId, initialDiscoveryConversationId, existingSystemId, siteDiscoveryId, returnUrl, stageFilter }: {
   profile: OnboardingAnswers;
@@ -28,10 +48,13 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   stageFilter?: "site";
 }) {
   const router = useRouter();
+  const { preferences: unitPreferences } = useUnitPreferences();
   const normalizedInitialAnswers = reconcileDiscoveryDependencies(initialAnswers);
   const [answers, setAnswers] = useState<DiscoveryAnswers>(normalizedInitialAnswers);
   const combinedInitialSetup = !stageFilter && !siteDiscoveryId;
-  const questionsFor = (values: DiscoveryAnswers) => visibleDiscoveryQuestions(values).filter((item) => item.id !== "household_motor_ratings" && (item.id !== "existing_system_status" || (combinedInitialSetup && !existingSystemId)) && (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"));
+  const questionsFor = useCallback((values: DiscoveryAnswers) => visibleDiscoveryQuestions(values)
+    .filter((item) => (item.id !== "existing_system_status" || (combinedInitialSetup && !existingSystemId)) && (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"))
+    .map((question) => discoveryQuestionForUnits(question, unitPreferences.distance)), [combinedInitialSetup, existingSystemId, siteDiscoveryId, stageFilter, unitPreferences.distance]);
   const initialQuestions = questionsFor(normalizedInitialAnswers);
   const [index, setIndex] = useState(() => {
     const gateIndex = initialQuestions.findIndex((question) => question.id === "existing_system_status" && !discoveryAnswerComplete(question.id, normalizedInitialAnswers[question.id], normalizedInitialAnswers));
@@ -54,9 +77,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const [returningToReview, setReturningToReview] = useState(false);
   const [buildingProposal, setBuildingProposal] = useState(false);
   const [mobileGuideOpen, setMobileGuideOpen] = useState(false);
-  const [proposalStopgateOpen, setProposalStopgateOpen] = useState(false);
-  const [proposalStopgateAcknowledged, setProposalStopgateAcknowledged] = useState(false);
-  const questions = useMemo(() => questionsFor(answers), [answers, stageFilter, siteDiscoveryId]);
+  const questions = useMemo(() => questionsFor(answers), [answers, questionsFor]);
   const reviewing = index >= questions.length;
   const question = reviewing ? undefined : questions[Math.min(index, questions.length - 1)];
   const stageIndex = question ? discoveryStages.findIndex((stage) => stage.id === question.stage) : discoveryStages.length;
@@ -115,8 +136,8 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
         delete next.shade_extent;
       }
       if (question.id === "battery_chemistry" && value !== "custom_home_built") delete next.custom_battery_assessment;
-      if (question.id === "heavy_loads" && Array.isArray(value)) {
-        const retainedLoadTypes = new Set(value.filter((item) => item !== "none"));
+      if (question.id === "everyday_needs") {
+        const retainedLoadTypes = new Set(highPowerOptionsForEverydayNeeds(next).map((option) => option.value));
         try {
           const ratings = JSON.parse(String(next.household_motor_ratings ?? "{}")) as Record<string, { baseType?: string }>;
           const retainedRatings = Object.fromEntries(Object.entries(ratings).filter(([key, rating]) => retainedLoadTypes.has(rating.baseType ?? key.split("__")[0])));
@@ -160,13 +181,16 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   async function next() {
     if (!question) return;
     const nextQuestions = questionsFor(answers);
-    if (question.id === "existing_system_status" && answers.existing_system_status !== "none") {
+    if (question.id === "installed_system_knowledge" && ["know_well", "know_main"].includes(String(answers.installed_system_knowledge))) {
       await save(answers, question.id);
-      router.push("/record-installed");
+      const selectedSiteId = siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined);
+      router.push(`/record-installed${selectedSiteId ? `?site=${encodeURIComponent(selectedSiteId)}` : ""}`);
       return;
     }
-    if (question.id === "existing_proposal_status" && answers.existing_proposal_status === "yes" && !proposalStopgateAcknowledged) {
-      setProposalStopgateOpen(true);
+    if (question.id === "existing_proposal_status" && answers.existing_proposal_status === "yes") {
+      await save(answers, question.id);
+      const selectedSiteId = siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined);
+      router.push(`/proposals/new${selectedSiteId ? `?site=${encodeURIComponent(selectedSiteId)}` : ""}`);
       return;
     }
     if (returningToReview) {
@@ -178,22 +202,6 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     const nextIndex = Math.min(index + 1, nextQuestions.length);
     await save(answers, nextQuestions[nextIndex]?.id);
     setIndex(nextIndex);
-  }
-
-  async function continueDiscoveryWithKnownProposal() {
-    if (!question) return;
-    setProposalStopgateAcknowledged(true);
-    setProposalStopgateOpen(false);
-    const nextQuestions = questionsFor(answers);
-    const nextIndex = Math.min(index + 1, nextQuestions.length);
-    await save(answers, nextQuestions[nextIndex]?.id);
-    setIndex(nextIndex);
-  }
-
-  async function openProposalIntake() {
-    await save(answers, question?.id);
-    const selectedSiteId = siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined);
-    router.push(`/proposals/new${selectedSiteId ? `?site=${encodeURIComponent(selectedSiteId)}` : ""}`);
   }
 
   async function back() {
@@ -211,7 +219,9 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not complete discovery");
       const destination = body.designUrl ?? returnUrl ?? (siteDiscoveryId ? `/sites/${siteDiscoveryId}` : "/dashboard");
-      window.location.assign(destination);
+      // A completed first-run form must not remain in browser history: returning
+      // to it would submit as a new discovery instead of editing the saved one.
+      window.location.replace(destination);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Could not complete discovery"); setSaving(false); setBuildingProposal(false); }
   }
 
@@ -254,6 +264,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
             question={question}
             value={answers[question.id]}
             profile={profile}
+            distanceUnit={unitPreferences.distance}
             sites={sites}
             selectedSiteId={typeof answers.site_id === "string" ? answers.site_id : ""}
             siteName={typeof answers.site_name === "string" ? answers.site_name : ""}
@@ -274,7 +285,6 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     </div>
     {helpQuestion ? <DiscoveryHelpDialog question={helpQuestion} discoveryAnswers={answers} conversationId={discoveryConversationId} discoveryDraftId={discoveryDraftId} onConversation={setDiscoveryConversationId} onSafetyDecision={(decision) => setAnswers((current) => ({ ...current, custom_battery_assessment: decision }))} siteId={siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined)} projectId={existingSystemId} onClose={() => setHelpQuestion(undefined)}/> : null}
     {buildingProposal ? <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#f3f6fa]/95 p-6 backdrop-blur-sm"><div className="card w-full max-w-lg p-8 text-center shadow-2xl"><span className="mx-auto grid size-16 place-items-center rounded-2xl bg-[#eaf2fb] text-brand"><LoaderCircle className="animate-spin" size={30}/></span><div className="eyebrow mt-6">Discovery complete</div><h2 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">Building your system proposal…</h2><p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted">Wattson is turning your confirmed requirements into the proposed system page. Nothing is being marked as purchased or installed.</p></div></div> : null}
-    {proposalStopgateOpen ? <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#102a43]/55 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="proposal-route-title"><div className="card w-full max-w-xl border-[#edc552] p-6 shadow-2xl md:p-8"><div className="eyebrow text-[#8a6500]">You already have a plan</div><h2 id="proposal-route-title" className="mt-3 font-display text-2xl font-extrabold tracking-[-.035em] text-ink">Use the proposed-system intake</h2><p className="mt-3 text-sm leading-6 text-muted">Discovery designs and sizes a complete system from your needs. If you already know the panels, quantities, equipment or layout you want, specify those items first. PVIntell will check the recorded compatibility limits and only build the proposed schematic after your review. It will not be marked installed or commissioned.</p><div className="mt-6 grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => void openProposalIntake()} disabled={saving} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-[#f6c945] px-4 py-3 text-sm font-extrabold text-[#17283d] disabled:opacity-50"><Bot size={17}/>Specify my proposed plan</button><button type="button" onClick={() => void continueDiscoveryWithKnownProposal()} disabled={saving} className="min-h-12 rounded-xl border border-line bg-white px-4 py-3 text-sm font-bold text-brand disabled:opacity-50">Continue full Discovery</button></div><button type="button" onClick={() => setProposalStopgateOpen(false)} className="mt-4 w-full text-xs font-bold text-muted">Go back and change my answer</button></div></div> : null}
   </div>;
 }
 
@@ -283,72 +293,104 @@ type ExistingPanelAnswer = {
   name?: string;
   panelType?: string;
   quantity?: number;
-  maxUseQuantity?: number;
+  quantityUnknown?: boolean;
+  arrayCount?: number;
+  arrayCountUnknown?: boolean;
   watts?: number;
-  proposalUse?: "include" | "assess" | "exclude";
 };
 
-type InventoryPanelOption = {
-  id: string;
-  name: string;
-  manufacturer?: string | null;
-  model?: string | null;
-  quantity: number;
-  condition: string;
-  specifications?: Record<string, string | number>;
-};
-
-function ExistingPanelSelectionCard({ question, profile, siteId, value, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; siteId: string; value: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
-  const [inventory, setInventory] = useState<InventoryPanelOption[]>([]);
-  const [inventoryOpen, setInventoryOpen] = useState(false);
-  const [inventoryLoading, setInventoryLoading] = useState(false);
+function ExistingPanelSelectionCard({ question, profile, value, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
   let current: ExistingPanelAnswer = {};
   try { if (typeof value === "string" && value.trim()) current = JSON.parse(value) as ExistingPanelAnswer; } catch { /* Replace an older free-text response as fields are completed. */ }
   const update = (next: Partial<ExistingPanelAnswer>) => setAnswer(JSON.stringify({ ...current, ...next }));
-  useEffect(() => {
-    if (!siteId || siteId === "__new__") { setInventory([]); return; }
-    let active = true;
-    setInventoryLoading(true);
-    fetch(`/api/equipment?siteId=${encodeURIComponent(siteId)}&type=panel`)
-      .then(async (response) => response.ok ? response.json() as Promise<{ equipment?: InventoryPanelOption[] }> : Promise.reject(new Error("Could not load inventory")))
-      .then((payload) => { if (active) setInventory(payload.equipment ?? []); })
-      .catch(() => { if (active) setInventory([]); })
-      .finally(() => { if (active) setInventoryLoading(false); });
-    return () => { active = false; };
-  }, [siteId]);
-  const selectInventoryPanel = (panel: InventoryPanelOption) => {
-    const specifications = panel.specifications ?? {};
-    const rawWatts = specifications.ratedPower ?? specifications.panelWatts ?? specifications.watts ?? specifications.power_w ?? specifications.stcWatts;
-    const watts = Number(String(rawWatts ?? "").match(/\d+(?:\.\d+)?/)?.[0]);
-    const rawType = String(specifications.panelType ?? specifications.panel_type ?? "").toLowerCase();
-    const panelType = rawType.includes("bifacial") ? "bifacial" : rawType.includes("flex") ? "flexible" : rawType ? "rigid" : current.panelType;
-    update({ inventoryEquipmentId: panel.id, name: [panel.manufacturer, panel.model].filter(Boolean).join(" ") || panel.name, quantity: panel.quantity, maxUseQuantity: panel.quantity, ...(watts > 0 ? { watts } : {}), ...(panelType ? { panelType } : {}) });
-    setInventoryOpen(false);
-  };
-  const choices: Array<{ value: NonNullable<ExistingPanelAnswer["proposalUse"]>; label: string; detail: string }> = [
-    { value: "include", label: "Include and assess for application", detail: "Include this panel group in the proposal and assess its suitability for the planned application." },
-    { value: "assess", label: "Assess before deciding", detail: "Keep them as a candidate until electrical details and condition are checked." },
-    { value: "exclude", label: "Do not include", detail: "Record that they exist without sizing this proposal around them." },
-  ];
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
     <div className="p-6 md:p-8">
-      {siteId && siteId !== "__new__" ? <div className="relative mb-5 rounded-xl border border-line bg-[#f7fafc] p-3"><button type="button" onClick={() => setInventoryOpen((open) => !open)} className="flex w-full items-center justify-between gap-3 text-left"><span className="text-xs text-muted">Already recorded this equipment?</span><span className="flex items-center gap-1.5 text-xs font-bold text-brand">{inventoryLoading ? "Loading inventory…" : inventory.length ? `Choose from ${inventory.length} applicable item${inventory.length === 1 ? "" : "s"}` : "No unused panels recorded"}<ChevronDown size={15} className={`transition-transform ${inventoryOpen ? "rotate-180" : ""}`}/></span></button>{inventoryOpen ? <div className="mt-3 grid gap-2 border-t border-line pt-3">{inventory.length ? inventory.map((panel) => <button key={panel.id} type="button" onClick={() => selectInventoryPanel(panel)} className={`rounded-xl border p-3 text-left ${current.inventoryEquipmentId === panel.id ? "border-brand bg-[#edf5fd]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><strong className="block text-xs">{panel.name}</strong><span className="mt-1 block text-[10px] text-muted">{[panel.manufacturer, panel.model, `${panel.quantity} available`, panel.condition.replaceAll("_", " ")].filter(Boolean).join(" · ")}</span></button>) : <p className="text-[11px] leading-5 text-muted">There are no applicable, unassigned solar-panel items at this Site. Enter the panel details below.</p>}</div> : null}</div> : null}
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="text-xs font-bold sm:col-span-2">Panel group or model<input value={current.name ?? ""} onChange={(event) => update({ name: event.target.value })} className="field" placeholder="For example: eight workshop panels"/></label>
+        <label className="text-xs font-bold sm:col-span-2">Panel name<input value={current.name ?? ""} onChange={(event) => update({ name: event.target.value })} className="field" placeholder="For example: Roof 1 or East array"/></label>
         <label className="text-xs font-bold">Panel type<select value={current.panelType ?? ""} onChange={(event) => update({ panelType: event.target.value })} className="field"><option value="">Select type</option><option value="rigid">Standard rigid</option><option value="bifacial">Bifacial</option><option value="flexible">Flexible or lightweight</option><option value="building_integrated">Building-integrated</option></select></label>
-        <label className="text-xs font-bold">Quantity owned<input type="number" min="1" step="1" value={current.quantity ?? ""} onChange={(event) => { const quantity = event.target.value ? Number(event.target.value) : undefined; update({ quantity, maxUseQuantity: current.maxUseQuantity && quantity ? Math.min(current.maxUseQuantity, quantity) : current.maxUseQuantity }); }} className="field" placeholder="10"/></label>
-        <label className="text-xs font-bold">Maximum available for this proposal<input type="number" min="1" max={current.quantity || undefined} step="1" value={current.maxUseQuantity ?? ""} onChange={(event) => update({ maxUseQuantity: event.target.value ? Number(event.target.value) : undefined })} className="field" placeholder="3"/><span className="mt-1 block text-[10px] font-normal leading-4 text-muted">PVIntell will use no more than this amount; the remainder stays available for another project.</span></label>
-        <label className="text-xs font-bold sm:col-span-2">Rated power per panel<div className="relative"><input type="number" min="1" step="1" value={current.watts ?? ""} onChange={(event) => update({ watts: event.target.value ? Number(event.target.value) : undefined })} className="field pr-16" placeholder="580"/><span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">W</span></div></label>
+        <label className="text-xs font-bold">Total number of panels<input type="number" min="1" step="1" value={current.quantity ?? ""} onChange={(event) => update({ quantity: event.target.value ? Number(event.target.value) : undefined, quantityUnknown: undefined })} className="field" placeholder="10"/></label>
+        <div><label className="text-xs font-bold">Number of separate arrays or panel groups<input type="number" min="1" step="1" disabled={current.arrayCountUnknown} value={current.arrayCount ?? ""} onChange={(event) => update({ arrayCount: event.target.value ? Number(event.target.value) : undefined, arrayCountUnknown: false })} className="field disabled:bg-[#eef2f6]" placeholder="1"/></label><label className="mt-2 flex items-center gap-2 text-[10px] font-semibold text-muted"><input type="checkbox" checked={current.arrayCountUnknown === true} onChange={(event) => update({ arrayCountUnknown: event.target.checked, arrayCount: event.target.checked ? undefined : current.arrayCount })} className="size-4 accent-[#1768a6]"/>I don’t know how many groups</label></div>
+        <label className="text-xs font-bold sm:col-span-2">Rated power per panel<div className="relative"><input type="number" min="1" step="1" value={current.watts ?? ""} onChange={(event) => update({ watts: event.target.value ? Number(event.target.value) : undefined })} className="field pr-20" placeholder="580"/><span className="pointer-events-none absolute inset-y-0 right-10 grid place-items-center text-xs font-semibold text-muted">W</span></div></label>
       </div>
-      <div className="mt-5 grid gap-3 sm:grid-cols-3">{choices.map((choice) => <button key={choice.value} type="button" onClick={() => update({ proposalUse: choice.value })} className={`rounded-xl border p-3 text-left ${current.proposalUse === choice.value ? "border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white"}`}><span className="flex items-start justify-between gap-2 text-xs font-bold">{choice.label}{current.proposalUse === choice.value ? <Check size={15} className="text-brand"/> : null}</span><span className="mt-1 block text-[10px] leading-4 text-muted">{choice.detail}</span></button>)}</div>
       <p className="mt-4 rounded-xl border border-[#ead07a] bg-[#fff8d8] p-3 text-[11px] leading-5 text-[#6f5513]">Existing panels stay as their own compatible panel group. PVIntell may add separate strings or another compatible input for any shortfall; final string voltage, current and equipment limits still require the exact panel datasheet.</p>
       <button type="button" onClick={onAskWattson} className="mt-4 flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button>
     </div>
   </section>;
 }
 
-function QuestionCard({ question, value, profile, sites, selectedSiteId, siteName, siteLocationAnswers, panelLocations, panelAreaDimensions, setAnswer, setRelatedAnswer, setSite, setSiteLocation, onAskWattson }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; sites: Array<{ id: string; name: string }>; selectedSiteId: string; siteName: string; siteLocationAnswers: DiscoveryAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setRelatedAnswer: (key: string, value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void; setSiteLocation: (location: DiscoveryAnswers) => void; onAskWattson: () => void }) {
+type ExistingPowerEquipmentEntry = {
+  id: string;
+  name: string;
+  type: string;
+  makeModel?: string;
+  quantity?: number;
+  ratedSize?: number;
+  ratedUnit?: "W" | "kW" | "A";
+  ratingUnknown?: boolean;
+  systemVoltage?: number;
+};
+
+const powerEquipmentTypes = [
+  ["grid_tied_inverter", "Grid-tied solar inverter"],
+  ["hybrid_inverter", "Hybrid inverter"],
+  ["inverter_charger", "Inverter/charger"],
+  ["battery_inverter", "Battery inverter"],
+  ["solar_charge_controller", "Solar charge controller"],
+  ["microinverter", "Microinverter"],
+  ["optimiser", "Panel optimiser"],
+  ["dc_dc_charger", "DC-DC charger"],
+  ["other", "Other power-conversion or control equipment"],
+] as const;
+
+function existingPowerEquipmentEntries(value: string | number | string[] | undefined): ExistingPowerEquipmentEntry[] {
+  if (typeof value === "string" && value !== unknownAnswer) {
+    try {
+      const parsed = JSON.parse(value) as ExistingPowerEquipmentEntry[];
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    } catch { /* Start with one empty item when older free text cannot be structured. */ }
+  }
+  return [{ id: "power-equipment-1", name: "", type: "", quantity: 1, ratedUnit: "kW" }];
+}
+
+function ExistingPowerEquipmentCard({ question, profile, value, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
+  const entries = existingPowerEquipmentEntries(value);
+  const save = (next: ExistingPowerEquipmentEntry[]) => setAnswer(JSON.stringify(next));
+  const update = (index: number, changes: Partial<ExistingPowerEquipmentEntry>) => save(entries.map((entry, position) => position === index ? { ...entry, ...changes } : entry));
+  const nextId = entries.reduce((highest, entry) => Math.max(highest, Number(entry.id.match(/(\d+)$/)?.[1]) || 0), 0) + 1;
+  const add = () => save([...entries, { id: `power-equipment-${nextId}`, name: "", type: "", quantity: 1, ratedUnit: "kW" }]);
+  const remove = (index: number) => save(entries.filter((_, position) => position !== index));
+
+  return <section className="card overflow-hidden bg-white">
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
+    <div className="space-y-4 p-6 md:p-8">
+      {entries.map((entry, index) => <article key={entry.id} className="rounded-2xl border border-line bg-[#f8fbfe] p-4">
+        <div className="flex items-center justify-between gap-3"><strong className="text-sm">Equipment {index + 1}</strong>{entries.length > 1 ? <button type="button" onClick={() => remove(index)} className="flex items-center gap-1.5 text-[10px] font-bold text-[#a7442d]"><Trash2 size={13}/>Remove</button> : null}</div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="text-xs font-bold">Equipment name<input value={entry.name} onChange={(event) => update(index, { name: event.target.value })} className="field" placeholder="For example: Main inverter"/></label>
+          <label className="text-xs font-bold">Equipment type<select value={entry.type} onChange={(event) => update(index, { type: event.target.value })} className="field"><option value="">Select type</option>{powerEquipmentTypes.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label className="text-xs font-bold">Make and model <span className="font-normal text-muted">(if known)</span><input value={entry.makeModel ?? ""} onChange={(event) => update(index, { makeModel: event.target.value })} className="field" placeholder="Copy from the label"/></label>
+          <label className="text-xs font-bold">Quantity<input type="number" min="1" step="1" value={entry.quantity ?? ""} onChange={(event) => update(index, { quantity: event.target.value ? Number(event.target.value) : undefined })} className="field" placeholder="1"/></label>
+          <div><label className="text-xs font-bold">Rated size or output<div className="flex gap-2"><input type="number" min="0" step="0.1" disabled={entry.ratingUnknown} value={entry.ratedSize ?? ""} onChange={(event) => update(index, { ratedSize: event.target.value ? Number(event.target.value) : undefined, ratingUnknown: false })} className="field disabled:bg-[#eef2f6]" placeholder="5"/><select disabled={entry.ratingUnknown} value={entry.ratedUnit ?? "kW"} onChange={(event) => update(index, { ratedUnit: event.target.value as ExistingPowerEquipmentEntry["ratedUnit"] })} className="field w-24 disabled:bg-[#eef2f6]"><option value="W">W</option><option value="kW">kW</option><option value="A">A</option></select></div></label><label className="mt-2 flex items-center gap-2 text-[10px] font-semibold text-muted"><input type="checkbox" checked={entry.ratingUnknown === true} onChange={(event) => update(index, { ratingUnknown: event.target.checked, ratedSize: event.target.checked ? undefined : entry.ratedSize })} className="size-4 accent-[#1768a6]"/>I don’t know the rating</label></div>
+          <label className="text-xs font-bold">DC or battery voltage <span className="font-normal text-muted">(if known)</span><div className="relative"><input type="number" min="0" step="0.1" value={entry.systemVoltage ?? ""} onChange={(event) => update(index, { systemVoltage: event.target.value ? Number(event.target.value) : undefined })} className="field pr-20" placeholder="48"/><span className="pointer-events-none absolute inset-y-0 right-10 grid place-items-center text-xs font-semibold text-muted">V</span></div></label>
+        </div>
+      </article>)}
+      <button type="button" onClick={add} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand"><Plus size={15}/>Add another item</button>
+      <p className="rounded-xl border border-[#ead07a] bg-[#fff8d8] p-3 text-[11px] leading-5 text-[#6f5513]">These items are now in scope for assessment. PVIntell will not treat them as compatible until their exact electrical limits, condition and supported connections are verified.</p>
+      <button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button>
+    </div>
+  </section>;
+}
+
+const separatelyRecordedHotWaterStore = "Record this store separately from solar-thermal storage.";
+
+function DiscoveryHelpText({ text }: { text: string }) {
+  const emphasisIndex = text.indexOf(separatelyRecordedHotWaterStore);
+  if (emphasisIndex < 0) return text;
+  return <>{text.slice(0, emphasisIndex)}<strong className="font-extrabold text-ink">{separatelyRecordedHotWaterStore}</strong>{text.slice(emphasisIndex + separatelyRecordedHotWaterStore.length)}</>;
+}
+
+function QuestionCard({ question, value, profile, distanceUnit, sites, selectedSiteId, siteName, siteLocationAnswers, panelLocations, panelAreaDimensions, setAnswer, setRelatedAnswer, setSite, setSiteLocation, onAskWattson }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; distanceUnit: UnitPreferences["distance"]; sites: Array<{ id: string; name: string }>; selectedSiteId: string; siteName: string; siteLocationAnswers: DiscoveryAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setRelatedAnswer: (key: string, value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void; setSiteLocation: (location: DiscoveryAnswers) => void; onAskWattson: () => void }) {
   const unknown = value === unknownAnswer;
   const choices = question.type === "choice" || question.type === "multi_choice";
   const needsLocalAuthorityCheck = question.id === "panel_location" && Array.isArray(value) && value.some((item) => ["ground", "fence", "wall_facade", "carport_pergola"].includes(item));
@@ -362,11 +404,20 @@ function QuestionCard({ question, value, profile, sites, selectedSiteId, siteNam
   if (question.id === "site_name" && sites.length > 0) {
     return <SiteQuestionCard question={question} profile={profile} sites={sites} selectedSiteId={selectedSiteId} value={value} setSite={setSite}/>;
   }
+  if (question.id === "ev_status") {
+    return <EvSetupCard question={question} profile={profile} distanceUnit={distanceUnit} answers={siteLocationAnswers} setAnswer={setAnswer} setRelatedAnswer={setRelatedAnswer} onAskWattson={onAskWattson}/>;
+  }
+  if (question.id === "ev_travel_profile") {
+    return <EvChargingNeedsCard question={question} profile={profile} answers={siteLocationAnswers} setRelatedAnswer={setRelatedAnswer} onAskWattson={onAskWattson}/>;
+  }
   if (question.id === "panel_area_dimensions") {
     return <PanelDimensionsCard question={question} profile={profile} panelLocations={panelLocations} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "existing_panel_selection") {
-    return <ExistingPanelSelectionCard question={question} profile={profile} siteId={typeof siteLocationAnswers.site_id === "string" ? siteLocationAnswers.site_id : ""} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
+    return <ExistingPanelSelectionCard question={question} profile={profile} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
+  }
+  if (question.id === "existing_power_equipment") {
+    return <ExistingPowerEquipmentCard question={question} profile={profile} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "orientation_and_pitch") {
     return <OrientationCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
@@ -387,30 +438,54 @@ function QuestionCard({ question, value, profile, sites, selectedSiteId, siteNam
     return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={Array.isArray(siteLocationAnswers.pool_equipment) ? siteLocationAnswers.pool_equipment : []} heating={Array.isArray(siteLocationAnswers.pool_heating_method) ? siteLocationAnswers.pool_heating_method.filter((item) => ratedPoolHeatingMethods.has(item)) : []} poolThermalKw={Number(siteLocationAnswers.pool_heating_profile) || undefined} poolElectricalKw={Number(siteLocationAnswers.pool_heater_electrical_kw) || undefined} poolHeaterCop={Number(siteLocationAnswers.pool_heater_cop) || undefined} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "heavy_loads") {
-    return <HighPowerLoadsCard question={question} profile={profile} value={value} ratingsValue={siteLocationAnswers.household_motor_ratings} setAnswer={setAnswer} setRatings={(next) => setRelatedAnswer("household_motor_ratings", next)} onAskWattson={onAskWattson}/>;
+    return <HighPowerLoadsCard question={question} profile={profile} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "household_motor_ratings") {
-    const motorKeys = ["water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "compressor"];
-    const selectedMotors = Array.isArray(siteLocationAnswers.heavy_loads) ? siteLocationAnswers.heavy_loads.filter((item) => motorKeys.includes(item)) : [];
-    return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={selectedMotors} heating={[]} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
+    const selectedLoads = highPowerOptionsForEverydayNeeds(siteLocationAnswers).map((option) => option.value);
+    return <AutoSizedPoolEquipmentLoadsCard question={question} profile={profile} value={value} equipment={selectedLoads} heating={[]} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
   return <section className="card overflow-hidden bg-white">
-    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpIntroduction}</p>{helpNote ? <p className="mt-3 rounded-xl border border-[#ead07a] bg-[#fff8d8] px-3 py-2.5 text-xs font-semibold leading-5 text-[#6f5513]">{helpNote}</p> : null}</div></div></div>
-    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const nextValues=option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const captureExisting=option.value==="existing"&&["architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition ${selected?"theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.id === "pool_heating_profile" && !unknown ? <PoolHeatingCalculator embedded locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} onSave={setAnswer}/>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
+    <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted"><DiscoveryHelpText text={helpIntroduction}/></p>{helpNote ? <p className="mt-3 rounded-xl border border-[#ead07a] bg-[#fff8d8] px-3 py-2.5 text-xs font-semibold leading-5 text-[#6f5513]">{helpNote}</p> : null}</div></div></div>
+    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const existingPanelsExclusive=question.id==="panel_construction_interest";const disabled=existingPanelsExclusive&&currentValues.includes("existing")&&option.value!=="existing";const nextValues=existingPanelsExclusive&&option.value==="existing"?(selected?[]:["existing"]):option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const captureExisting=option.value==="existing"&&["architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" disabled={disabled} onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${selected?"theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2] disabled:hover:border-line"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.id === "pool_heating_profile" && !unknown ? <PoolHeatingCalculator embedded locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} onSave={setAnswer}/>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="pointer-events-none absolute inset-y-0 right-10 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
       {needsLocalAuthorityCheck && <p className="mt-4 rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[11px] leading-5 text-[#765918]">Ground, fence, wall and canopy arrays might be restricted or require planning, building or other consent. Check with the relevant local authority before purchasing equipment or starting work.</p>}
       <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help now, then return and answer this question.</span></div>
     </div>
   </section>;
 }
 
-function HighPowerLoadsCard({ question, profile, value, ratingsValue, setAnswer, setRatings, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; ratingsValue: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setRatings: (value: string | number | string[]) => void; onAskWattson: () => void }) {
+type ChoiceOption = NonNullable<DiscoveryQuestion["options"]>[number];
+
+function EvPageHeader({ question, profile }: { question: DiscoveryQuestion; profile: OnboardingAnswers }) {
+  return <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>;
+}
+
+function EvSelect({ label, value, options, onChange }: { label: string; value: string; options: ChoiceOption[]; onChange: (value: string) => void }) {
+  const selected = options.find((option) => option.value === value);
+  return <label className="block text-xs font-bold">{label}<select value={value} onChange={(event) => onChange(event.target.value)} className="field mt-1.5"><option value="">Select one</option>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>{selected ? <span className="mt-1.5 block text-[10px] font-normal leading-4 text-muted">{selected.description}</span> : null}</label>;
+}
+
+function EvMultiSelect({ label, helper, value, options, onChange }: { label: string; helper: string; value: string[]; options: ChoiceOption[]; onChange: (value: string[]) => void }) {
+  return <fieldset><legend className="text-xs font-bold">{label}</legend><p className="mt-1 text-[10px] leading-4 text-muted">{helper}</p><div className="mt-2 grid gap-2 sm:grid-cols-2">{options.map((option) => { const selected = value.includes(option.value); const next = option.value === "none" ? ["none"] : selected ? value.filter((item) => item !== option.value) : [...value.filter((item) => item !== "none"), option.value]; return <button key={option.value} type="button" onClick={() => onChange(next)} className={`flex min-h-11 items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-[11px] font-bold ${selected ? "theme-selected-tile border-brand bg-[#edf5fd] ring-1 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><span>{option.label}</span>{selected ? <Check className="shrink-0 text-brand" size={14}/> : null}</button>; })}</div></fieldset>;
+}
+
+function EvSetupCard({ question, profile, distanceUnit, answers, setAnswer, setRelatedAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; distanceUnit: UnitPreferences["distance"]; answers: DiscoveryAnswers; setAnswer: (value: string) => void; setRelatedAnswer: (key: string, value: string | string[]) => void; onAskWattson: () => void }) {
+  const habits = Array.isArray(answers.ev_charging_window) ? answers.ev_charging_window : [];
+  const commuteOptions: ChoiceOption[] = ["short", "average", "long"].map((value) => ({ value, label: evTravelLabels[distanceUnit][value], description: "" }));
+  return <section className="card overflow-hidden bg-white"><EvPageHeader question={question} profile={profile}/><div className="space-y-6 p-6 md:p-8"><EvMultiSelect label="A. Your EV status" helper="Choose the option that best describes today." value={answers.ev_status ? [String(answers.ev_status)] : []} options={question.options ?? []} onChange={(value) => setAnswer(value.at(-1) ?? "")}/><EvMultiSelect label="B. Your EV size" helper="This lets PVIntell estimate daily energy without asking for technical vehicle data." value={answers.ev_vehicle_size ? [String(answers.ev_vehicle_size)] : []} options={evVehicleSizeOptions} onChange={(value) => setRelatedAnswer("ev_vehicle_size", value.at(-1) ?? "")}/><EvMultiSelect label="C. How far do you drive on a normal day?" helper="Choose the closest everyday range." value={answers.ev_travel_profile ? [String(answers.ev_travel_profile)] : []} options={commuteOptions} onChange={(value) => setRelatedAnswer("ev_travel_profile", value.at(-1) ?? "")}/><EvMultiSelect label="D. Charging habits" helper="Choose when the vehicle will normally be plugged in." value={habits} options={evChargingWindowOptions} onChange={(value) => setRelatedAnswer("ev_charging_window", value.length ? [value.at(-1) as string] : [])}/><div className="flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">These answers establish the daily charging need.</span></div></div></section>;
+}
+
+function EvChargingNeedsCard({ question, profile, answers, setRelatedAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; answers: DiscoveryAnswers; setRelatedAnswer: (key: string, value: string | string[]) => void; onAskWattson: () => void }) {
+  const priorities = Array.isArray(answers.ev_charging_priority) ? answers.ev_charging_priority : [];
+  const band = evPlanningPowerBand(answers);
+  return <section className="card overflow-hidden bg-white"><EvPageHeader question={question} profile={profile}/><div className="space-y-5 p-6 md:p-8"><div className="grid gap-5 md:grid-cols-2"><EvSelect label="Charging equipment at the parking position" value={String(answers.ev_available_supply ?? "")} options={evAvailableSupplyOptions} onChange={(value) => setRelatedAnswer("ev_available_supply", value)}/><EvSelect label="Can the EV supply power back?" value={String(answers.ev_bidirectional_goal ?? "")} options={evBidirectionalOptions} onChange={(value) => setRelatedAnswer("ev_bidirectional_goal", value)}/></div><EvMultiSelect label="What should charging do?" helper="Choose the outcomes the charging equipment should support." value={priorities} options={evChargingPriorityOptions} onChange={(value) => setRelatedAnswer("ev_charging_priority", value)}/><div className="rounded-2xl border border-[#b8d7f1] bg-[#edf5fd] p-4"><div className="eyebrow">EV charging capacity to accommodate</div><strong className="mt-2 block text-lg">{band ? evPlanningPowerBands[band] : "Complete the first EV page"}</strong><p className="mt-1 text-[11px] leading-5 text-muted">This is the EV charging load PVIntell will allow for. The actual charger and available Site supply must support it.</p></div><div className="flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Wattson can explain the required charging capacity.</span></div></div></section>;
+}
+
+function HighPowerLoadsCard({ question, profile, value, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
   const currentValues = Array.isArray(value) ? value : [];
-  const selectedLoads = currentValues.filter((item) => item !== "none");
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
     <div className="p-6 md:p-8"><div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option) => { const selected = currentValues.includes(option.value); const nextValues = option.value === "none" ? ["none"] : selected ? currentValues.filter((item) => item !== option.value) : [...currentValues.filter((item) => item !== "none"), option.value]; return <button key={option.value} type="button" onClick={() => setAnswer(nextValues)} className={`rounded-2xl border p-4 text-left transition ${selected ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>; })}</div>
-      {selectedLoads.length ? <div className="mt-7 border-t border-line pt-7"><div className="eyebrow">Selected load ratings</div><h2 className="mt-2 font-display text-xl font-extrabold">Add the rating for these loads</h2><p className="mt-1 text-xs leading-5 text-muted">Use electrical input for most loads. For a heat pump, enter only its advertised heating capacity.</p><div className="mt-4"><AutoSizedPoolEquipmentLoadsCard question={{ id: "household_motor_ratings", stage: "needs", title: "High-power load ratings", noviceHelp: "Use the rating shown on each equipment label. Heat pumps only need their advertised heating capacity.", type: "textarea" }} profile={profile} value={ratingsValue} equipment={selectedLoads} heating={[]} setAnswer={setRatings} onAskWattson={onAskWattson}/></div></div> : null}
-      {!selectedLoads.length ? <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help identifying which high-power loads can overlap.</span></div> : null}
+      <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">The next Needs question records the rating for every selected load.</span></div>
     </div>
   </section>;
 }
@@ -421,7 +496,7 @@ function PoolHeaterCapacityCard({ question, profile, value, locationLabel, setAn
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted">{helpForExperience(question, profile)}</p></div></div></div>
     <div className="p-6 md:p-8">
-      <label className="text-xs font-bold">Required heater output<div className="relative mt-1.5"><input type="number" min="0" step="0.1" value={displayedValue} onChange={(event) => setAnswer(event.target.value === "" ? "" : Number(event.target.value))} className="field mt-0 pr-28" placeholder="Enter heater size"/><span className="absolute inset-y-0 right-4 grid place-items-center text-xs font-semibold text-muted">kW thermal</span></div></label>
+      <label className="text-xs font-bold">Required heater output<div className="relative mt-1.5"><input type="number" min="0" step="0.1" value={displayedValue} onChange={(event) => setAnswer(event.target.value === "" ? "" : Number(event.target.value))} className="field mt-0 pr-28" placeholder="Enter heater size"/><span className="pointer-events-none absolute inset-y-0 right-10 grid place-items-center text-xs font-semibold text-muted">kW thermal</span></div></label>
       <button type="button" onClick={() => setCalculatorOpen((open) => !open)} className="mt-4 flex w-full items-center justify-between rounded-xl border border-brand bg-[#edf6fd] px-4 py-3 text-left text-xs font-bold text-brand"><span className="flex items-center gap-2"><Calculator size={16}/>Don&apos;t know? Calculate it here</span><ChevronDown size={16} className={`transition-transform ${calculatorOpen ? "rotate-180" : ""}`}/></button>
       {calculatorOpen ? <PoolHeatingCalculator embedded locationLabel={locationLabel} onSave={(summary, estimateDetails) => { const estimate = Number.parseFloat(summary); if (Number.isFinite(estimate)) setAnswer(estimate); setRelatedAnswer("pool_heater_electrical_kw", Number(estimateDetails.electricalKw.toFixed(2))); setRelatedAnswer("pool_heater_cop", estimateDetails.cop); setCalculatorOpen(false); }}/>:null}
       <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Ask for help finding a heater rating or understanding the required output.</span></div>
@@ -482,6 +557,18 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
   const additionalToolKeys = Object.keys(saved).filter((key) => key.startsWith("saw_tools__") && selected.includes("saw_tools"));
   const additionalPoolEquipmentKeys = question.id === "pool_equipment_ratings" ? Object.keys(saved).filter((key) => saved[key]?.customPoolEquipment === true || key.startsWith("pool_equipment__")) : [];
   const displayedEntries = [...selected, ...additionalToolKeys, ...additionalPoolEquipmentKeys];
+  const orderedEntries = question.id === "household_motor_ratings"
+    ? [...displayedEntries].sort((left, right) => {
+        const runtimeTypes = new Set(["saw_tools", "compressor", "welder"]);
+        const leftType = saved[left]?.baseType ?? left.split("__")[0];
+        const rightType = saved[right]?.baseType ?? right.split("__")[0];
+        return Number(runtimeTypes.has(leftType)) - Number(runtimeTypes.has(rightType));
+      })
+    : displayedEntries;
+  const entryColumns = [
+    orderedEntries.filter((_, index) => index % 2 === 0),
+    orderedEntries.filter((_, index) => index % 2 === 1),
+  ];
   const poolHeatPumpElectricalKw = poolElectricalKw ?? (poolThermalKw ? Number((poolThermalKw / (poolHeaterCop ?? 5)).toFixed(2)) : undefined);
   const entryDefaults = (key: string): Partial<PoolLoadEntry> => question.id === "pool_equipment_ratings" && key === "heat_pump" ? { quantity: 1, runningKw: poolHeatPumpElectricalKw, simultaneous: true, startingBasis: "automatic" } : {};
   const saveEntry = (key: string, changes: Partial<PoolLoadEntry>) => setAnswer(JSON.stringify({ ...saved, [key]: { quantity: 0, simultaneous: true, ...entryDefaults(key), ...saved[key], ...changes } }));
@@ -512,9 +599,9 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
   };
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><Bot size={17}/><p className="text-xs leading-5 text-muted">Use the rating shown on each label. For heat pumps, enter only the advertised heating capacity; PVIntell handles the planning conversion.</p></div></div>
-    <div className="grid gap-4 p-6 md:grid-cols-2 md:p-8">
+    <div className="grid items-start gap-4 p-6 md:grid-cols-2 md:p-8">
       <div className="flex flex-wrap items-center gap-3 md:col-span-2"><button type="button" onClick={onAskWattson} className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Photograph a label with Wattson</button><span className="text-[11px] text-muted">Wattson will read the model and the usable rating fields, and tell you if another label is needed.</span></div>
-      {displayedEntries.length ? displayedEntries.map((key) => {
+      {orderedEntries.length ? entryColumns.map((column, columnIndex) => <div key={columnIndex} className="contents md:flex md:flex-col md:gap-4">{column.map((key) => {
         const row = { ...entryDefaults(key), ...(saved[key] ?? {}) };
         const baseType = row.baseType ?? key.split("__")[0];
         const additionalTool = key.startsWith("saw_tools__");
@@ -537,7 +624,7 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
             ...(runtimeMinutesPerDay === undefined ? {} : { runtimeMinutesPerDay, longestRunMinutes: runtimeMinutesPerDay }),
           });
         };
-        return <article key={key} className="rounded-2xl border border-line bg-[#f8fbfe] p-4">
+        return <article key={key} style={{ order: orderedEntries.indexOf(key) }} className="rounded-2xl border border-line bg-[#f8fbfe] p-4">
           <div className="flex items-start justify-between gap-3">{baseType === "saw_tools" || additionalPoolEquipment ? <label className="min-w-0 flex-1 text-[10px] font-bold">{additionalPoolEquipment ? "Equipment name" : "Tool name"}<input value={row.name ?? (additionalPoolEquipment ? "" : poolLoadLabels.saw_tools)} onChange={(event) => saveEntry(key, { name: event.target.value, ...(additionalTool ? { baseType: "saw_tools" } : {}), ...(additionalPoolEquipment ? { baseType: "custom_pool_equipment", customPoolEquipment: true } : {}) })} className="field mt-1.5" placeholder={additionalPoolEquipment ? "e.g. Second circulation pump or UV unit" : "e.g. Drop saw, lathe or dust extractor"}/></label> : <strong className="text-sm">{poolSchedule && baseType === "heat_pump" ? "Pool heat pump" : poolLoadLabels[baseType] ?? baseType.replaceAll("_", " ")}</strong>}{additionalTool || additionalPoolEquipment ? <button type="button" onClick={() => removeAdditionalTool(key)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-[#e7b7af] text-[#a7442d]" aria-label={`Remove ${row.name || (additionalPoolEquipment ? "additional pool equipment" : "additional tool")}`}><Trash2 size={15}/></button> : null}</div>
           {additionalPoolEquipment ? <label className="mt-3 block text-[10px] font-bold">Equipment type<select value={row.loadType ?? "motor"} onChange={(event) => { const loadType = event.target.value as PoolLoadEntry["loadType"]; const startingKw = row.runningKw === undefined ? undefined : Number((row.runningKw * poolStartingMultiplier(baseType, loadType)).toFixed(2)); saveEntry(key, { loadType, startingKw, startingBasis: "automatic" }); }} className="field mt-1.5"><option value="motor">Pump, blower or other motor</option><option value="heat_pump">Heat pump or compressor</option><option value="non_motor">Controls, UV, dosing or non-motor load</option></select></label> : null}
           {baseType === "welder" ? <WelderRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" && poolSchedule ? <PoolHeatPumpElectricalFields row={row} thermalKw={poolThermalKw} cop={poolHeaterCop ?? 5} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" ? <HeatPumpRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : <><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">{baseType === "pool_heat_pump" ? "Rated electrical input" : "Running electrical input"}<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW{baseType === "pool_heat_pump" ? " input — not heating output capacity" : ""}</span></label></div>
@@ -547,9 +634,9 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
           <label className="mt-3 flex items-center gap-2 text-[11px] font-semibold"><input type="checkbox" checked={row.simultaneous ?? true} onChange={(event) => saveEntry(key, { simultaneous: event.target.checked })} className="size-4 accent-[#23679e]"/> May run with the other selected loads</label>
           {!["welder", "heat_pump"].includes(baseType) ? <details className="mt-3 rounded-xl border border-line bg-white p-3"><summary className="cursor-pointer text-[10px] font-bold text-brand">I have the manufacturer’s maximum or starting value</summary><label className="mt-3 block text-[10px] font-bold">Starting or maximum input (kW)<input type="number" min="0" step="0.01" value={row.startingBasis === "manufacturer" ? row.startingKw ?? "" : ""} onChange={(event) => saveEntry(key, { startingKw: numberValue(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} className="field mt-1.5"/></label></details> : null}
         </article>;
-      }) : <p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-4 text-xs leading-5 text-[#765918] md:col-span-2">Select the pool equipment first. Wattson will then show one rating card for each selected item.</p>}
-      {selected.includes("saw_tools") ? <button type="button" onClick={addAnotherTool} className="flex h-11 items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand md:col-span-2"><Plus size={15}/>Add another tool</button> : null}
-      {question.id === "pool_equipment_ratings" ? <button type="button" onClick={addAnotherPoolEquipment} className="flex h-11 items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand md:col-span-2"><Plus size={15}/>Add another pump or piece of equipment</button> : null}
+      })}</div>) : <p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-4 text-xs leading-5 text-[#765918] md:col-span-2">Select the pool equipment first. Wattson will then show one rating card for each selected item.</p>}
+      {selected.includes("saw_tools") ? <button type="button" onClick={addAnotherTool} className="order-[999] flex h-11 items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand md:col-span-2"><Plus size={15}/>Add another tool or appliance</button> : null}
+      {question.id === "pool_equipment_ratings" ? <button type="button" onClick={addAnotherPoolEquipment} className="order-[999] flex h-11 items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand md:col-span-2"><Plus size={15}/>Add another pump or piece of equipment</button> : null}
     </div>
   </section>;
 }
@@ -683,10 +770,6 @@ type PanelObstruction = { id: string; areaId: string; kind: string; lengthM: str
 
 function guidedQuestionComplete(question: DiscoveryQuestion, answers: DiscoveryAnswers, context: { combinedInitialSetup: boolean; hasSavedSites: boolean }) {
   if (!discoveryAnswerComplete(question.id, answers[question.id], answers)) return false;
-  if (question.id === "heavy_loads") {
-    const selectedLoads = Array.isArray(answers.heavy_loads) ? answers.heavy_loads.filter((item) => item !== "none") : [];
-    if (!highPowerLoadRatingsComplete(answers.household_motor_ratings, selectedLoads)) return false;
-  }
   if (question.id === "site_name" && context.hasSavedSites && !answers.site_id) return false;
   if (question.id === "system_name" && context.combinedInitialSetup) {
     if (!answers.site_name || (context.hasSavedSites && !answers.site_id)) return false;
@@ -701,7 +784,27 @@ function discoveryAnswerComplete(questionId: string, value: string | number | st
   if (typeof value === "string" && unresolvedValues.has(value)) return false;
   if (Array.isArray(value) && value.some((item) => unresolvedValues.has(item))) return false;
   if (value === undefined || value === "" || (Array.isArray(value) && value.length === 0)) return false;
+  if (questionId === "ev_status" && answers) {
+    return typeof answers.ev_vehicle_size === "string"
+      && answers.ev_vehicle_size.length > 0
+      && typeof answers.ev_travel_profile === "string"
+      && answers.ev_travel_profile.length > 0
+      && Array.isArray(answers.ev_charging_window)
+      && answers.ev_charging_window.length > 0;
+  }
+  if (questionId === "ev_travel_profile" && answers) {
+    return typeof answers.ev_available_supply === "string"
+      && answers.ev_available_supply.length > 0
+      && Array.isArray(answers.ev_charging_priority)
+      && answers.ev_charging_priority.length > 0
+      && typeof answers.ev_bidirectional_goal === "string"
+      && answers.ev_bidirectional_goal.length > 0;
+  }
   if (questionId === "pool_equipment_ratings" && answers) return poolLoadRatingsComplete(value, answers);
+  if (questionId === "household_motor_ratings" && answers) {
+    const selectedLoads = highPowerOptionsForEverydayNeeds(answers).map((option) => option.value);
+    return highPowerLoadRatingsComplete(value, selectedLoads);
+  }
   if (questionId === "panel_area_dimensions" && typeof value === "string") {
     try {
       const areas = JSON.parse(value) as PanelArea[];
@@ -711,8 +814,14 @@ function discoveryAnswerComplete(questionId: string, value: string | number | st
   if (questionId === "existing_panel_selection" && typeof value === "string") {
     try {
       const panels = JSON.parse(value) as ExistingPanelAnswer;
-      const allocationValid = panels.proposalUse !== "include" || (Number(panels.maxUseQuantity) > 0 && Number(panels.maxUseQuantity) <= Number(panels.quantity));
-      return Boolean(panels.name?.trim() && panels.panelType && Number(panels.quantity) > 0 && Number(panels.watts) > 0 && panels.proposalUse && allocationValid);
+      const arrayCountValid = panels.arrayCountUnknown === true || Number(panels.arrayCount) > 0;
+      return Boolean(panels.name?.trim() && panels.panelType && Number(panels.quantity) > 0 && arrayCountValid && Number(panels.watts) > 0);
+    } catch { return false; }
+  }
+  if (questionId === "existing_power_equipment" && typeof value === "string") {
+    try {
+      const equipment = JSON.parse(value) as ExistingPowerEquipmentEntry[];
+      return equipment.length > 0 && equipment.every((item) => item.name.trim() && item.type && Number(item.quantity) > 0 && (item.ratingUnknown === true || (Number(item.ratedSize) > 0 && item.ratedUnit)));
     } catch { return false; }
   }
   if (questionId === "generator_details" && typeof value === "string") {
@@ -761,8 +870,7 @@ function poolLoadRatingsComplete(value: string | number | string[] | undefined, 
 }
 
 function highPowerLoadRatingsComplete(value: string | number | string[] | undefined, selectedLoads: string[]) {
-  if (!selectedLoads.length) return true;
-  if (typeof value !== "string") return false;
+  if (!selectedLoads.length || typeof value !== "string") return false;
   try {
     const ratings = JSON.parse(value) as Record<string, PoolLoadEntry>;
     if (Object.values(ratings).some((row) => Number(row.runtimeMinutesPerDay) > 0 && Number(row.longestRunMinutes) > Number(row.runtimeMinutesPerDay))) return false;
@@ -1045,8 +1153,6 @@ function StructureConditionCard({ question, profile, panelLocations, panelAreaDi
   </section>;
 }
 
-type LocationMatch = { name: string; label: string; latitude: number; longitude: number; timezone: string };
-
 function NewSiteLocation({ siteName, defaultRegion, initial, onChange }: { siteName: string; defaultRegion: string; initial: DiscoveryAnswers; onChange: (location: DiscoveryAnswers) => void }) {
   const initialMatch = typeof initial.site_latitude === "number" && typeof initial.site_longitude === "number" ? { name: siteName || "Pinned Site", label: String(initial.site_location || siteName || "Pinned Site"), latitude: initial.site_latitude, longitude: initial.site_longitude, timezone: String(initial.site_timezone || "UTC") } : undefined;
   const [query, setQuery] = useState(initialMatch?.label ?? defaultRegion);
@@ -1056,6 +1162,7 @@ function NewSiteLocation({ siteName, defaultRegion, initial, onChange }: { siteN
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState("");
   const [saveToAccount, setSaveToAccount] = useState(initial.save_as_account_location === "yes");
+  const [showLocationPrompt, setShowLocationPrompt] = useState(!initialMatch);
 
   function updateLocation(match: LocationMatch) {
     setSelected(match); setMatches([]); setQuery(match.label); setLocationError("");
@@ -1066,7 +1173,7 @@ function NewSiteLocation({ siteName, defaultRegion, initial, onChange }: { siteN
     if (query.trim().length < 2) return;
     setSearching(true); setLocationError("");
     try {
-      const response = await fetch(`/api/location/search?q=${encodeURIComponent(query.trim())}`);
+      const response = await fetch(locationSearchPath(query));
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not search for that location.");
       setMatches(body.results ?? []);
@@ -1075,7 +1182,7 @@ function NewSiteLocation({ siteName, defaultRegion, initial, onChange }: { siteN
     finally { setSearching(false); }
   }
 
-  function useDeviceLocation() {
+  function requestDeviceLocation() {
     if (!navigator.geolocation) { setLocationError("Location access is not available on this device."); return; }
     setLocating(true); setLocationError("");
     navigator.geolocation.getCurrentPosition(({ coords }) => {
@@ -1089,14 +1196,31 @@ function NewSiteLocation({ siteName, defaultRegion, initial, onChange }: { siteN
     updateLocation({ ...selected, latitude, longitude });
   }
 
-  return <div className="theme-subtle-surface mt-4 rounded-2xl border border-line bg-[#fbfcfe] p-4">
-    <div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><MapPin size={17}/></span><div><strong className="text-sm">Pinpoint the new Site</strong><p className="mt-1 text-[11px] leading-5 text-muted">Search for the property or use this device, then drag the pin to the exact installation position. This sets the Site’s solar coordinates and timezone.</p></div></div>
-    <div className="mt-4 flex gap-2"><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchLocation(); } }} className="field mt-0" placeholder="Address, town, postcode or region"/><button type="button" onClick={() => void searchLocation()} disabled={searching || query.trim().length < 2} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40">{searching ? <LoaderCircle className="animate-spin" size={17}/> : <Search size={17}/>}</button></div>
-    <button type="button" onClick={useDeviceLocation} disabled={locating} className="mt-2 flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold disabled:opacity-40"><LocateFixed size={14}/>{locating ? "Finding this device…" : "Use this device’s location"}</button>
+  useEffect(() => {
+    const partial = query.trim();
+    if (partial.length < 2 || partial === selected?.label) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSearching(true); setLocationError("");
+      try {
+        const response = await fetch(locationSearchPath(partial), { signal: controller.signal });
+        const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Could not search for that location.");
+        setMatches(body.results ?? []);
+      } catch (problem) { if (!controller.signal.aborted) setLocationError(problem instanceof Error ? problem.message : "Could not search for that location."); }
+      finally { if (!controller.signal.aborted) setSearching(false); }
+    }, 400);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [query, selected?.label]);
+
+  return <><div className="theme-subtle-surface mt-4 rounded-2xl border border-line bg-[#fbfcfe] p-4">
+    <div className="flex items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><MapPin size={17}/></span><div><strong className="text-sm">Pinpoint the new Site</strong><p className="mt-1 text-[11px] leading-5 text-muted">Start typing an address or broad area to see suggestions. An exact street address is optional, and matches from your country appear first. The selected coordinates set the Site’s solar weather and timezone.</p></div></div>
+    <div className="mt-4 flex gap-2"><input value={query} onChange={(event) => { setQuery(event.target.value); if (event.target.value.trim().length < 2) setMatches([]); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void searchLocation(); } }} className="field mt-0" placeholder="Address, town, postcode or region" autoComplete="off"/><button type="button" onClick={() => void searchLocation()} disabled={searching || query.trim().length < 2} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40">{searching ? <LoaderCircle className="animate-spin" size={17}/> : <Search size={17}/>}</button></div>
+    <button type="button" onClick={requestDeviceLocation} disabled={locating} className="mt-2 flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 text-[11px] font-bold disabled:opacity-40"><LocateFixed size={14}/>{locating ? "Waiting for location permission…" : "Enable and use device location"}</button>
     {matches.length ? <div className="mt-3 overflow-hidden rounded-xl border border-line bg-white">{matches.map((match) => <button key={`${match.latitude}:${match.longitude}`} type="button" onClick={() => updateLocation(match)} className="block w-full border-b border-line px-4 py-3 text-left text-xs last:border-0 hover:bg-[#edf5fd]"><strong>{match.name}</strong><span className="mt-1 block text-[11px] text-muted">{match.label}</span></button>)}</div> : null}
+    <p className="mt-2 text-[9px] text-muted">Search data © OpenStreetMap contributors.</p>
     {locationError ? <p className="mt-3 text-[11px] text-[#a9442f]">{locationError}</p> : null}
     {selected ? <><div className="relative mt-4 h-64 overflow-hidden rounded-xl border border-line bg-[#dfe9ee]"><EditableSiteMap points={[{ id: "new-site", name: siteName || selected.name, latitude: selected.latitude, longitude: selected.longitude, kind: "site" }]} activeId="new-site" center={[selected.latitude, selected.longitude]} onSelect={() => undefined} onMove={movePin}/><div className="absolute bottom-3 left-3 z-[500] rounded-lg bg-white/95 px-3 py-2 text-[10px] font-semibold shadow">Click or drag the pin to refine the position</div></div><div className="mt-3 text-[11px] text-muted"><strong className="text-ink">Pinned:</strong> {selected.latitude.toFixed(6)}, {selected.longitude.toFixed(6)} · {selected.timezone}</div><label className="mt-3 flex cursor-pointer items-start gap-2 text-[11px] leading-5"><input type="checkbox" checked={saveToAccount} onChange={(event) => { const checked = event.target.checked; setSaveToAccount(checked); onChange({ save_as_account_location: checked ? "yes" : "no" }); }} className="mt-1"/><span>Also use this as my account’s home location. Leave this off when the Site is somewhere else.</span></label></> : null}
-  </div>;
+  </div>{showLocationPrompt && <div className="fixed inset-0 z-[70] grid place-items-center bg-[#0b2740]/45 p-5 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="location-permission-title"><div className="card w-full max-w-md bg-white p-6 shadow-2xl"><span className="grid size-10 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><LocateFixed size={19}/></span><h2 id="location-permission-title" className="mt-4 text-lg font-extrabold">Enable location for this Site?</h2><p className="mt-2 text-xs leading-5 text-muted">PVIntell can ask your browser for this device’s location to set solar weather coordinates. You can decline and search for an address, town, postcode or region instead.</p><div className="mt-5 grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => setShowLocationPrompt(false)} className="h-11 rounded-xl border border-line bg-white text-xs font-bold">Search instead</button><button type="button" onClick={() => { setShowLocationPrompt(false); requestDeviceLocation(); }} className="h-11 rounded-xl bg-brand text-xs font-bold text-white">Enable location</button></div></div></div>}</>;
 }
 
 function SystemSetupQuestionCard({ sites, selectedSiteId, siteName, defaultRegion, siteLocationAnswers, value, setAnswer, setSite, setSiteLocation, onAskWattson }: {
@@ -1299,6 +1423,20 @@ function answerLabel(question: DiscoveryQuestion, value: string | number | strin
       if (generator.purchaseStatus === "not_purchased") return "Not purchased yet — Wattson will specify the required size";
       return `${generator.generatorType?.replaceAll("_", " ") || "Generator"}${generator.continuousRating ? ` · ${generator.continuousRating} ${generator.ratingUnit || "kW"} continuous` : ""}`;
     } catch { return "Generator details need review"; }
+  }
+  if (question.id === "existing_panel_selection" && typeof value === "string") {
+    try {
+      const panels = JSON.parse(value) as ExistingPanelAnswer;
+      const type = ({ rigid: "standard rigid", bifacial: "bifacial", flexible: "flexible or lightweight", building_integrated: "building-integrated" } as Record<string, string>)[String(panels.panelType ?? "")] ?? "panel";
+      const quantity = Number(panels.quantity);
+      const watts = Number(panels.watts);
+      const groups = panels.arrayCountUnknown
+        ? "panel groups not identified"
+        : Number(panels.arrayCount) > 0
+          ? `${panels.arrayCount} panel group${Number(panels.arrayCount) === 1 ? "" : "s"}`
+          : "panel grouping not recorded";
+      return `${panels.name?.trim() || "Existing panels"}: ${quantity > 0 ? quantity : "Unknown quantity"}${watts > 0 ? ` × ${watts} W` : ""} ${type} panels · ${groups}`;
+    } catch { return "Existing panel details need review"; }
   }
   if (typeof value === "string" && ["pool_equipment_ratings", "household_motor_ratings"].includes(question.id)) {
     try {

@@ -6,7 +6,7 @@ describe("Wattson application grounding", () => {
     const context = wattsonApplicationCapabilities();
     expect(context.pages).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "Start a new system", path: "/discovery/new-system" }),
-      expect.objectContaining({ name: "Record an installed system", path: "/record-installed" }),
+      expect.objectContaining({ name: "System Capture", path: "/record-installed" }),
     ]));
     expect(context.pages.find((page) => page.name === "Settings")?.purpose).toMatch(/not a generic system-setup workflow/i);
   });

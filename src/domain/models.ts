@@ -163,6 +163,8 @@ export interface DesignCalculatorState {
     batteryAh?: number;
     batteryQuantity?: number;
     inverterKw?: number;
+    evChargingKw?: number;
+    evChargingPhase?: "single" | "three";
     generatorContinuousKw?: number;
     generatorSurgeKw?: number;
   };
@@ -256,6 +258,8 @@ export interface DesignCalculatorState {
   peakSunHours?: number;
   systemEfficiencyPercent?: number;
   inverterKw?: number;
+  evChargingKw?: number;
+  evChargingPhase?: "single" | "three";
   inverterPlan?: {
     jurisdiction: "nz" | "local_review";
     selectionStatus: "candidate_selected" | "candidate_selected_pending_local_approval";

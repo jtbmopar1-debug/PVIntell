@@ -443,6 +443,7 @@ function inverterRatingForNode(nodeId: string, design: DesignCalculatorState) {
 }
 
 function inverterRatingForConnection(connection: { from: string; to: string }, design: DesignCalculatorState) {
+  if (connection.from === "ev-charger" || connection.to === "ev-charger") return design.evChargingKw;
   for (const nodeId of [connection.from, connection.to]) {
     const unitIndex = inverterUnitIndex(nodeId) ?? (() => {
       const match = nodeId.match(/^(?:pv-)?inverter-(?:ac|battery)-protection-(\d+)$/);
@@ -455,6 +456,14 @@ function inverterRatingForConnection(connection: { from: string; to: string }, d
 
 function acCurrentForRating(ratingKw: number | undefined, design: DesignCalculatorState) {
   return n(ratingKw) * 1000 / (design.connectionType === "ac_three" ? Math.sqrt(3) * 400 : 230);
+}
+
+function acCurrentForConnection(connection: { from: string; to: string }, design: DesignCalculatorState) {
+  const ratingKw = inverterRatingForConnection(connection, design);
+  if (connection.from === "ev-charger" || connection.to === "ev-charger") {
+    return n(ratingKw) * 1000 / (design.evChargingPhase === "three" ? Math.sqrt(3) * 400 : 230);
+  }
+  return acCurrentForRating(ratingKw, design);
 }
 
 export function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number], design: DesignCalculatorState) {
@@ -620,6 +629,7 @@ const proposedAssetGroups: Array<{ id: ProposedAssetGroup; label: string }> = [
 ];
 
 const proposedSchematicAssetFiles = [
+  "ac-pedestal.svg",
   "ac-circuit-breaker-mcb.jpg", "ac-disconnect-isolator.jpg", "ac-distribution-board.jpg",
   "automatic-generator-start-controller.png", "automatic-transfer-switch-ats.jpg", "bms-battery-management-system.jpg",
   "busbar.jpg", "current-transformer-ct-clamp.jpg", "dc-battery-cable.png", "dc-circuit-breaker-mcb.jpg",
@@ -634,7 +644,7 @@ const proposedSchematicAssetFiles = [
   "string-inverter.jpg", "surge-protection-device-spd.jpg", "wifi-communication-module.jpg",
 ] as const;
 
-const proposedAssetLabel = (fileName: string) => fileName
+const proposedAssetLabel = (fileName: string) => fileName === "ac-pedestal.svg" ? "EV Charging Pedestal" : fileName
   .replace(/\.[^.]+$/, "")
   .replace(/-unbranded|-v\d+$/g, "")
   .replaceAll("-", " ")
@@ -647,7 +657,7 @@ const proposedAssetGroupsFor = (fileName: string): ProposedAssetGroup[] => {
   if (/^ac-|grid|transfer|building/.test(name)) groups.add("ac");
   if (/^dc-|pv-|busbar|combiner|mppt|optimiser|battery-cable/.test(name)) groups.add("dc");
   if (/switch|disconnect|isolator|breaker|fuse|rcd|rccb|surge|combiner|protection|transfer/.test(name)) groups.add("switching");
-  if (/solar|pv-|inverter|microinverter|charge-controller|optimiser|roof-mounting/.test(name)) groups.add("solar");
+  if (/solar|pv-|inverter|microinverter|charge-controller|optimiser|roof-mounting|pedestal/.test(name)) groups.add("solar");
   if (/battery|storage|bms/.test(name)) groups.add("storage");
   if (/generator/.test(name)) groups.add("generation");
   if (/meter|monitor|logger|wifi|current-transformer|ct-clamp|relay-controller/.test(name)) groups.add("metering");
@@ -665,6 +675,7 @@ export function schematicConnectionsForView(connections: NonNullable<ProposedDra
 export function schematicCardDetail(node: ProposedNode, draft: ProposedDraft, design: DesignCalculatorState) {
   if (node.id === "solar" || node.id.startsWith("solar-pv-")) {
     const supplementary = supplementaryArray(design);
+    if (supplementary && node.id === "solar-pv-2") return `${round(supplementary.targetPvKw, 2)} kW`;
     const count = plannedArrayForNode(node.id, design)?.allocatedPanelCount
       ?? (supplementary && node.id === "solar-pv-1" ? design.existingPanelGroup?.proposedUseCount : undefined)
       ?? (supplementary && node.id === "solar-pv-2" ? supplementary.count : undefined)
@@ -1013,7 +1024,7 @@ function preliminaryConnectionValues(connection: NonNullable<NonNullable<DesignC
       const earthCableMm2 = planningProtectiveEarth(pvCableMm2, Math.ceil(n(design.panelIscA) * 1.25), design.electricalStandard, true);
       return { ...connection, cableSizeMm2: connection.cableSizeMm2 ?? earthCableMm2, protectionAmps: undefined, notes: connection.notes ?? (earthCableMm2 ? `Preliminary PV bonding size calculated using the ${design.electricalStandard} regional profile.` : "Protective bonding size requires the Site's applicable electrical standard.") };
     }
-    const acCurrent = acCurrentForRating(inverterRatingForConnection(connection, design), design);
+    const acCurrent = acCurrentForConnection(connection, design);
     const activeCableMm2 = planningAcCableForCurrent(acCurrent);
     const earthCableMm2 = planningProtectiveEarth(activeCableMm2, Math.ceil(acCurrent * 1.25), design.electricalStandard);
     return { ...connection, cableSizeMm2: connection.cableSizeMm2 ?? earthCableMm2, protectionAmps: undefined, notes: connection.notes ?? (earthCableMm2 ? `Preliminary protective-earth size calculated using the ${design.electricalStandard} regional profile.` : "Protective-earth size requires the Site's applicable electrical standard.") };
@@ -1024,8 +1035,8 @@ function preliminaryConnectionValues(connection: NonNullable<NonNullable<DesignC
     if (!suggestion.cableSizeMm2) return { ...connection, cableSizeMm2: undefined, protectionAmps: undefined, notes: suggestion.notes };
     return { ...connection, cableSizeMm2: suggestion.cableSizeMm2, protectionAmps: undefined, notes: suggestion.notes };
   }
-  const voltage = connection.kind === "battery-dc" ? n(design.batteryVoltage) : design.connectionType === "ac_three" ? 400 : 230;
-  const current = connection.kind === "ac" ? acCurrentForRating(inverterRatingForConnection(connection, design), design) : n(inverterRatingForConnection(connection, design)) * 1000 / Math.max(voltage, 1);
+  const voltage = connection.kind === "battery-dc" ? n(design.batteryVoltage) : connection.from === "ev-charger" || connection.to === "ev-charger" ? design.evChargingPhase === "three" ? 400 : 230 : design.connectionType === "ac_three" ? 400 : 230;
+  const current = connection.kind === "ac" ? acCurrentForConnection(connection, design) : n(inverterRatingForConnection(connection, design)) * 1000 / Math.max(voltage, 1);
   if (!voltage || !current) return connection;
   const currentCapacityCable = connection.kind === "ac" ? planningAcCableForCurrent(current) : planningCableForCurrent(current);
   return { ...connection, cableSizeMm2: Math.max(connection.cableSizeMm2 ?? 0, 1.5, currentCapacityCable), protectionAmps: connection.protectionAmps ?? Math.ceil(current * 1.25), notes: connection.notes ?? "Preliminary current-capacity sizing; confirm route, derating, equipment limits and protection coordination." };
@@ -1781,14 +1792,14 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         return { cableSizeMm2: planningProtectiveEarth(pvCableMm2, Math.ceil(n(design.panelIscA) * 1.25), design.electricalStandard, true), protectionAmps: undefined };
       }
       const circuitKw = inverterRatingForConnection(connection, design);
-      const calculatedAcCable = planningAcCableForCurrent(acCurrentForRating(circuitKw, design));
+      const calculatedAcCable = planningAcCableForCurrent(acCurrentForConnection(connection, design));
       const recordedAcCable = connections.filter((item) => item.kind === "ac").reduce((largest, item) => Math.max(largest, n(item.cableSizeMm2)), 0);
-      const acProtection = Math.ceil(acCurrentForRating(circuitKw, design) * 1.25);
+      const acProtection = Math.ceil(acCurrentForConnection(connection, design) * 1.25);
       return { cableSizeMm2: planningProtectiveEarth(Math.max(calculatedAcCable, recordedAcCable), acProtection, design.electricalStandard), protectionAmps: undefined };
     }
     if (connection.kind === "solar-dc") return suggestPvDcStringCable({ panelsPerString: design.panelsPerString, panelVmpV: design.panelVmpV, panelImpA: design.panelImpA, panelIscA: design.panelIscA, lengthM });
-    const voltage = connection.kind === "battery-dc" ? n(design.batteryVoltage, 48) : design.connectionType === "ac_three" ? 400 : 230;
-    const current = connection.kind === "ac" ? acCurrentForRating(inverterRatingForConnection(connection, design), design) : n(inverterRatingForConnection(connection, design)) * 1000 / Math.max(voltage, 1);
+    const voltage = connection.kind === "battery-dc" ? n(design.batteryVoltage, 48) : connection.from === "ev-charger" || connection.to === "ev-charger" ? design.evChargingPhase === "three" ? 400 : 230 : design.connectionType === "ac_three" ? 400 : 230;
+    const current = connection.kind === "ac" ? acCurrentForConnection(connection, design) : n(inverterRatingForConnection(connection, design)) * 1000 / Math.max(voltage, 1);
     if (!voltage || !current) return { cableSizeMm2: undefined, protectionAmps: undefined };
     const minimumByDrop = voltage && current ? 2 * .0175 * lengthM * current / (voltage * .02) : 0;
     const circuitFloor = connection.kind === "ac" ? planningAcCableForCurrent(current) : planningCableForCurrent(current);
@@ -2142,7 +2153,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
           <div className="thin-scrollbar mt-3 flex gap-1.5 overflow-x-auto pb-1" aria-label="Component groups">{proposedAssetGroups.map((group) => <button key={group.id} type="button" onClick={() => setAssetGroup(group.id)} aria-pressed={assetGroup === group.id} className={`shrink-0 rounded-full border px-3 py-1.5 text-[10px] font-bold ${assetGroup === group.id ? "border-brand bg-brand text-white" : "border-line bg-white text-brand hover:bg-[#eef3f8]"}`}>{group.label}</button>)}</div>
         </header>
         <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2 sm:p-3">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{visibleProposedAssets.map((fileName) => { const label = proposedAssetLabel(fileName); const url = `/schematic-components/${fileName}`; return <button key={fileName} type="button" onClick={() => addItem(label, url)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-contain p-1"/><span className="line-clamp-3">{label}</span></button>; })}</div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{visibleProposedAssets.map((fileName) => { const label = proposedAssetLabel(fileName); const url = fileName === "ac-pedestal.svg" ? "/guides/ev/ac-pedestal.svg" : `/schematic-components/${fileName}`; return <button key={fileName} type="button" onClick={() => addItem(label, url)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-contain p-1"/><span className="line-clamp-3">{label}</span></button>; })}</div>
           {!visibleProposedAssets.length ? <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures in this group.</p> : null}
           <div className="mt-3 rounded-xl border border-dashed border-line p-3"><label className="text-xs font-bold text-ink">Add another item</label><div className="mt-2 flex flex-col gap-2 sm:flex-row"><input value={customItemName} onChange={(event) => setCustomItemName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && customItemName.trim()) addItem(customItemName); }} placeholder="Component or item name" className="field min-w-0 flex-1"/><button type="button" disabled={!customItemName.trim()} onClick={() => addItem(customItemName)} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-4 text-xs font-bold text-white disabled:opacity-40"><Plus size={15}/>Add custom item</button></div></div>
         </div>
@@ -2182,6 +2193,9 @@ function proposalDraftForCurrentDesign(design: DesignCalculatorState, gridConnec
     || actualSolarSources !== expectedSolarSources
     || actualInverterUnits !== expectedInverterUnits
     || nodes.some((node) => node.id === "generator") !== Boolean(design.generatorIncluded)
+    || nodes.some((node) => node.id === "ev-charger") !== Boolean(design.evChargingKw)
+    || n(draft.evChargingKw) !== n(design.evChargingKw)
+    || draft.evChargingPhase !== design.evChargingPhase
     || nodes.some((node) => node.id === "grid-supply") !== gridConnected;
   return structureChanged ? createProposedAsBuiltDraft(design, gridConnected) : draft;
 }
@@ -2450,6 +2464,11 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
       { from: "generator-changeover", to: generatorInterface.target, label: "Protected generator input", kind: "ac" },
     );
   }
+  if (design.evChargingKw) {
+    nodes.push({ id: "ev-charger", label: "EV charging pedestal", detail: `${design.evChargingKw} kW charging capacity from discovery`, image: "/guides/ev/ac-pedestal.svg", x: 1140, y: 180 });
+    connections.push({ from: "switchboard", to: "ev-charger", label: `${design.evChargingKw} kW EV charging circuit`, kind: "ac" });
+    flow.push("EV charging pedestal");
+  }
   if (design.mountingLocations?.includes("none")) {
     const excluded = new Set(nodes.filter((node) => node.id === "solar" || node.id.startsWith("solar-") || node.id === "controller").map((node) => node.id));
     for (let i = nodes.length - 1; i >= 0; i--) if (excluded.has(nodes[i].id)) nodes.splice(i, 1);
@@ -2475,6 +2494,8 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
     batteryAh: design.batteryAh,
     batteryQuantity: design.batteryQuantity,
     inverterKw: design.inverterKw,
+    evChargingKw: design.evChargingKw,
+    evChargingPhase: design.evChargingPhase,
     generatorContinuousKw: design.generatorContinuousKw,
     generatorSurgeKw: design.generatorSurgeKw,
   };

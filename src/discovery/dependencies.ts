@@ -1,4 +1,4 @@
-import { newSystemQuestions, visibleDiscoveryQuestions, type DiscoveryAnswers } from "./new-system";
+import { evPlanningPowerBand, highPowerOptionsForEverydayNeeds, newSystemQuestions, visibleDiscoveryQuestions, type DiscoveryAnswers } from "./new-system";
 
 const panelLocations = ["main_roof", "other_roof", "ground", "fence", "wall_facade", "carport_pergola", "curved_lightweight", "mobile"];
 const locationLabels: Record<string, string> = { main_roof: "Main roof", other_roof: "Garage, shed or another roof", ground: "Ground area", fence: "Fence or vertical screen", wall_facade: "Wall or façade", carport_pergola: "Carport, pergola or canopy", curved_lightweight: "Curved or weight-limited surface", mobile: "Vehicle, boat or movable structure" };
@@ -40,6 +40,40 @@ function knownLocationForId(id: string) {
 /** Keeps dynamic panel-surface answers aligned with the selected locations. */
 export function reconcileDiscoveryDependencies(input: DiscoveryAnswers, previous?: DiscoveryAnswers) {
   const answers = { ...input };
+  if (["partly_installed", "installed_change_planned"].includes(String(answers.existing_system_status))) answers.existing_system_status = "installed";
+  if (answers.installed_system_knowledge === "known") answers.installed_system_knowledge = "know_well";
+  if (answers.installed_system_knowledge === "unknown") answers.installed_system_knowledge = "know_nothing";
+  if (answers.existing_system_status !== "installed") delete answers.installed_system_knowledge;
+  if (values(answers.panel_construction_interest).includes("existing")) answers.panel_construction_interest = ["existing"];
+  if (answers.architecture_preference === "compare") delete answers.architecture_preference;
+  if (answers.existing_power_equipment_status === "yes" && answers.architecture_preference === undefined) answers.architecture_preference = "existing";
+  else if (answers.architecture_preference === "existing") delete answers.architecture_preference;
+  const evKeys = ["ev_status", "ev_vehicle_details", "ev_vehicle_size", "ev_travel_profile", "ev_charging_window", "ev_charging_priority", "ev_available_supply", "ev_bidirectional_goal", "ev_planning_power_band"] as const;
+  if (!values(answers.everyday_needs).includes("ev")) evKeys.forEach((key) => delete answers[key]);
+  else {
+    const planningBand = evPlanningPowerBand(answers);
+    if (planningBand) answers.ev_planning_power_band = planningBand;
+    else delete answers.ev_planning_power_band;
+  }
+  const allowedHeavyLoads = new Set(highPowerOptionsForEverydayNeeds(answers).map((option) => option.value));
+  const selectedHeavyLoads = Array.isArray(answers.heavy_loads)
+    ? answers.heavy_loads.map(String)
+    : answers.heavy_loads === undefined ? [] : [String(answers.heavy_loads)];
+  const retainedHeavyLoads = allowedHeavyLoads.size
+    ? selectedHeavyLoads.filter((load) => load === "none" || allowedHeavyLoads.has(load))
+    : [];
+  if (retainedHeavyLoads.length) answers.heavy_loads = retainedHeavyLoads;
+  else delete answers.heavy_loads;
+  if (typeof answers.household_motor_ratings === "string") {
+    try {
+      const ratings = JSON.parse(answers.household_motor_ratings) as Record<string, { baseType?: string }>;
+      const retainedRatings = Object.fromEntries(Object.entries(ratings).filter(([key, rating]) => allowedHeavyLoads.has(rating.baseType ?? key.split("__")[0])));
+      if (Object.keys(retainedRatings).length) answers.household_motor_ratings = JSON.stringify(retainedRatings);
+      else delete answers.household_motor_ratings;
+    } catch {
+      delete answers.household_motor_ratings;
+    }
+  }
   const selected = values(answers.panel_location);
   const prior = values(previous?.panel_location);
   if (!selected.length) {

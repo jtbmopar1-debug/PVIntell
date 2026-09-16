@@ -37,17 +37,17 @@ describe("deterministic proposal handoff", () => {
     expect(actions[0].arguments).toMatchObject({ architecture: "combined_hybrid_inverter" });
   });
 
-  it("hands an explicitly included existing panel allocation to deterministic sizing", () => {
+  it("hands the recorded total existing-panel count to deterministic sizing", () => {
     const actions = deterministicProposalActions({
       panel_construction_interest: ["existing", "bifacial"],
-      existing_panel_selection: JSON.stringify({ name: "Workshop bifacial panels", panelType: "bifacial", quantity: 10, maxUseQuantity: 3, watts: 580, proposalUse: "include" }),
+      existing_panel_selection: JSON.stringify({ name: "Workshop bifacial panels", panelType: "bifacial", quantity: 10, arrayCount: 2, watts: 580 }),
     } as never);
     expect(actions.at(-1)?.arguments).toMatchObject({
       panel_type: "bifacial",
       representative_panel_watts: 580,
       existing_panel_name: "Workshop bifacial panels",
       existing_panel_available_count: 10,
-      existing_panel_max_use_count: 3,
+      existing_panel_max_use_count: 10,
       existing_panel_assessment_required: true,
     });
   });

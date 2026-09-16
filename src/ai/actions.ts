@@ -14,6 +14,18 @@ import type { DesignCalculatorState } from "@/domain/models";
 // back through canonical array/inverter reconciliation.
 export const PROPOSAL_ENGINE_VERSION = 5;
 
+function evChargingKwFromDiscovery(discovery: Record<string, unknown>) {
+  const raw = discovery.ev_planning_power_band;
+  const value = raw && typeof raw === "object" && "value" in raw ? (raw as { value?: unknown }).value : raw;
+  return ({ up_to_3_6_kw: 3.6, "3_7_to_7_4_kw": 7.4, "7_5_to_11_kw": 11, "11_to_22_kw": 22 } as Record<string, number>)[String(value ?? "")];
+}
+
+function evChargingPhaseFromDiscovery(discovery: Record<string, unknown>) {
+  const raw = discovery.ev_available_supply;
+  const value = raw && typeof raw === "object" && "value" in raw ? (raw as { value?: unknown }).value : raw;
+  return value === "fixed_three_phase" ? "three" as const : value ? "single" as const : undefined;
+}
+
 const componentType = z.enum([
   "panel",
   "pv_string",
@@ -164,6 +176,8 @@ export function validatePreliminarySizing(
     pvKw: sizing.pvKw,
     panelCount: sizing.panelCount,
     inverterKw: sizing.inverterKw,
+    evChargingKw: evChargingKwFromDiscovery(discovery),
+    evChargingPhase: evChargingPhaseFromDiscovery(discovery),
     batteryUsableKwh: sizing.batteryUsableKwh,
     pvStrings: undefined,
     panelsPerString: undefined,
@@ -197,6 +211,8 @@ function sizingFields(settings: Record<string, unknown>, mode: string, panelWatt
     planningPanelCapacity: sizing.planningPanelCapacity,
     fitLimited: sizing.fitLimited,
     inverterKw: sizing.inverterKw,
+    evChargingKw: evChargingKwFromDiscovery(discovery),
+    evChargingPhase: evChargingPhaseFromDiscovery(discovery),
     batteryUsableKwh: sizing.batteryUsableKwh,
     sizingMethod: sizing.method,
     sizingInputs: {
@@ -388,6 +404,7 @@ export function reconcileStoredProposal(
 const proposalSizingDiscoveryKeys = new Set([
   "current_energy_use", "off_grid_daily_energy_use", "backup_preference", "battery_requirement", "backup_duration",
   "generator_outage_role", "household_motor_ratings", "pool_equipment", "pool_equipment_ratings", "pool_heating_method", "pool_heater_electrical_kw",
+  "ev_vehicle_size", "ev_travel_profile", "ev_charging_window", "ev_available_supply", "ev_planning_power_band",
 ]);
 const designPreferenceSchema = z.object({
   architecture: z.enum([
@@ -440,6 +457,7 @@ const discoveryKey = z.enum([
   "storage_supply_source",
   "panel_construction_interest",
   "existing_panel_selection",
+  "existing_power_equipment",
   "usable_solar_space",
   "panel_area_dimensions",
   "panel_area_constraints",
@@ -456,12 +474,14 @@ const discoveryKey = z.enum([
   "network_constraints",
   "expected_expansion",
   "ev_status",
+  "ev_vehicle_size",
   "ev_vehicle_details",
   "ev_travel_profile",
   "ev_charging_window",
   "ev_charging_priority",
   "ev_available_supply",
   "ev_bidirectional_goal",
+  "ev_planning_power_band",
   "delivery_approach",
   "dc_system_voltage",
   "battery_requirement",
@@ -1279,6 +1299,8 @@ export async function applyWattsonActions(
           tiltDegrees: input.tilt_degrees ?? previous.tiltDegrees,
         }, (settings.solarResource as { latitude?: number } | undefined)?.latitude),
         inverterKw: proposedInverterKw,
+        evChargingKw: sizing.evChargingKw,
+        evChargingPhase: sizing.evChargingPhase,
         inverterPlan,
         connectionType,
         generatorIncluded: generatorIncluded || undefined,
@@ -1343,7 +1365,7 @@ export async function applyWattsonActions(
         nextDesign.fitLimited = true;
         nextDesign.fitStatus = "does_not_fit";
       }
-      for (const key of ["targetPvKw", "panelCount", "energyTargetPvKw", "energyTargetPanelCount", "planningPanelCapacity", "pvStrings", "panelsPerString", "stringDesign", "panelManufacturer", "panelModel", "panelSupplier", "panelProductUrl", "panelDatasheetUrl", "panelDatasheetVersion", "panelVmpV", "panelVocV", "panelImpA", "panelIscA", "panelLengthMm", "panelWidthMm", "panelThicknessMm", "panelWeightKg", "panelWeightBasis", "panelMaximumSystemVoltageV", "panelMaximumSeriesFuseA", "panelVocTemperatureCoefficientPercentPerC", "requiredPanelAreaM2", "inverterKw", "generatorIncluded", "generatorPurchaseStatus", "generatorContinuousKw", "generatorSurgeKw", "batteryUsableKwh", "batteryChemistry", "batteryVoltage", "batteryAh", "batteryQuantity", "usableBatteryPercent"]) {
+      for (const key of ["targetPvKw", "panelCount", "energyTargetPvKw", "energyTargetPanelCount", "planningPanelCapacity", "pvStrings", "panelsPerString", "stringDesign", "panelManufacturer", "panelModel", "panelSupplier", "panelProductUrl", "panelDatasheetUrl", "panelDatasheetVersion", "panelVmpV", "panelVocV", "panelImpA", "panelIscA", "panelLengthMm", "panelWidthMm", "panelThicknessMm", "panelWeightKg", "panelWeightBasis", "panelMaximumSystemVoltageV", "panelMaximumSeriesFuseA", "panelVocTemperatureCoefficientPercentPerC", "requiredPanelAreaM2", "inverterKw", "evChargingKw", "evChargingPhase", "generatorIncluded", "generatorPurchaseStatus", "generatorContinuousKw", "generatorSurgeKw", "batteryUsableKwh", "batteryChemistry", "batteryVoltage", "batteryAh", "batteryQuantity", "usableBatteryPercent"]) {
         if (nextDesign[key] === undefined) delete nextDesign[key];
       }
       settings.designCalculator = nextDesign;

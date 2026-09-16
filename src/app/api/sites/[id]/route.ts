@@ -7,7 +7,7 @@ const locationSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
   timezone: z.string().trim().min(1).max(100),
-  locationSource: z.enum(["manual", "device"]),
+  locationSource: z.enum(["manual", "device", "search"]),
 });
 const nameSchema = z.object({ name: z.string().trim().min(1).max(120) });
 const updateSchema = z.union([locationSchema, nameSchema]);

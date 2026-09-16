@@ -45,7 +45,7 @@ function projectStore(mode = "off_grid") {
 const workshop: DiscoveryAnswers = {
   utility_relationship: "off_grid", battery_requirement: "none", off_grid_daily_energy_use: 6,
   panel_location: ["main_roof"], panel_construction_interest: ["existing", "bifacial"],
-  existing_panel_selection: JSON.stringify({ name: "Owned panels", panelType: "bifacial", quantity: 8, maxUseQuantity: 8, watts: 580, proposalUse: "include" }),
+  existing_panel_selection: JSON.stringify({ name: "Owned panels", panelType: "bifacial", quantity: 8, arrayCount: 1, watts: 580 }),
   heavy_loads: ["saw_tools"], household_motor_ratings: JSON.stringify({ saw_tools: { name: "Drop saw", runningKw: 1.8, startingKw: 5.4, quantity: 1, simultaneous: false, runtimeMinutesPerDay: 60 } }),
   generator_requirement: "include", generator_outage_role: ["high_power_loads"], generator_details: JSON.stringify({ purchaseStatus: "not_purchased" }),
   architecture_preference: "combined",
@@ -59,6 +59,42 @@ async function build(answers: DiscoveryAnswers, store = projectStore()) {
 }
 
 describe("discovery → stored proposal → calculator save", () => {
+  it("adds the selected AC charging pedestal and its dedicated EV circuit to the schematic", () => {
+    const draft = createProposedAsBuiltDraft({
+      architecture: "combined_hybrid_inverter",
+      evChargingKw: 7.4,
+      evChargingPhase: "single",
+      connectionType: "ac_single",
+    });
+
+    expect(draft.nodes).toContainEqual(expect.objectContaining({
+      id: "ev-charger",
+      image: "/guides/ev/ac-pedestal.svg",
+      detail: "7.4 kW charging capacity from discovery",
+    }));
+    expect(draft.connections).toContainEqual(expect.objectContaining({
+      from: "switchboard",
+      to: "ev-charger",
+      label: "7.4 kW EV charging circuit",
+      kind: "ac",
+    }));
+    expect(draft.connections?.find((connection) => connection.to === "ev-charger")?.configured).toBeUndefined();
+  });
+  it("carries the EV planning result through discovery evidence into the stored proposal", async () => {
+    const { design } = await build({
+      ...workshop,
+      everyday_needs: ["ev"],
+      ev_status: "have_ev",
+      ev_vehicle_size: "medium",
+      ev_travel_profile: "average",
+      ev_charging_window: "daytime",
+      ev_available_supply: "fixed_single_phase",
+      ev_planning_power_band: "up_to_3_6_kw",
+    });
+
+    expect(design).toMatchObject({ evChargingKw: 3.6, evChargingPhase: "single" });
+    expect(createProposedAsBuiltDraft(design as DesignCalculatorState).nodes).toContainEqual(expect.objectContaining({ id: "ev-charger" }));
+  });
   it("sizes each proposed PV isolator from known string Isc before route configuration", () => {
     const node = { id: "solar-safety-1", label: "PV1 isolator", detail: "TBC", image: "/schematic-components/dc-disconnect-isolator.jpg", x: 250, y: 20 };
     const draft = {
@@ -654,13 +690,13 @@ describe("discovery → stored proposal → calculator save", () => {
   it("retains a capacity-only extra array on a grid-connected proposal", async () => {
     const store = projectStore("hybrid");
     const { design } = await build({ ...workshop, utility_relationship: "grid_connected", heavy_loads: ["none"], off_grid_daily_energy_use: 20,
-      existing_panel_selection: JSON.stringify({ name: "Spare panels", panelType: "bifacial", quantity: 10, maxUseQuantity: 3, watts: 580, proposalUse: "include" }),
+      existing_panel_selection: JSON.stringify({ name: "Spare panels", panelType: "bifacial", quantity: 10, arrayCount: 1, watts: 580 }),
     }, store);
     const project = { projectType: "hybrid", peakSunHours: 2, designDiscovery: store.project.settings.designDiscovery, designCalculator: design, solarResource: store.project.settings.solarResource } as unknown as Project;
-    expect(design.existingPanelGroup).toMatchObject({ proposedUseCount: 3, surplusCount: 7 });
+    expect(design.existingPanelGroup).toMatchObject({ proposedUseCount: 10, surplusCount: 0 });
     expect(wattsonPanelSizingIsPlausible(project, 580, design)).toBe(true);
     const draft = createProposedAsBuiltDraft(design, true);
-    expect(draft.nodes?.find((node) => node.id === "solar-pv-1")?.detail).toContain("3 × 580");
+    expect(draft.nodes?.find((node) => node.id === "solar-pv-1")?.detail).toContain("10 × 580");
     expect(draft.nodes?.find((node) => node.id === "solar-pv-2")?.detail).toContain("kW minimum");
   });
 });

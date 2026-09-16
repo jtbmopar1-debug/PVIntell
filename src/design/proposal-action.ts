@@ -23,12 +23,11 @@ function architectureAction(answers: DiscoveryAnswers): WattsonActionRequest {
  * model to invent or calculate equipment sizes. */
 export function deterministicProposalActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
   const preference = architectureAction(answers);
-  let existingPanels: { name?: string; panelType?: string; quantity?: number; maxUseQuantity?: number; watts?: number; proposalUse?: string } = {};
+  let existingPanels: { name?: string; panelType?: string; quantity?: number; watts?: number } = {};
   try {
     if (typeof answers.existing_panel_selection === "string") existingPanels = JSON.parse(answers.existing_panel_selection) as typeof existingPanels;
   } catch { /* An older free-text answer remains discovery evidence but cannot drive numeric sizing. */ }
   const includeExistingPanels = proposalIncludesSolar(answers) && answerList(answers.panel_construction_interest).includes("existing")
-    && existingPanels.proposalUse === "include"
     && Number(existingPanels.quantity) > 0
     && Number(existingPanels.watts) > 0;
   const panelInterests = Array.isArray(answers.panel_construction_interest)
@@ -59,7 +58,7 @@ export function deterministicProposalActions(answers: DiscoveryAnswers): Wattson
           representative_panel_watts: Number(existingPanels.watts),
           existing_panel_name: existingPanels.name || "Existing panels",
           existing_panel_available_count: Number(existingPanels.quantity),
-          existing_panel_max_use_count: Math.min(Number(existingPanels.maxUseQuantity) || Number(existingPanels.quantity), Number(existingPanels.quantity)),
+          existing_panel_max_use_count: Number(existingPanels.quantity),
           existing_panel_assessment_required: true,
         } : {}),
         fit_status: "unverified",

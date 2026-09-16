@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { discoveryProjectType, hasReliableMeasuredEnergyUse, sequentialDiscoveryStageProgress, visibleDiscoveryQuestions, type DiscoveryQuestion } from "./new-system";
+import { discoveryProjectType, evPlanningPowerBand, evVehicleSizeOptions, hasReliableMeasuredEnergyUse, sequentialDiscoveryStageProgress, visibleDiscoveryQuestions, type DiscoveryQuestion } from "./new-system";
 
 describe("new-system discovery", () => {
   const stagedQuestions: DiscoveryQuestion[] = [
@@ -37,23 +37,35 @@ describe("new-system discovery", () => {
   });
 
   it("gates proposal discovery on whether a system is already installed", () => {
-    const questions = visibleDiscoveryQuestions({});
-    expect(questions[0]).toMatchObject({
+    const newSystemQuestions = visibleDiscoveryQuestions({ existing_system_status: "none" });
+    expect(newSystemQuestions[0]).toMatchObject({
       id: "existing_system_status",
       options: [
-        expect.objectContaining({ value: "none" }),
         expect.objectContaining({ value: "installed" }),
-        expect.objectContaining({ value: "partly_installed" }),
-        expect.objectContaining({ value: "installed_change_planned" }),
+        expect.objectContaining({ value: "none" }),
       ],
     });
-    expect(questions[1]).toMatchObject({
+    expect(newSystemQuestions[0].options).toHaveLength(2);
+    expect(newSystemQuestions[1]).toMatchObject({
       id: "existing_proposal_status",
       options: [
         expect.objectContaining({ value: "yes" }),
         expect.objectContaining({ value: "no" }),
       ],
     });
+
+    const installedSystemQuestions = visibleDiscoveryQuestions({ existing_system_status: "installed" });
+    expect(installedSystemQuestions[1]).toMatchObject({
+      id: "installed_system_knowledge",
+      options: [
+        expect.objectContaining({ value: "know_well" }),
+        expect.objectContaining({ value: "know_main" }),
+        expect.objectContaining({ value: "know_little" }),
+        expect.objectContaining({ value: "know_nothing" }),
+      ],
+    });
+    expect(installedSystemQuestions[1].options).toHaveLength(4);
+    expect(installedSystemQuestions.map((question) => question.id)).not.toContain("existing_proposal_status");
   });
 
   it("uses floor area only as a fallback when reliable measured energy is unavailable", () => {
@@ -73,17 +85,114 @@ describe("new-system discovery", () => {
     })).toBe("off-grid");
   });
 
-  it("offers a chest freezer as a separate simultaneous compressor load", () => {
+  it("only offers a chest freezer when it was selected as a day-to-day load", () => {
     const questions = visibleDiscoveryQuestions({
       utility_relationship: "grid_connected",
       target_grid_role: "normal_supply",
       primary_outcome: ["backup"],
       building_type: ["detached_house"],
-      everyday_needs: ["fridge_freezer"],
+      everyday_needs: ["fridge_freezer", "chest_freezer"],
       backup_preference: "most_home",
     });
     const highPower = questions.find((question) => question.id === "heavy_loads");
-    expect(highPower?.options?.map((option) => option.value)).toEqual(expect.arrayContaining(["refrigeration", "chest_freezer"]));
+    expect(highPower?.options?.map((option) => option.value)).toEqual(["refrigeration", "chest_freezer", "none"]);
+  });
+
+  it("adds selected high-power follow-up questions to Needs for an ordinary grid-connected system", () => {
+    const questions = visibleDiscoveryQuestions({
+      utility_relationship: "grid_connected",
+      target_grid_role: "normal_supply",
+      primary_outcome: ["cost"],
+      building_type: ["detached_house"],
+      everyday_needs: ["lighting", "general_outlets", "fridge_freezer", "compressor"],
+      heavy_loads: ["compressor", "refrigeration"],
+    });
+    const everydayIndex = questions.findIndex((question) => question.id === "everyday_needs");
+    const highPowerIndex = questions.findIndex((question) => question.id === "heavy_loads");
+    const ratingsIndex = questions.findIndex((question) => question.id === "household_motor_ratings");
+    const generatorIndex = questions.findIndex((question) => question.id === "generator_requirement");
+    const designIndex = questions.findIndex((question) => question.stage === "design");
+
+    expect(ratingsIndex).toBe(everydayIndex + 1);
+    expect(highPowerIndex).toBe(ratingsIndex + 1);
+    expect(questions[highPowerIndex]).toMatchObject({ stage: "needs" });
+    expect(questions[highPowerIndex].options?.map((option) => option.value)).toEqual(["compressor", "refrigeration", "none"]);
+    expect(questions[ratingsIndex]).toMatchObject({ stage: "needs" });
+    expect(generatorIndex).toBeGreaterThan(ratingsIndex);
+    expect(ratingsIndex).toBeLessThan(designIndex);
+    expect(highPowerIndex).toBeLessThan(designIndex);
+  });
+
+  it("does not invent unselected equipment in the overlap question", () => {
+    const overlap = visibleDiscoveryQuestions({
+      everyday_needs: ["lighting", "general_outlets", "fridge_freezer", "compressor"],
+      cooking_energy: ["electric_oven", "air_fryer", "microwave"],
+      water_heating_energy: ["electric_resistive"],
+      pool_heating_method: ["heat_pump"],
+      building_type: ["shed_workshop"],
+    }).find((question) => question.id === "heavy_loads");
+
+    expect(overlap?.options?.map((option) => option.value)).toEqual(["compressor", "refrigeration", "none"]);
+    expect(overlap?.options?.map((option) => option.label)).toEqual([
+      "Compressor, motor or welder",
+      "Fridge or upright freezer",
+      "None of these overlap",
+    ]);
+  });
+
+  it("keeps EV out of generic appliance ratings and overlap choices", () => {
+    const questions = visibleDiscoveryQuestions({ everyday_needs: ["fridge_freezer", "ev"] });
+    const overlap = questions.find((question) => question.id === "heavy_loads");
+
+    expect(overlap).toBeUndefined();
+  });
+
+  it("condenses the current-EV branch to two Needs pages before Design", () => {
+    const questions = visibleDiscoveryQuestions({ everyday_needs: ["ev"] });
+    const evQuestions = questions.filter((question) => question.id.startsWith("ev_"));
+    const futureIndex = questions.findIndex((question) => question.id === "future_changes");
+
+    expect(evQuestions.map((question) => question.id)).toEqual(["ev_status", "ev_travel_profile"]);
+    expect(evQuestions.every((question) => question.stage === "needs")).toBe(true);
+    expect(Math.max(...evQuestions.map((question) => questions.indexOf(question)))).toBeLessThan(futureIndex);
+  });
+
+  it("skips overlap for one heat pump while retaining its equipment-rating question", () => {
+    const questions = visibleDiscoveryQuestions({
+      utility_relationship: "grid_connected",
+      target_grid_role: "normal_supply",
+      everyday_needs: ["cooling"],
+    });
+    const overlap = questions.find((question) => question.id === "heavy_loads");
+    const rating = questions.find((question) => question.id === "household_motor_ratings");
+
+    expect(overlap).toBeUndefined();
+    expect(rating).toMatchObject({ stage: "needs" });
+    expect(questions.indexOf(rating!)).toBeLessThan(questions.findIndex((question) => question.stage === "design"));
+  });
+
+  it("shows overlap only when at least two eligible day-to-day loads are selected", () => {
+    const oneLoad = visibleDiscoveryQuestions({ everyday_needs: ["fridge_freezer"] });
+    const twoLoads = visibleDiscoveryQuestions({ everyday_needs: ["fridge_freezer", "water_pump"] });
+
+    expect(oneLoad.some((question) => question.id === "heavy_loads")).toBe(false);
+    expect(twoLoads.find((question) => question.id === "heavy_loads")?.options?.map((option) => option.value)).toEqual([
+      "water_pump",
+      "refrigeration",
+      "none",
+    ]);
+  });
+
+  it("shows the equipment-rating page directly from day-to-day high-power selections", () => {
+    const questions = visibleDiscoveryQuestions({
+      everyday_needs: ["water_pump", "tools", "compressor"],
+    });
+    const everydayIndex = questions.findIndex((question) => question.id === "everyday_needs");
+    const ratingsIndex = questions.findIndex((question) => question.id === "household_motor_ratings");
+    const overlapIndex = questions.findIndex((question) => question.id === "heavy_loads");
+
+    expect(ratingsIndex).toBe(everydayIndex + 1);
+    expect(overlapIndex).toBe(ratingsIndex + 1);
   });
 
   it("collects seasonal shade detail only when shade is recorded", () => {
@@ -165,5 +274,44 @@ describe("new-system discovery", () => {
 
     expect(questions.some((question) => question.id === "heavy_loads")).toBe(false);
     expect(questions.some((question) => question.id === "ev_status")).toBe(false);
+  });
+
+  it("offers future space heating or cooling separately from water and pool heating", () => {
+    const futureChanges = visibleDiscoveryQuestions({}).find((question) => question.id === "future_changes");
+    expect(futureChanges?.options).toEqual(expect.arrayContaining([
+      expect.objectContaining({ value: "heat_pump_ac", label: "Heat pump or air conditioning" }),
+      expect.objectContaining({ value: "electric_hot_water" }),
+      expect.objectContaining({ value: "heated_pool" }),
+    ]));
+  });
+
+  it("uses existing inverter and controller capture as a fallback before battery discovery", () => {
+    const withoutEquipment = visibleDiscoveryQuestions({ existing_power_equipment_status: "no" }).map((question) => question.id);
+    expect(withoutEquipment).toContain("existing_power_equipment_status");
+    expect(withoutEquipment).not.toContain("existing_power_equipment");
+
+    const withEquipment = visibleDiscoveryQuestions({ utility_relationship: "off_grid", existing_power_equipment_status: "yes" }).map((question) => question.id);
+    expect(withEquipment.indexOf("existing_power_equipment_status")).toBeLessThan(withEquipment.indexOf("existing_power_equipment"));
+    expect(withEquipment.indexOf("existing_power_equipment")).toBeLessThan(withEquipment.indexOf("battery_requirement"));
+  });
+
+  it("uses simple EV size selections instead of technical vehicle inputs", () => {
+    expect(evVehicleSizeOptions.map((option) => option.value)).toEqual(["small", "medium", "large"]);
+  });
+
+  it("derives the EV capacity from vehicle size, daily driving and charging habit", () => {
+    expect(evPlanningPowerBand({ ev_vehicle_size: "small", ev_travel_profile: "short", ev_charging_window: ["overnight"] })).toBe("up_to_3_6_kw");
+    expect(evPlanningPowerBand({ ev_vehicle_size: "large", ev_travel_profile: "long", ev_charging_window: ["daytime"] })).toBe("3_7_to_7_4_kw");
+    expect(evPlanningPowerBand({ ev_travel_profile: "short", ev_charging_window: ["overnight"] })).toBeUndefined();
+  });
+
+  it("collects normal EV driving as a firm distance-band selection", () => {
+    const question = visibleDiscoveryQuestions({ everyday_needs: ["ev"] }).find((item) => item.id === "ev_travel_profile");
+    expect(question).toMatchObject({ type: "choice" });
+    expect(question?.options?.map((option) => option.value)).toEqual([
+      "short",
+      "average",
+      "long",
+    ]);
   });
 });
