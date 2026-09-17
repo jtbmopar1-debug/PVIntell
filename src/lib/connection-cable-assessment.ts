@@ -4,7 +4,9 @@ export function cableAreaMm2(value: string) {
   const awgToken = value.match(/\b(?:[1-4]\s*\/\s*0|0{1,4}|(?:one|two|three|four)[- ]?(?:aught|ought)|\d{1,2})\s*(?:AWG|gauge|G)\b/i)?.[0];
   const awg = normaliseAwgAlias(awgToken ?? value);
   if (awg) return awg.areaMm2;
-  const metric = value.match(/\b(\d+(?:\.\d+)?)\s*mm(?:²|2)(?![\p{L}\p{N}])/iu);
+  // This field explicitly asks for cable size, and metric conductor area is
+  // commonly entered as "4 mm" as well as "4 mm²" or "4 mm2".
+  const metric = value.match(/\b(\d+(?:\.\d+)?)\s*mm(?:²|2)?(?![\p{L}\p{N}])/iu);
   return metric ? Number(metric[1]) : undefined;
 }
 

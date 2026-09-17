@@ -116,7 +116,8 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
       steps.unshift({ title: legacyName ? `Continue System Build — ${legacyName}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: "/discovery/new-system", kind: "continue" });
     }
     systems.filter((system) => resumeHrefs[system.id]).reverse().forEach((system) => {
-      steps.unshift({ title: `Continue System Build — ${system.name}`, detail: "Return to this proposal's saved discovery, design or build stage.", href: resumeHrefs[system.id], kind: "continue" });
+      const proposedPlan = system.workflowOrigin === "proposed-plan";
+      steps.unshift({ title: proposedPlan ? `Proposed Plan - ${system.name}` : `Continue System Build — ${system.name}`, detail: proposedPlan ? "Return to this saved proposed plan and edit its equipment or specifications." : "Return to this proposal's saved discovery, design or build stage.", href: resumeHrefs[system.id], kind: proposedPlan ? "planned" : "continue" });
     });
     steps.push({ title: "I already have a proposed plan", detail: "Specify the panels, arrays, inverter, battery, generator and other equipment you want, then build the proposed schematic.", href: `/proposals/new${selectedSite ? `?site=${selectedSite.id}` : ""}`, kind: "planned" });
     steps.push({ title: steps.length ? "Build another system for me" : "Build a system for me", detail: "Have a full system layout designed for your needs.", href: "/discovery/new-system?new=1", kind: "new" });

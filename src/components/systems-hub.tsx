@@ -19,6 +19,7 @@ const operationalPhases = new Set(["monitor", "diagnose", "maintain", "explain"]
 
 function actionHref(system: SystemSummary, action: string) {
   const root = `/sites/${system.siteId}/systems/${system.id}`;
+  if (action === "proposed-plan") return `/proposals/new?site=${system.siteId}&system=${system.id}`;
   if (action === "schematic") return `${root}/schematic`;
   if (action === "design") return `${root}/design`;
   if (action === "proposed-schematic") return `${root}/schematic`;
@@ -39,6 +40,16 @@ const installedActions = [
 const discoveryActions = [
   ["setup", "Discovery", "Needs, site constraints and known equipment.", FileSearch],
   ["design", "System Overview", "Discovery-prefilled sizing and planning numbers.", Ruler],
+  ["proposed-schematic", "System schematic", "The working proposal and component centrepoint.", Network],
+  ["build", "Build It", "Installation guidance, routes and records.", Wrench],
+  ["shopping-list", "Shopping List", "Products, quantities and acquired items.", ShoppingCart],
+  ["commission", "Startup & Handover", "Initial operation, settings and supplied records.", ClipboardCheck],
+  ["financials", "Financials", "Costs, purchases, rebates and buy-back.", WalletCards],
+] as const;
+
+const proposedPlanActions = [
+  ["proposed-plan", "Proposed Plan", "Edit the equipment and specifications entered for this proposal.", FileSearch],
+  ["design", "System Overview", "Proposal sizing and planning numbers.", Ruler],
   ["proposed-schematic", "System schematic", "The working proposal and component centrepoint.", Network],
   ["build", "Build It", "Installation guidance, routes and records.", Wrench],
   ["shopping-list", "Shopping List", "Products, quantities and acquired items.", ShoppingCart],
@@ -140,14 +151,15 @@ export function SystemsHub({ sites, systems, drafts, selectedSiteId, defaultSyst
           const installed = !proposed && operationalPhases.has(system.phase);
           const awaitingConfirmation = system.statusUnconfirmed || system.phase === "check";
           const installedStyle = installed || (!proposed && awaitingConfirmation);
-          const actions = installedStyle ? installedActions : discoveryActions;
+          const proposedPlan = system.workflowOrigin === "proposed-plan";
+          const actions = installedStyle ? installedActions : proposedPlan ? proposedPlanActions : discoveryActions;
           return <article key={system.id} className="card overflow-hidden">
             <div className={`flex flex-wrap items-center justify-between gap-2 border-b border-line p-3 ${installed ? "bg-[linear-gradient(105deg,#eef7f2,#ffffff)]" : awaitingConfirmation || proposed ? "bg-[linear-gradient(105deg,#fff6cf,#ffffff)]" : "bg-[linear-gradient(105deg,#eef5fc,#ffffff)]"}`}>
               <div className="flex items-center gap-3"><span className={`grid size-11 place-items-center rounded-2xl ${installed ? "bg-[#dff3e8] text-[#20724b]" : awaitingConfirmation || proposed ? "bg-[#fff0a9] text-brand" : "bg-[#eaf2fb] text-brand"}`}>{installed ? <Activity size={20}/> : <Sparkles size={20}/>}</span><div><div className="flex items-center gap-2"><h2 className="font-display text-lg font-extrabold">{system.name}</h2><button type="button" onClick={() => void renameSystem(system)} className="grid size-7 place-items-center rounded-lg border border-line bg-white text-brand" aria-label={`Rename ${system.name}`}><Pencil size={12}/></button></div><p className="mt-1 text-[10px] font-bold uppercase tracking-[.1em] text-muted">{proposed ? "Proposed · not installed" : awaitingConfirmation ? "Installed details unconfirmed" : installed ? "Installed · commissioned" : `Discovery/design · ${system.phase}`} · {system.gridRelationshipUnconfirmed ? "Grid relationship TBC" : system.projectType}</p></div></div>
               <div className="flex flex-wrap items-center justify-end gap-2"><label className="flex min-h-8 cursor-pointer items-center gap-2 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-muted"><input type="radio" name="dashboard-default-system" checked={dashboardDefaultSystemId === system.id} disabled={savingDefault} onChange={() => void setDashboardDefault(system.id)} className="size-3.5 accent-[#1768a6]"/>Dashboard default</label><Link href={actionHref(system, installedStyle ? "overview" : system.phase === "discover" ? "setup" : "proposed-schematic")} className="flex items-center gap-2 text-[11px] font-bold text-brand">Open system <ArrowRight size={14}/></Link><button type="button" onClick={() => void remove("system", system.id, system.name)} className="grid size-8 place-items-center rounded-lg border border-[#e7b7af] text-[#a7442d]" aria-label={`Delete ${system.name}`}><Trash2 size={14}/></button></div>
             </div>
             <div className={`grid gap-2 p-2 sm:grid-cols-2 ${installedStyle ? "lg:grid-cols-5" : "lg:grid-cols-3"}`}>
-              {actions.map(([id, title, detail, Icon]) => { const complete = system.completedAreas?.includes(id) || (id === "build" && locallyCompletedBuilds[system.id]); return <Link key={id} href={actionHref(system, id)} className={`group flex min-h-14 items-center gap-2.5 rounded-lg border px-2.5 py-2 ${complete ? "border-[#9bd2ad] bg-[#f2fbf5]" : "border-line bg-white hover:border-[#8ab0d2] hover:bg-[#f8fbfe]"}`}><span className={`grid size-8 shrink-0 place-items-center rounded-lg ${complete ? "bg-[#dff3e8] text-[#17603b]" : "bg-[#eaf2fb] text-brand"}`}>{complete ? <CheckCircle2 size={16}/> : <Icon size={15}/>}</span><span className="min-w-0"><strong className="block text-[11px] leading-4">{title}</strong><span className="block truncate text-[9px] leading-4 text-muted">{complete ? "Complete" : detail}</span></span><ArrowRight size={12} className="ml-auto shrink-0 text-[#9aabba] group-hover:text-brand"/></Link>; })}
+              {actions.map(([id, title, detail, Icon]) => { const complete = system.completedAreas?.includes(id) || (id === "build" && locallyCompletedBuilds[system.id]); const proposalTile = id === "proposed-plan"; return <Link key={id} href={actionHref(system, id)} className={`group flex min-h-14 items-center gap-2.5 rounded-lg border px-2.5 py-2 ${complete ? "border-[#9bd2ad] bg-[#f2fbf5]" : proposalTile ? "border-[#e5b92e] bg-[#fff6cf] hover:bg-[#fff0a9]" : "border-line bg-white hover:border-[#8ab0d2] hover:bg-[#f8fbfe]"}`}><span className={`grid size-8 shrink-0 place-items-center rounded-lg ${complete ? "bg-[#dff3e8] text-[#17603b]" : proposalTile ? "bg-[#ffe783] text-brand" : "bg-[#eaf2fb] text-brand"}`}>{complete ? <CheckCircle2 size={16}/> : <Icon size={15}/>}</span><span className="min-w-0"><strong className="block text-[11px] leading-4">{title}</strong><span className="block truncate text-[9px] leading-4 text-muted">{complete ? "Complete" : detail}</span></span><ArrowRight size={12} className="ml-auto shrink-0 text-[#9aabba] group-hover:text-brand"/></Link>; })}
             </div>
           </article>;
         })}

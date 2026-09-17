@@ -10,6 +10,13 @@ describe("connection cable compatibility", () => {
     expect(cableAreaMm2("4/0 AWG flexible battery cable")).toBe(107.2);
   });
 
+  it("accepts common metric conductor-area shorthand", () => {
+    expect(cableAreaMm2("4mm")).toBe(4);
+    expect(cableAreaMm2("4 mm")).toBe(4);
+    expect(cableAreaMm2("4 mm2 PV cable")).toBe(4);
+    expect(cableAreaMm2("4 mm² PV cable")).toBe(4);
+  });
+
   it("flags a recorded cable below an endpoint requirement", () => {
     expect(assessCableAgainstEndpoints("0 AWG", [{ display_name: "10 kW inverter", specifications: { "Minimum battery cable": "95 mm²" } }])).toContain("below the 95 mm² minimum");
   });

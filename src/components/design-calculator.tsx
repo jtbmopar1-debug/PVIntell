@@ -1510,7 +1510,7 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
     setGuidanceRequest({
       id: Date.now(),
       displayMessage: "What’s next?",
-      message: "What is the next smallest action to complete this proposed system safely? Reply as a short working checklist, not a report. Start with **Do this now:** and give one clear action such as confirm a panel model, check inverter limits, size the generator, or complete a connection record. Then give at most two later actions. Use plain language. Do not list the whole system, raw electrical calculations, lifecycle background, URLs, or standards unless they are essential to the immediate action. Reassess the saved record every time this button is clicked. Do not treat proposed equipment as purchased, installed, confirmed, or commissioned.",
+      message: "What is the next smallest action to complete this proposed system safely? Reply as a short working checklist, not a report. Start with **Okay, next we can:** and suggest one clear action such as confirming a panel model, checking inverter limits, sizing the generator, or completing a connection record. Then suggest at most two later actions. Use collaborative language, not commands. Use plain language. Do not list the whole system, raw electrical calculations, lifecycle background, URLs, or standards unless they are essential to the immediate action. Reassess the saved record every time this button is clicked. Do not treat proposed equipment as purchased, installed, confirmed, or commissioned.",
     });
     setWattsonOpen(true);
   };

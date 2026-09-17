@@ -424,9 +424,10 @@ function ConnectionPath({
           <button
             type="button"
             onClick={() => onOpen(connection)}
-            className={`h-7 w-full rounded-full border bg-white px-2 text-[8px] font-extrabold shadow-sm ${connection.unconfirmed ? "border-dashed text-muted" : isAc ? "border-[#e4bd62] text-[#93630a]" : "border-[#8db4d8] text-brand"}`}
+            title={connection.unconfirmed ? `Configure ${connection.label}` : connection.label}
+            className={`h-7 w-full rounded-full border px-2 text-[8px] font-extrabold shadow-sm ${connection.unconfirmed ? "border-[#d94a3a] bg-[#fff1ee] text-[#a52f22]" : isAc ? "border-[#e4bd62] bg-white text-[#93630a]" : "border-[#8db4d8] bg-white text-brand"}`}
           >
-            {connection.label}
+            {connection.unconfirmed ? "Configure" : connection.label}
           </button>
         </foreignObject>
       )}
@@ -593,7 +594,7 @@ export function SystemSchematic({
     setGuidanceRequest({
       id: Date.now(),
       displayMessage: "What’s next?",
-      message: "What is the next smallest action to complete this system safely? Reply as a short working checklist, not a report. Start with **Do this now:** and give one clear action such as confirm a panel model, check inverter limits, size the generator, or complete a connection record. Then give at most two later actions. Use plain language. Do not list the whole system, raw electrical calculations, lifecycle background, URLs, or standards unless they are essential to the immediate action. Reassess the saved record every time this button is clicked. Do not mark anything installed, confirmed, or commissioned unless the records prove it.",
+      message: "What is the next smallest action to complete this system safely? Reply as a short working checklist, not a report. Start with **Okay, next we can:** and suggest one clear action such as confirming a panel model, checking inverter limits, sizing the generator, or completing a connection record. Then suggest at most two later actions. Use collaborative language, not commands. Use plain language. Do not list the whole system, raw electrical calculations, lifecycle background, URLs, or standards unless they are essential to the immediate action. Reassess the saved record every time this button is clicked. Do not mark anything installed, confirmed, or commissioned unless the records prove it.",
     });
     setWattsonOpen(true);
   };
@@ -1583,7 +1584,7 @@ export function SystemSchematic({
                   connection={connection}
                   positions={displayPositions}
                   onOpen={openConnectionEditor}
-                  showLabel={showConnectionLabels}
+                  showLabel={showConnectionLabels || connection.unconfirmed === true}
                   laneOffset={laneOffset}
                 />
                 );

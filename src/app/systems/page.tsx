@@ -27,7 +27,13 @@ export default async function SystemsPage({ searchParams }: { searchParams: Prom
     if (reviewableComponents.length > 0 && reviewableComponents.every((node) => node.reviewed === true)) completedAreas.push("design");
     if (settings.designCalculator?.proposedChecklist?.["proposed-schematic"]) completedAreas.push("proposed-schematic");
     const wattsonProposal = settings.systemStatus === "proposed" || settings.schematicOrigin === "wattson_conceptual" || settings.schematicOrigin === "wattson_proposal";
-    return { id: system.id, siteId: system.site_id, name: system.name, projectType: String(system.mode).replace("_", "-") as SystemSummary["projectType"], phase: system.phase as SystemSummary["phase"], completedAreas, statusUnconfirmed: !wattsonProposal && settings.systemStatus === "unconfirmed", statusProposed: wattsonProposal, gridRelationshipUnconfirmed: settings.gridRelationship === "unconfirmed" };
+    const workflowOrigin: SystemSummary["workflowOrigin"] = settings.schematicOrigin === "structured_proposal_intake"
+      ? "proposed-plan"
+      : settings.systemStatus === "unconfirmed"
+        ? "system-capture"
+        : "discovery";
+    if (workflowOrigin === "proposed-plan") completedAreas.push("proposed-plan");
+    return { id: system.id, siteId: system.site_id, name: system.name, projectType: String(system.mode).replace("_", "-") as SystemSummary["projectType"], phase: system.phase as SystemSummary["phase"], completedAreas, statusUnconfirmed: !wattsonProposal && settings.systemStatus === "unconfirmed", statusProposed: wattsonProposal || workflowOrigin === "proposed-plan", workflowOrigin, gridRelationshipUnconfirmed: settings.gridRelationship === "unconfirmed" };
   });
   const drafts = (draftRows.data ?? []).map((draft) => { const answers = (draft.answers ?? {}) as Record<string, unknown>; return { id: draft.id, siteId: typeof answers.site_id === "string" ? answers.site_id : undefined, name: typeof answers.system_name === "string" && answers.system_name.trim() ? answers.system_name.trim() : "New system", status: draft.status, questionId: draft.question_id }; });
   return <SystemsHub sites={sites} systems={systems} drafts={drafts} selectedSiteId={query.site ?? profile.data.dashboard_default_site_id ?? undefined} defaultSystemId={profile.data.dashboard_default_system_id ?? undefined}/>;

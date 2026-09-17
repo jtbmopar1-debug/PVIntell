@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Send, X } from "lucide-react";
+import { Bot, CheckCircle2, ImagePlus, Send, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
@@ -25,6 +25,7 @@ export function SchematicWattsonChat({
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [messages, setMessages] = useState(initialMessages);
   const [input, setInput] = useState("");
+  const [attachment, setAttachment] = useState<File>();
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const handledGuidanceRequestRef = useRef<number | undefined>(undefined);
@@ -38,33 +39,30 @@ export function SchematicWattsonChat({
     const guidanceContext = isGuidanceShortcut ? messageOverride.trim() : undefined;
     const message = (isGuidanceShortcut
       ? displayMessage || "Help me with this system"
-      : input).trim();
+      : input || (attachment ? "Please use this image as evidence for this system and schematic." : "")).trim();
     if (!message || sending) return;
     const visibleMessage = displayMessage === undefined ? message : displayMessage;
     if (visibleMessage) {
       setMessages((current) => [...current, {
         id: crypto.randomUUID(),
         role: "user",
-        content: visibleMessage,
+        content: `${visibleMessage}${attachment ? `\n\n[Attached image: ${attachment.name}]` : ""}`,
         createdAt: new Date().toISOString(),
       }]);
     }
     if (!messageOverride) setInput("");
     setSending(true);
     try {
-      const response = await fetch("/api/wattson", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          message,
-          guidanceContext: displayMessage === undefined ? undefined : guidanceContext,
-          projectId: project.id,
-          project,
-          conversationId,
-          requestId: crypto.randomUUID(),
-          surface: "schematic",
-        }),
-      });
+      const request = new FormData();
+      request.set("message", message);
+      request.set("projectId", project.id);
+      request.set("project", JSON.stringify(project));
+      request.set("requestId", crypto.randomUUID());
+      request.set("surface", "schematic");
+      if (guidanceContext && displayMessage !== undefined) request.set("guidanceContext", guidanceContext);
+      if (conversationId) request.set("conversationId", conversationId);
+      if (attachment) request.set("file", attachment);
+      const response = await fetch("/api/wattson", { method: "POST", body: request });
       const body = await response.json();
       if (typeof body.conversationId === "string") setConversationId(body.conversationId);
       if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
@@ -78,6 +76,7 @@ export function SchematicWattsonChat({
         createdAt: new Date().toISOString(),
       }]);
       if (body.actions?.length) router.refresh();
+      setAttachment(undefined);
     } catch (problem) {
       setMessages((current) => [...current, {
         id: crypto.randomUUID(),
@@ -111,9 +110,9 @@ export function SchematicWattsonChat({
         {sending ? <p className="text-xs font-semibold text-muted">Wattson is checking the schematic…</p> : null}
         <div ref={bottomRef}/>
       </div>
-      <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="flex items-end gap-2 border-t border-line bg-white p-3">
-        <textarea autoFocus value={input} onChange={(event) => setInput(event.target.value)} rows={4} placeholder="Tell Wattson what to change…" className="field mt-0 min-h-24 max-h-48 flex-1 resize-y py-3 text-sm leading-5"/>
-        <button disabled={!input.trim() || sending} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send to Wattson"><Send size={17}/></button>
+      <form onSubmit={(event) => { event.preventDefault(); void send(); }} className="border-t border-line bg-white p-3">
+        {attachment ? <div className="mb-2 flex items-center gap-2 rounded-xl border border-[#9bd2ad] bg-[#f2fbf5] px-3 py-2 text-xs font-semibold text-[#17603b]" role="status"><CheckCircle2 size={16}/><span className="min-w-0 flex-1"><strong className="block">Photo attached - ready to send</strong><span className="block truncate text-[10px] font-normal text-muted">{attachment.name}</span></span><button type="button" onClick={() => setAttachment(undefined)} className="grid size-7 place-items-center rounded-lg hover:bg-white" aria-label="Remove attached image"><X size={14}/></button></div> : null}
+        <div className="flex items-end gap-2"><label className="grid size-11 shrink-0 cursor-pointer place-items-center rounded-xl border border-line bg-white text-brand" title="Add a photo from your camera, gallery or files" aria-label="Add a photo from your camera, gallery or files"><ImagePlus size={18}/><input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={sending} onChange={(event) => setAttachment(event.target.files?.[0])}/></label><textarea autoFocus value={input} onChange={(event) => setInput(event.target.value)} rows={4} placeholder="Tell Wattson what to change…" className="field mt-0 min-h-24 max-h-48 flex-1 resize-y py-3 text-sm leading-5"/><button disabled={(!input.trim() && !attachment) || sending} className="grid size-11 shrink-0 place-items-center rounded-xl bg-brand text-white disabled:opacity-40" aria-label="Send to Wattson"><Send size={17}/></button></div>
       </form>
     </section>
   );

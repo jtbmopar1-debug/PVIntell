@@ -1,7 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { registerGalleryImage } from "@/gallery/register";
+import { z } from "zod";
 
 const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+const renameSchema = z.object({ id: z.string().uuid(), fileName: z.string().trim().min(1).max(120) });
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -37,4 +39,16 @@ export async function DELETE(request: Request) {
   const deleted = await supabase.from("user_gallery_images").delete().eq("id", id).eq("owner_id", userId);
   if (deleted.error) return Response.json({ error: deleted.error.message }, { status: 400 });
   return Response.json({ deleted: true });
+}
+
+export async function PATCH(request: Request) {
+  const parsed = renameSchema.safeParse(await request.json());
+  if (!parsed.success) return Response.json({ error: "Enter an image name up to 120 characters." }, { status: 400 });
+  const supabase = await createClient();
+  const claims = await supabase.auth.getClaims();
+  const userId = claims.data?.claims?.sub;
+  if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const updated = await supabase.from("user_gallery_images").update({ file_name: parsed.data.fileName }).eq("id", parsed.data.id).eq("owner_id", userId).select("id,file_name").maybeSingle();
+  if (updated.error || !updated.data) return Response.json({ error: updated.error?.message ?? "Image not found." }, { status: updated.error ? 400 : 404 });
+  return Response.json({ image: { id: updated.data.id, fileName: updated.data.file_name } });
 }

@@ -32,6 +32,7 @@ export interface SystemSummary {
   completedAreas?: string[];
   statusUnconfirmed?: boolean;
   statusProposed?: boolean;
+  workflowOrigin?: "discovery" | "proposed-plan" | "system-capture";
   gridRelationshipUnconfirmed?: boolean;
 }
 
