@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { classifyWattsonRequest, visibleGeminiMessage, WATTSON_FOLLOWUP_POLICY, WATTSON_REGULATION_POLICY, wattsonAudienceInstruction } from "./gemini";
+import { classifyWattsonRequest, INVERTER_PHASE_TOPOLOGY_POLICY, visibleGeminiMessage, WATTSON_FOLLOWUP_POLICY, WATTSON_REGULATION_POLICY, wattsonAudienceInstruction } from "./gemini";
+
+describe("Wattson inverter phase knowledge", () => {
+  it("flags two-phase Site and three-phase inverter arrangements without making them a routine form question", () => {
+    expect(INVERTER_PHASE_TOPOLOGY_POLICY).toContain("two active phases");
+    expect(INVERTER_PHASE_TOPOLOGY_POLICY).toContain("three-phase inverter remains three-phase hardware");
+    expect(INVERTER_PHASE_TOPOLOGY_POLICY).toContain("two-thirds");
+    expect(INVERTER_PHASE_TOPOLOGY_POLICY).toContain("ask one plain-language question");
+    expect(INVERTER_PHASE_TOPOLOGY_POLICY).toContain("Do not turn this into a routine form question");
+  });
+});
 
 describe("Gemini visible response parsing", () => {
   it("uses model-output text when the top-level output is blank", () => {

@@ -193,6 +193,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
       const proposalQuery = new URLSearchParams({ from: "discovery" });
       if (selectedSiteId) proposalQuery.set("site", selectedSiteId);
       if (discoveryDraftId) proposalQuery.set("draft", discoveryDraftId);
+      if (existingSystemId) proposalQuery.set("system", existingSystemId);
       router.push(`/proposals/new?${proposalQuery.toString()}`);
       return;
     }
