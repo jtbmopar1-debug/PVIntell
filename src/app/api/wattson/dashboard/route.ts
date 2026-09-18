@@ -21,6 +21,7 @@ import {
   removeAnsweredWattsonQuestions,
 } from "@/ai/conversation-state";
 import { actionsAllowedByDecision, consumeConfirmedPendingAction, pendingActionRequests, routeWattsonTurn } from "@/ai/conversation-router";
+import { wattsonErrorDetail } from "@/ai/error-detail";
 import { cachedConversationResponse, startedConversationRequest } from "@/ai/conversation-request";
 import { attachImageToRecord, requestsExistingRecordAttachment, resolveRecordAttachmentTarget, type RecordAttachmentTarget } from "@/ai/record-attachment";
 import { systemConfirmationReadiness } from "@/lib/system-confirmation-readiness";
@@ -508,7 +509,7 @@ export async function POST(request: Request) {
       if (saved.error) throw saved.error;
       return Response.json({ message: responseMessage, actions: [{ type: "workspace_created", summary: "Created conceptual schematic" }], conversationId, schematicId: createdSystemId, actionUrl: schematicUrl, actionLabel: "Open schematic" });
     } catch (problem) {
-      const detail = problem instanceof Error ? problem.message : problem && typeof problem === "object" && "message" in problem ? String(problem.message) : "Unknown schematic creation error";
+      const detail = wattsonErrorDetail(problem);
       if (createdSystemByRequest && createdSystemId) await supabase.from("projects").delete().eq("id", createdSystemId).eq("owner_id", userId);
       else {
         if (createdConnectionIds.length) await supabase.from("system_connections").delete().in("id", createdConnectionIds);
@@ -554,7 +555,7 @@ export async function POST(request: Request) {
             }
           : {
               ...system,
-              conversationRelationship: conversationState.activeSubject?.systemId === system.id
+              conversationRelationship: conversationState.activeSubject?.systemId === system.id || selectedConversation.data?.project_id === system.id
                 ? "explicitly-associated-with-active-subject"
                 : "retrieved-record-not-associated-with-active-subject",
             }),
@@ -564,7 +565,14 @@ export async function POST(request: Request) {
       allowActions: routeDecision.mutationConsent && !inventoryCapture?.saved,
     });
     const activeSubjectIsUnassociated = conversationState.activeSubject?.association === "unassociated";
-    const dashboardTargetIsExplicit = Boolean(parsed.data.projectId) && !activeSubjectIsUnassociated;
+    // A system-scoped conversation is already an explicit target. Requiring
+    // every follow-up request to repeat projectId caused valid mutations to be
+    // discarded whenever the Site contained more than one system.
+    const contextualProjectId = parsed.data.projectId
+      ?? conversationState.activeSubject?.systemId
+      ?? selectedConversation.data?.project_id
+      ?? undefined;
+    const dashboardTargetIsExplicit = Boolean(contextualProjectId && systemIds.includes(contextualProjectId)) && !activeSubjectIsUnassociated;
     const dashboardTargetIsAmbiguous = !dashboardTargetIsExplicit && (connectedSystems.length > 1 || activeSubjectIsUnassociated);
     const componentReplacementRequested = /\breplace\b[\s\S]{0,120}\b(?:equipment|components?|batter(?:y|ies)|inverters?|panels?|controllers?|generators?)\b|\b(?:equipment|components?|batter(?:y|ies)|inverters?|panels?|controllers?|generators?)\b[\s\S]{0,120}\breplace\b/i.test(parsed.data.message);
     const ownedSystemIds = new Set(systemIds);
@@ -824,6 +832,6 @@ export async function POST(request: Request) {
       inventoryEquipmentId: inventoryCapture?.equipmentId,
     });
   } catch (problem) {
-    return Response.json({ error: problem instanceof Error ? problem.message : "Wattson is unavailable.", conversationId, retryable: true }, { status: 502 });
+    return Response.json({ error: `Wattson could not complete that request: ${wattsonErrorDetail(problem)}`, conversationId, retryable: true }, { status: 502 });
   }
 }

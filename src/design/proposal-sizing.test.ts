@@ -70,7 +70,7 @@ describe("deterministic proposal sizing", () => {
         pool_equipment_ratings: JSON.stringify({ filtration_pump: { quantity: 1, runningKw: 1.2, startingKw: 3.6, runtimeMinutesPerDay: 480, simultaneous: true } }),
       },
     });
-    expect(result).toMatchObject({ dailyEnergyKwh: 9.6, dailyEnergySource: "pool_equipment_schedule", panelCount: 8, pvKw: 3.68, inverterKw: 4 });
+    expect(result).toMatchObject({ dailyEnergyKwh: 9.6, dailyEnergySource: "pool_equipment_schedule", energyTargetPanelCount: 8, panelCount: 10, pvKw: 4.6, inverterKw: 4 });
   });
 
   it("sizes a grid-tied solar-first pool proposal for its overlapping daylight loads", () => {
@@ -94,9 +94,10 @@ describe("deterministic proposal sizing", () => {
       dailyEnergySource: "pool_equipment_schedule",
       directSolarLoadKw: 3.64,
       startupPeakKw: 7.64,
-      panelCount: 10,
-      pvKw: 4.5,
-      inverterKw: 4,
+      energyTargetPanelCount: 10,
+      panelCount: 12,
+      pvKw: 5.4,
+      inverterKw: 5,
     });
     expect(result.simultaneousLoadKw).toBeCloseTo(3.64);
   });
@@ -170,13 +171,16 @@ describe("deterministic proposal sizing", () => {
     expect(result).toMatchObject({
       method: "deterministic-v1",
       dailyEnergySource: "current_energy_use",
-      pvKw: 9.24,
-      panelCount: 21,
+      energyTargetPvKw: 8.81,
+      energyTargetPanelCount: 21,
+      pvKw: 11,
+      panelCount: 25,
       panelWatts: 440,
-      inverterKw: 8,
+      inverterKw: 10,
       simultaneousLoadKw: 4.6,
       startupPeakKw: 7.6,
-      batteryUsableKwh: 17.8,
+      calculatedBatteryUsableKwh: 17.8,
+      batteryUsableKwh: 21.4,
       batteryOnlyDays: .6,
     });
     expect(result.pvKw).toBe(result.panelCount! * result.panelWatts! / 1000);
@@ -211,7 +215,8 @@ describe("deterministic proposal sizing", () => {
       },
     });
 
-    expect(result.panelCount).toBe(7);
+    expect(result.energyTargetPanelCount).toBe(7);
+    expect(result.panelCount).toBe(8);
     expect(result.warnings).toContain("Some local shade is recorded (morning, afternoon; winter; under quarter). No numerical shade loss has been applied; production remains unverified until the affected mounting areas are assessed by time of day and season.");
   });
 
@@ -308,8 +313,9 @@ describe("deterministic proposal sizing", () => {
       representativePanelWatts: 440,
       discovery: { ...wholeHomeDiscovery, backup_preference: { value: "essentials_only" }, backup_duration: { value: "overnight" } },
     });
-    expect(result.batteryUsableKwh).toBe(5.9);
-    expect(result.inverterKw).toBe(8);
+    expect(result.calculatedBatteryUsableKwh).toBe(5.9);
+    expect(result.batteryUsableKwh).toBe(7.1);
+    expect(result.inverterKw).toBe(10);
     expect(result.warnings).toContain("Essentials-only storage uses a 40% daily-energy planning allowance; replace it with the backed-up circuit energy profile.");
   });
 
@@ -325,7 +331,8 @@ describe("deterministic proposal sizing", () => {
     });
     expect(result.pvKw).toBeDefined();
     expect(result.inverterKw).toBeDefined();
-    expect(result.batteryUsableKwh).toBe(11.8);
+    expect(result.calculatedBatteryUsableKwh).toBe(11.8);
+    expect(result.batteryUsableKwh).toBe(14.2);
     expect(result.warnings).toContain("Grid-connected storage uses a 40% daily-energy shifting allowance; replace it with interval load and tariff objectives.");
   });
 
@@ -359,9 +366,11 @@ describe("deterministic proposal sizing", () => {
       },
     });
     expect(result).toMatchObject({
-      panelCount: 17,
-      pvKw: 7.82,
-      batteryUsableKwh: 14.5,
+      energyTargetPanelCount: 17,
+      panelCount: 20,
+      pvKw: 9.2,
+      calculatedBatteryUsableKwh: 14.5,
+      batteryUsableKwh: 17.4,
       batterySizingBasis: "solar_assisted_typical_winter",
       assumedNonSolarLoadKwh: 14.5,
       weakestMonthPvKwh: 12.9,
@@ -390,7 +399,7 @@ describe("deterministic proposal sizing", () => {
       panelCount: 18,
       pvKw: 8.28,
       weakestMonthPvKwh: 13.7,
-      inverterKw: 8,
+      inverterKw: 10,
     });
   });
 
@@ -405,7 +414,7 @@ describe("deterministic proposal sizing", () => {
         household_motor_ratings: { value: JSON.stringify({ pump: { runningKw: 1, startingKw: 3, simultaneous: true } }) },
       },
     });
-    expect(result).toMatchObject({ pvKw: 4, panelCount: 8, batteryUsableKwh: 10, batteryOnlyDays: 1, inverterKw: 4 });
+    expect(result).toMatchObject({ energyTargetPanelCount: 8, pvKw: 4.5, panelCount: 9, calculatedBatteryUsableKwh: 10, batteryUsableKwh: 12, batteryOnlyDays: 1, inverterKw: 5 });
   });
 
   it("caps the annual-energy target at the recorded usable panel-area capacity", () => {

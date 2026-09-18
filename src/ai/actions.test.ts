@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { PROPOSAL_ENGINE_VERSION, generatorPlanningTargets, reconcileStoredProposal, refreshProposalAfterSizingInput, validatePreliminarySizing } from "./actions";
+import { PROPOSAL_ENGINE_VERSION, generatorPlanningTargets, planReplacementConnectionMerge, reconcileStoredProposal, refreshProposalAfterSizingInput, validatePreliminarySizing } from "./actions";
+
+describe("component replacement connection merge", () => {
+  it("moves unique wiring and removes duplicate or self-referencing connections", () => {
+    expect(planReplacementConnectionMerge([
+      { id: "battery-kept", source_ref: "component:battery", target_ref: "component:old-1" },
+      { id: "battery-duplicate", source_ref: "component:battery", target_ref: "component:old-2" },
+      { id: "generator", source_ref: "component:generator", target_ref: "component:old-2" },
+      { id: "between-old", source_ref: "component:old-1", target_ref: "component:old-2" },
+    ], "old-1", ["old-2"])).toEqual([
+      { id: "battery-duplicate", source_ref: "component:battery", target_ref: "component:old-1", operation: "delete" },
+      { id: "generator", source_ref: "component:generator", target_ref: "component:old-1", operation: "update" },
+      { id: "between-old", source_ref: "component:old-1", target_ref: "component:old-1", operation: "delete" },
+    ]);
+  });
+});
 
 const settings = {
   peakSunHours: 4.2,
@@ -64,16 +79,16 @@ describe("preliminary proposal sizing boundary", () => {
     }, settings, "hybrid");
 
     expect(result).toMatchObject({
-      pvKw: 9.24,
-      panelCount: 21,
+      pvKw: 11,
+      panelCount: 25,
       pvStrings: undefined,
       panelsPerString: undefined,
-      inverterKw: 8,
-      batteryUsableKwh: 17.8,
+      inverterKw: 10,
+      batteryUsableKwh: 21.4,
     });
     expect(result.sizing.dailyEnergyKwh).toBeCloseTo(900 / 30.4);
     expect(result.withheld).toEqual(expect.arrayContaining([
-      "AI-provided PV size", "AI-provided panel count", "AI-provided inverter rating",
+      "AI-provided PV size", "AI-provided panel count",
       "AI-provided battery capacity", "PV string layout pending selected equipment limits",
     ]));
   });
@@ -90,7 +105,7 @@ describe("preliminary proposal sizing boundary", () => {
       battery_usable_kwh: 1800,
     }, settings, "hybrid");
 
-    expect(result).toMatchObject({ pvKw: 9.24, panelCount: 21, inverterKw: 8, batteryUsableKwh: 17.8 });
+    expect(result).toMatchObject({ pvKw: 11, panelCount: 25, inverterKw: 10, batteryUsableKwh: 21.4 });
     expect(result.withheld).toEqual(expect.arrayContaining([
       "AI-provided PV size", "AI-provided panel count", "AI-provided inverter rating", "AI-provided battery capacity",
     ]));
@@ -120,8 +135,8 @@ describe("preliminary proposal sizing boundary", () => {
     refreshProposalAfterSizingInput(changed, "hybrid");
 
     expect(changed.designCalculator).toMatchObject({
-      updatedBy: "wattson", sizingMethod: "deterministic-v1", targetPvKw: 9.24,
-      panelCount: 21, inverterKw: 8, batteryUsableKwh: 17.8, fitStatus: "unverified",
+      updatedBy: "wattson", sizingMethod: "deterministic-v1", targetPvKw: 11,
+      panelCount: 25, inverterKw: 10, batteryUsableKwh: 21.4, fitStatus: "unverified",
     });
     expect(changed.designCalculator).not.toHaveProperty("pvStrings");
     expect(changed.designCalculator).not.toHaveProperty("proposedAsBuiltDraft");
@@ -150,8 +165,8 @@ describe("preliminary proposal sizing boundary", () => {
     expect(stale.designCalculator).toMatchObject({
       proposalEngineVersion: PROPOSAL_ENGINE_VERSION,
       updatedBy: "wattson",
-      panelCount: 21,
-      inverterPlan: { jurisdiction: "nz", selectionStatus: "candidate_selected", unitRatingsKw: [8] },
+      panelCount: 25,
+      inverterPlan: { jurisdiction: "nz", selectionStatus: "candidate_selected", unitRatingsKw: [10] },
       pvArrayPlan: { status: "surface_allocation_required" },
     });
     expect(stale.designCalculator).not.toHaveProperty("pvStrings");

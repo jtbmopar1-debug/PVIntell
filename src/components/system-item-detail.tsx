@@ -738,6 +738,24 @@ export function ComponentDetail({
       const body = await response.json();
       if (!response.ok)
         throw new Error(body.error ?? "Could not save equipment");
+      if (!component && returnTo && typeof body.component?.id === "string") {
+        const quantity = Math.max(1, Number(payload.quantity) || 1);
+        const columns = Math.min(3, quantity);
+        const positions = Array.from({ length: quantity }, (_, index) => ({
+          nodeRef: index ? `component:${body.component.id}:unit-${index + 1}` : `component:${body.component.id}`,
+          x: 380 + (index % columns) * 120,
+          y: 240 + Math.floor(index / columns) * 155,
+        }));
+        const positioned = await fetch("/api/schematic-positions", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ projectId: systemId, positions }),
+        });
+        if (!positioned.ok) {
+          const positionBody = await positioned.json().catch(() => ({}));
+          throw new Error(positionBody.error ?? "Equipment was saved, but its schematic position could not be set");
+        }
+      }
       router.push(back);
       router.refresh();
     } catch (problem) {

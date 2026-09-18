@@ -33,6 +33,7 @@ import { addWholeSystemEarthing, requestsWholeSystemEarthing } from "@/ai/earthi
 import { insertGeneratorMcb, requestedGeneratorMcb } from "@/ai/generator-protection-editor";
 import { requestsMrbfCardUpdate, updateMrbfTechnicalCards } from "@/ai/mrbf-specification-editor";
 import { systemConfirmationReadiness } from "@/lib/system-confirmation-readiness";
+import { wattsonErrorDetail } from "@/ai/error-detail";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -768,10 +769,9 @@ export async function POST(request: Request) {
         evidenceRevision: conversationState.revision,
       };
     } catch (error) {
-      const detail =
-        error instanceof Error ? error.message : "Unknown Gemini error";
+      const detail = wattsonErrorDetail(error);
       return Response.json(
-        { error: `Wattson could not reach Gemini: ${detail}`, conversationId, retryable: true },
+        { error: `Wattson could not complete that request: ${detail}`, conversationId, retryable: true },
         { status: 502 },
       );
     }

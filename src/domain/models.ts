@@ -203,6 +203,7 @@ export interface DesignCalculatorState {
   };
   energyTargetPvKw?: number;
   energyTargetPanelCount?: number;
+  planningContingencyPercent?: number;
   planningPanelCapacity?: number;
   fitLimited?: boolean;
   pvArrayPlan?: {
@@ -274,6 +275,7 @@ export interface DesignCalculatorState {
   batteryQuantity?: number;
   usableBatteryPercent?: number;
   batteryUsableKwh?: number;
+  calculatedBatteryUsableKwh?: number;
   sizingMethod?: "deterministic-v1" | "user-adjusted";
   sizingInputs?: {
     dailyEnergyKwh?: number;

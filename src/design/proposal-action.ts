@@ -2,19 +2,36 @@ import type { WattsonActionRequest } from "@/ai/actions";
 import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { answerList, proposalIncludesSolar } from "./proposal-inputs";
 
+function architectureSelections(answers: DiscoveryAnswers) {
+  const selected = answerList(answers.architecture_preference);
+  const baseArrangements = selected.filter((value) => value !== "optimiser_string");
+  return {
+    selected,
+    primary: baseArrangements.length === 1
+      ? baseArrangements[0]
+      : baseArrangements.length === 0 && selected.length === 1
+        ? selected[0]
+        : undefined,
+  };
+}
+
 function architectureAction(answers: DiscoveryAnswers): WattsonActionRequest {
-  const architecture = answers.architecture_preference === "combined"
+  const { selected, primary } = architectureSelections(answers);
+  const baseArrangements = selected.filter((value) => value !== "optimiser_string");
+  const architecture = primary === "combined"
     ? "combined_hybrid_inverter"
-    : answers.architecture_preference === "modular"
+    : primary === "modular"
       ? "separate_solar_controller_and_inverter"
-      : ["string_inverter", "optimiser_string", "microinverters"].includes(String(answers.architecture_preference))
+      : ["string_inverter", "optimiser_string", "microinverters"].includes(String(primary))
         ? "ac_coupled"
-        : ["compare", "existing"].includes(String(answers.architecture_preference)) ? "not_decided" : "combined_hybrid_inverter";
+        : ["compare", "existing"].includes(String(primary)) || baseArrangements.length !== 1 ? "not_decided" : "combined_hybrid_inverter";
   return {
     name: "record_design_preference",
     arguments: {
       architecture,
-      notes: "Recorded from the completed guided discovery.",
+      notes: selected.length
+        ? `Recorded from the completed guided discovery: ${selected.join(", ")}.`
+        : "Recorded from the completed guided discovery.",
     },
   };
 }
@@ -23,6 +40,7 @@ function architectureAction(answers: DiscoveryAnswers): WattsonActionRequest {
  * model to invent or calculate equipment sizes. */
 export function deterministicProposalActions(answers: DiscoveryAnswers): WattsonActionRequest[] {
   const preference = architectureAction(answers);
+  const { selected, primary } = architectureSelections(answers);
   let existingPanels: { name?: string; panelType?: string; quantity?: number; watts?: number } = {};
   try {
     if (typeof answers.existing_panel_selection === "string") existingPanels = JSON.parse(answers.existing_panel_selection) as typeof existingPanels;
@@ -51,7 +69,7 @@ export function deterministicProposalActions(answers: DiscoveryAnswers): Wattson
         expansion_path: "Recalculate from measured consumption and confirmed future loads before expansion; select equipment whose documented voltage, current and battery limits support that path.",
         next_validation: "Resolve the first warning shown in Deterministic sizing evidence before selecting equipment.",
         panel_type: panelType,
-        inverter_arrangement: String(answers.architecture_preference ?? "combined"),
+        inverter_arrangement: selected.includes("optimiser_string") ? "optimiser_string" : primary ?? "compare",
         site_location: typeof answers.site_location === "string" ? answers.site_location : undefined,
         site_timezone: typeof answers.site_timezone === "string" ? answers.site_timezone : undefined,
         ...(includeExistingPanels ? {

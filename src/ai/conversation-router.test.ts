@@ -44,6 +44,14 @@ describe("single Wattson intent and consent router", () => {
     });
   });
 
+  it("treats an imperative schematic-and-record update as mutation consent", () => {
+    expect(routeWattsonTurn("Update the schematic and system records! Do it now.", parseWattsonConversationState(undefined))).toMatchObject({
+      intent: "equipment_record",
+      mode: "execute",
+      mutationConsent: true,
+    });
+  });
+
   it("tolerates change-to being mistyped as charge-to for an array edit", () => {
     expect(routeWattsonTurn("Charge to 2 arrays of 5 please", parseWattsonConversationState(undefined))).toMatchObject({
       intent: "equipment_record",

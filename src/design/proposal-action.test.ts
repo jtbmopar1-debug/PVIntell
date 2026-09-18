@@ -37,6 +37,12 @@ describe("deterministic proposal handoff", () => {
     expect(actions[0].arguments).toMatchObject({ architecture: "combined_hybrid_inverter" });
   });
 
+  it("retains DC optimisers alongside a base inverter topology", () => {
+    const actions = deterministicProposalActions({ architecture_preference: ["combined", "optimiser_string"] } as never);
+    expect(actions[0].arguments).toMatchObject({ architecture: "combined_hybrid_inverter" });
+    expect(actions[1].arguments).toMatchObject({ inverter_arrangement: "optimiser_string" });
+  });
+
   it("hands the recorded total existing-panel count to deterministic sizing", () => {
     const actions = deterministicProposalActions({
       panel_construction_interest: ["existing", "bifacial"],

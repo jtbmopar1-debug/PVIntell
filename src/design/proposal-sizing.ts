@@ -48,6 +48,7 @@ export type ProposalSizingResult = {
   scheduledPoolEnergyKwh?: number;
   directSolarLoadKw?: number;
   batteryUsableKwh?: number;
+  calculatedBatteryUsableKwh?: number;
   batteryOnlyDays?: number;
   batterySizingBasis?: "no_sun_autonomy" | "solar_assisted_typical_winter" | "daily_energy_fraction";
   weakestMonthPvKwh?: number;
@@ -55,6 +56,9 @@ export type ProposalSizingResult = {
   assumptions: string[];
   warnings: string[];
 };
+
+export const PLANNING_CAPACITY_CONTINGENCY = 1.2;
+export const INVERTER_HEADROOM = 1.25;
 
 type LoadRating = {
   source?: "household" | "pool";
@@ -382,6 +386,7 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     const energyRequiredPvKw = energy && peakSunHours ? energy.dailyKwh * offGridRecoveryMargin / (peakSunHours * systemEfficiency) : 0;
     const directSolarRequiredPvKw = (directSolarLoadKw ?? 0) * 1.2;
     const requiredPvKw = Math.max(energyRequiredPvKw, directSolarRequiredPvKw);
+    const proposedPvKwWithContingency = requiredPvKw * PLANNING_CAPACITY_CONTINGENCY;
     energyTargetPvKw = rounded(requiredPvKw);
     if (energy && peakSunHours) {
       assumptions.push(`${Math.round(systemEfficiency * 100)}% planning conversion/system efficiency.`);
@@ -392,14 +397,16 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     if (directSolarLoadKw && directSolarRequiredPvKw > energyRequiredPvKw) assumptions.push(`Solar-first power sizing uses ${rounded(directSolarLoadKw, 2)} kW of overlapping loads explicitly scheduled for daylight and a 1.2 DC-to-AC array ratio; the grid or another source still covers starts and poor sunlight.`);
     if (panelWatts) {
       energyTargetPanelCount = Math.ceil(requiredPvKw * 1000 / panelWatts - 1e-9);
-      panelCount = panelCapacity === undefined ? energyTargetPanelCount : Math.min(energyTargetPanelCount, panelCapacity);
+      const proposedPanelCount = Math.ceil(proposedPvKwWithContingency * 1000 / panelWatts - 1e-9);
+      panelCount = panelCapacity === undefined ? proposedPanelCount : Math.min(proposedPanelCount, panelCapacity);
       pvKw = rounded(panelCount * panelWatts / 1000);
+      assumptions.push(`20% PV planning contingency increases the ${energyTargetPanelCount}-panel calculated baseline to ${proposedPanelCount} proposed panels before physical-fit limits.`);
       assumptions.push(`${panelWatts} W representative module for panel count; replace with the selected module datasheet.`);
       if (panelCapacity !== undefined) {
         assumptions.push(`${panelCapacity}-module planning capacity from the recorded usable rectangles, 20 mm inter-module gaps and recorded obstruction areas; portrait and landscape layouts were compared.`);
-        if (panelCapacity < energyTargetPanelCount) {
+        if (panelCapacity < proposedPanelCount) {
           fitLimited = true;
-          warnings.push(`The recorded panel areas hold about ${panelCapacity} modules, below the ${energyTargetPanelCount}-module annual-energy target; use another surface or accept lower solar coverage.`);
+          warnings.push(`The recorded panel areas hold about ${panelCapacity} modules, below the ${proposedPanelCount}-module proposal including contingency (${energyTargetPanelCount} modules calculated before contingency); use another surface or accept lower solar coverage.`);
         } else {
           warnings.push("The energy-target module count fits the recorded rectangles in the planning grid; verify exact setbacks, access paths, fixing zones and obstruction positions before purchase.");
         }
@@ -407,7 +414,8 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
         warnings.push("Physical fit is not included in the panel count because usable panel-area rectangles are not recorded in a machine-readable form.");
       }
     } else {
-      pvKw = rounded(requiredPvKw);
+      pvKw = rounded(proposedPvKwWithContingency);
+      assumptions.push(`20% PV planning contingency increases the ${rounded(requiredPvKw)} kW calculated baseline to ${pvKw} kW proposed capacity.`);
       warnings.push("Panel count withheld: no representative module rating is selected.");
     }
   }
@@ -441,6 +449,7 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
   const multiDayWithoutRechargeModel = backupDuration.includes("multiple_days")
     && !/battery_recharge|automatic_low_reserve/.test(generatorRoles);
   let batteryUsableKwh: number | undefined;
+  let calculatedBatteryUsableKwh: number | undefined;
   let batterySizingBasis: ProposalSizingResult["batterySizingBasis"];
   let weakestMonthPvKwh: number | undefined;
   let assumedNonSolarLoadKwh: number | undefined;
@@ -451,25 +460,33 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     const storageDays = days ?? 1;
     const noSunBaselineKwh = energy.dailyKwh * storageDays * storageFraction;
     const weakestMonthPeakSunHours = monthlySolar.length === 12 ? Math.min(...monthlySolar) : undefined;
+    const calculatedPvNameplateKw = selectedPanelCount && panelWatts
+      ? panelCount! * panelWatts / 1000
+      : energyTargetPanelCount && panelWatts
+      ? energyTargetPanelCount * panelWatts / 1000
+      : energyTargetPvKw;
     if (mode !== "off_grid" && wholePropertyBackup && storageDays === 1
-      && pvKw !== undefined && weakestMonthPeakSunHours !== undefined) {
+      && calculatedPvNameplateKw !== undefined && weakestMonthPeakSunHours !== undefined) {
       // A functioning hybrid system carries daytime load and charges storage
       // from PV. Size for the larger of the assumed non-solar window and the
       // weakest typical month's net energy deficit. This deliberately does
       // not claim a full no-sun day; public supply or generator is fallback.
       const nonSolarLoadFraction = .55;
       assumedNonSolarLoadKwh = energy.dailyKwh * nonSolarLoadFraction;
-      weakestMonthPvKwh = pvKw * weakestMonthPeakSunHours * systemEfficiency;
+      weakestMonthPvKwh = calculatedPvNameplateKw * weakestMonthPeakSunHours * systemEfficiency;
       const weakestMonthDeficitKwh = Math.max(0, energy.dailyKwh - weakestMonthPvKwh);
-      batteryUsableKwh = rounded(Math.max(assumedNonSolarLoadKwh, weakestMonthDeficitKwh), 1);
+      calculatedBatteryUsableKwh = rounded(Math.max(assumedNonSolarLoadKwh, weakestMonthDeficitKwh), 1);
+      batteryUsableKwh = rounded(calculatedBatteryUsableKwh * PLANNING_CAPACITY_CONTINGENCY, 1);
       batterySizingBasis = "solar_assisted_typical_winter";
-      assumptions.push(`${batteryUsableKwh} kWh usable solar-assisted storage: the greater of ${rounded(assumedNonSolarLoadKwh, 1)} kWh assumed outside the solar window (55% of daily use) and the ${rounded(weakestMonthDeficitKwh, 1)} kWh weakest-month daily shortfall after ${rounded(weakestMonthPvKwh, 1)} kWh of planned PV production.`);
+      assumptions.push(`${calculatedBatteryUsableKwh} kWh usable solar-assisted storage baseline: the greater of ${rounded(assumedNonSolarLoadKwh, 1)} kWh assumed outside the solar window (55% of daily use) and the ${rounded(weakestMonthDeficitKwh, 1)} kWh weakest-month daily shortfall after ${rounded(weakestMonthPvKwh, 1)} kWh of planned PV production.`);
       warnings.push("Solar-assisted storage is not a full no-sun-day guarantee; public supply or a generator is the fallback during unusually poor solar weather.");
     } else {
-      batteryUsableKwh = rounded(noSunBaselineKwh, 1);
+      calculatedBatteryUsableKwh = rounded(noSunBaselineKwh, 1);
+      batteryUsableKwh = rounded(calculatedBatteryUsableKwh * PLANNING_CAPACITY_CONTINGENCY, 1);
       batterySizingBasis = storageFraction === 1 ? "no_sun_autonomy" : "daily_energy_fraction";
       assumptions.push(`${storageDays} battery-only day equivalent and ${Math.round(storageFraction * 100)}% of recorded daily energy; usable rather than nominal storage.`);
     }
+    assumptions.push(`20% usable-storage planning contingency increases the ${calculatedBatteryUsableKwh} kWh calculated baseline to ${batteryUsableKwh} kWh proposed usable storage.`);
     warnings.push("Battery capacity is a planning baseline; validate load, solar and generator timing with a time-series model.");
     if (standaloneBackup && !wholePropertyBackup && mode !== "off_grid") warnings.push("Essentials-only storage uses a 40% daily-energy planning allowance; replace it with the backed-up circuit energy profile.");
     if (!standaloneBackup && mode !== "off_grid") warnings.push("Grid-connected storage uses a 40% daily-energy shifting allowance; replace it with interval load and tariff objectives.");
@@ -483,25 +500,29 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
       : `The entered tool runtimes imply about ${loads.scheduledDailyEnergyKwh} kWh/workday, above the ${rounded(energy.dailyKwh)} kWh/day whole-system answer currently used for PV sizing. Reconcile the estimates and record operating times before assigning the demand between direct solar and generator or storage.`);
   }
   const needsStandaloneLoadSupport = mode === "off_grid" || standaloneBackup;
+  // Inverter headroom is applied independently from PV and storage contingency.
+  const inverterSizingPvKw = energyTargetPanelCount && panelWatts
+    ? energyTargetPanelCount * panelWatts / 1000
+    : energyTargetPvKw ?? pvKw;
   let inverterKw: number | undefined;
-  if (mode === "grid_tied" && pvKw && !standaloneBackup) {
-    const minimumInverterKw = pvKw / 1.2;
-    inverterKw = nextCommonInverterRatingKw(minimumInverterKw);
-    assumptions.push(`1.2 DC-to-AC planning ratio gives ${rounded(minimumInverterKw, 2)} kW minimum; rounded up to the common ${inverterKw} kW inverter class.`);
+  if (mode === "grid_tied" && inverterSizingPvKw && !standaloneBackup) {
+    const minimumInverterKw = inverterSizingPvKw / 1.2;
+    inverterKw = nextCommonInverterRatingKw(minimumInverterKw * INVERTER_HEADROOM);
+    assumptions.push(`1.2 DC-to-AC planning ratio gives ${rounded(minimumInverterKw, 2)} kW minimum; 25% expansion headroom and common-size rounding gives a ${inverterKw} kW inverter class.`);
   } else if (needsStandaloneLoadSupport && loads && (mode === "off_grid" || wholePropertyBackup)) {
     const continuousWithMargin = loads.continuousKw * 1.15;
-    const minimumInverterKw = Math.max(continuousWithMargin, pvKw ? pvKw / 1.2 : 0);
-    inverterKw = nextCommonInverterRatingKw(minimumInverterKw);
-    assumptions.push(`15% continuous-power margin gives ${rounded(minimumInverterKw, 2)} kW minimum; rounded up to the common ${inverterKw} kW inverter class.`);
-  } else if (pvKw && !needsStandaloneLoadSupport) {
-    const minimumInverterKw = pvKw / 1.2;
-    inverterKw = nextCommonInverterRatingKw(minimumInverterKw);
-    assumptions.push(`1.2 DC-to-AC planning ratio gives ${rounded(minimumInverterKw, 2)} kW minimum; rounded up to the common ${inverterKw} kW inverter class while public supply carries demand above PV output.`);
+    const minimumInverterKw = Math.max(continuousWithMargin, inverterSizingPvKw ? inverterSizingPvKw / 1.2 : 0);
+    inverterKw = nextCommonInverterRatingKw(minimumInverterKw * INVERTER_HEADROOM);
+    assumptions.push(`The recorded load and existing continuous-power allowance give ${rounded(minimumInverterKw, 2)} kW minimum; 25% expansion headroom and common-size rounding gives a ${inverterKw} kW inverter class.`);
+  } else if (inverterSizingPvKw && !needsStandaloneLoadSupport) {
+    const minimumInverterKw = inverterSizingPvKw / 1.2;
+    inverterKw = nextCommonInverterRatingKw(minimumInverterKw * INVERTER_HEADROOM);
+    assumptions.push(`1.2 DC-to-AC planning ratio gives ${rounded(minimumInverterKw, 2)} kW minimum; 25% expansion headroom and common-size rounding gives a ${inverterKw} kW inverter class while public supply carries demand above PV output.`);
   } else {
-    if (pvKw) {
-      const minimumInverterKw = pvKw / 1.2;
-      inverterKw = nextCommonInverterRatingKw(minimumInverterKw);
-      assumptions.push(`PV gives a provisional ${rounded(minimumInverterKw, 2)} kW inverter minimum; rounded up to the common ${inverterKw} kW class because the standalone simultaneous-load envelope is incomplete.`);
+    if (inverterSizingPvKw) {
+      const minimumInverterKw = inverterSizingPvKw / 1.2;
+      inverterKw = nextCommonInverterRatingKw(minimumInverterKw * INVERTER_HEADROOM);
+      assumptions.push(`PV gives a provisional ${rounded(minimumInverterKw, 2)} kW inverter minimum; 25% expansion headroom and common-size rounding gives a ${inverterKw} kW class because the standalone simultaneous-load envelope is incomplete.`);
       warnings.push("Verify inverter continuous and surge capacity against the complete standalone load schedule before equipment selection.");
     } else warnings.push("Inverter size withheld: the relevant simultaneous-load evidence is incomplete.");
   }
@@ -537,6 +558,7 @@ export function deriveProposalSizing(input: ProposalSizingInput): ProposalSizing
     scheduledPoolEnergyKwh: loads?.scheduledPoolEnergyKwh,
     directSolarLoadKw: loads?.directSolarLoadKw,
     batteryUsableKwh,
+    calculatedBatteryUsableKwh,
     batteryOnlyDays: days,
     batterySizingBasis,
     weakestMonthPvKwh: weakestMonthPvKwh === undefined ? undefined : rounded(weakestMonthPvKwh, 1),

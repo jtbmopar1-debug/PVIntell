@@ -126,6 +126,13 @@ describe("discovery → stored proposal → calculator save", () => {
     }
   });
 
+  it("shows module-level optimisers with a selected hybrid topology", async () => {
+    const { design } = await build({ ...workshop, architecture_preference: ["combined", "optimiser_string"] });
+    expect(design).toMatchObject({ inverterArrangement: "optimiser_string", architecture: "combined_hybrid_inverter" });
+    const draft = createProposedAsBuiltDraft(design);
+    expect(draft.nodes?.some((node) => node.id.startsWith("optimisers-") && node.label.includes("DC optimisers"))).toBe(true);
+  });
+
   it("does not put string DC isolators on a microinverter's outgoing AC branch", async () => {
     const { design } = await build({ ...workshop, architecture_preference: "microinverters" });
     const draft = createProposedAsBuiltDraft(design);
@@ -210,8 +217,8 @@ describe("discovery → stored proposal → calculator save", () => {
       pool_equipment_ratings: { value: answers.pool_equipment_ratings },
     });
     expect(built.design).toMatchObject({
-      panelCount: 13,
-      inverterKw: 5,
+      panelCount: 16,
+      inverterKw: 8,
       sizingInputs: {
         dailyEnergyKwh: 9.2,
         dailyEnergySource: "pool_equipment_schedule",
@@ -295,7 +302,7 @@ describe("discovery → stored proposal → calculator save", () => {
 
     refreshProposalAfterSizingInput(settings, "grid_tied");
 
-    expect(settings.designCalculator).toMatchObject({ panelCount: 11 });
+    expect(settings.designCalculator).toMatchObject({ panelCount: 13 });
     expect(settings.designCalculator).not.toHaveProperty("pvStrings");
     expect(settings.designCalculator).not.toHaveProperty("panelsPerString");
   });
@@ -492,6 +499,24 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(size.width).toBeGreaterThanOrEqual(1120);
   });
 
+  it("lays generated equipment out in electrical-flow lanes", () => {
+    const nodes = [
+      { id: "solar-pv-1", label: "Roof", detail: "", image: "/item.jpg", x: 0, y: 0 },
+      { id: "optimisers-solar-pv-1", label: "Optimisers", detail: "", image: "/item.jpg", x: 0, y: 0 },
+      { id: "solar-safety-1", label: "Isolation", detail: "", image: "/item.jpg", x: 0, y: 0 },
+      { id: "inverter", label: "Inverter", detail: "", image: "/item.jpg", x: 0, y: 0 },
+      { id: "ac-safety", label: "AC protection", detail: "", image: "/item.jpg", x: 0, y: 0 },
+      { id: "switchboard", label: "Board", detail: "", image: "/item.jpg", x: 0, y: 0 },
+      { id: "battery", label: "Battery", detail: "", image: "/item.jpg", x: 0, y: 0 },
+      { id: "generator", label: "Generator", detail: "", image: "/item.jpg", x: 0, y: 0 },
+    ];
+    const tidy = tidySchematicNodes(nodes);
+    const byId = new Map(tidy.map((node) => [node.id, node]));
+    expect(["solar-pv-1", "optimisers-solar-pv-1", "solar-safety-1", "inverter", "ac-safety", "switchboard"].map((id) => byId.get(id)?.x)).toEqual([35, 200, 365, 545, 725, 905]);
+    expect(byId.get("battery")!.y).toBeGreaterThan(byId.get("solar-pv-1")!.y);
+    expect(byId.get("generator")!.y).toBeGreaterThan(byId.get("battery")!.y);
+  });
+
   it("filters only displayed schematic connections by electrical family", () => {
     const connections = [
       { from: "a", to: "b", label: "PV", kind: "solar-dc" as const },
@@ -525,8 +550,19 @@ describe("discovery → stored proposal → calculator save", () => {
       { inverterKw: 15, inverterArrangement: "microinverters" } as DesignCalculatorState,
     );
 
-    expect(detail.detail).toBe("15 kW combined AC capacity proposed across all microinverters; exact unit count, model and branch ratings to confirm");
+    expect(detail.detail).toBe("15 kW combined AC capacity proposed; exact unit count, model, panels per unit and branch grouping to confirm");
     expect(batteryDetail.detail).toBe("Added to the working system");
+  });
+
+  it("shows proposed microinverter quantity, per-unit rating and combined capacity consistently", () => {
+    const design = { inverterKw: 3, panelCount: 8, inverterArrangement: "microinverters" } as DesignCalculatorState;
+    const node = { id: "pv-inverter", label: "Microinverters", detail: "Module-level DC-to-AC conversion", image: "/micro.jpg", x: 0, y: 0 };
+    const planned = planningNodeDetail(node, design);
+    const draft = { createdAt: "2026-09-19T00:00:00.000Z", architecture: "ac_coupled", flow: [], nodes: [planned], connections: [] } as NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>;
+
+    expect(planned.label).toBe("8 × microinverters");
+    expect(planned.detail).toContain("375 W AC per unit");
+    expect(schematicCardDetail(planned, draft, design)).toBe("8 × 375 W AC · 3 kW total");
   });
 
   it("does not assign the mixed proposal total to an existing microinverter fleet", () => {

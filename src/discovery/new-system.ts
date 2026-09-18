@@ -172,11 +172,6 @@ function shouldIncludeBattery(answers: DiscoveryAnswers) {
   return answers.backup_preference !== undefined && answers.backup_preference !== "none";
 }
 
-function needsModuleElectronicsCompatibility(answers: DiscoveryAnswers) {
-  return ["optimiser_string", "microinverters", "existing"].includes(String(answers.architecture_preference))
-    || answerValues(answers.module_level_electronics).some((value) => ["optimisers", "microinverters", "existing_mixed"].includes(value));
-}
-
 export const discoveryStages: Array<{ id: DiscoveryStage; label: string; description: string }> = [
   { id: "discovery", label: "Discovery", description: "What you want the system to achieve" },
   { id: "site", label: "Site", description: "The property and possible solar locations" },
@@ -268,9 +263,9 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ],
   },
   {
-    id: "nominal_ac_voltage", stage: "discovery", title: "What is the nominal AC supply or output voltage?",
+    id: "nominal_ac_voltage", stage: "discovery", title: "What voltage will the AC system use?",
     noviceHelp: "Voltage varies globally and must match the appliances and inverter. Use a label or supply document where possible; do not measure inside a switchboard yourself.",
-    technicalHelp: "Record whether the stated value is line-to-neutral or line-to-line where relevant, and later confirm voltage tolerance and frequency for the exact Site and equipment.",
+    technicalHelp: "This helps Wattson match the inverter and other equipment to the power used at this Site. The exact voltage can be confirmed later if you are unsure.",
     type: "choice", options: [
       { value: "100", label: "100 V", description: "Used by some regional appliance and supply systems." },
       { value: "110_120", label: "110–120 V", description: "Common nominal range for single-phase or line-to-neutral loads in some regions." },
@@ -300,6 +295,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "townhouse", label: "Townhouse or shared-title home", description: "Walls, roofs or property rules may be shared." },
       { value: "apartment", label: "Apartment or unit", description: "Roof and electrical areas may be shared." },
       { value: "shed_workshop", label: "Shed or workshop", description: "A separate working or storage building." },
+      { value: "home_office_business", label: "Home office or business space", description: "A space used for office work, customers or business equipment." },
       { value: "farm_building", label: "Farm or rural building", description: "May include pumps, machinery or long cable runs." },
       { value: "cabin_mobile", label: "Cabin, tiny home or mobile setup", description: "A small or potentially movable installation." },
       { value: "pool_spa", label: "Pool, spa or jacuzzi", description: "A pool or spa area with pumps, heating and wet-area electrical constraints." },
@@ -348,6 +344,11 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: (answers) => answers.utility_relationship === "grid_connected" && !includesSolarPanels(answers),
   },
   {
+    id: "panel_area_dimensions", stage: "site", title: "How much usable space is available for panels?",
+    noviceHelp: "Enter the usable length and width of each separate roof face, fence, wall or ground area. Measure only the clear area where panels could actually fit.",
+    technicalHelp: "Record usable—not total—dimensions for each mounting plane. Keep separate faces, orientations or mounting areas on separate rows.", type: "textarea", showWhen: includesSolarPanels,
+  },
+  {
     id: "panel_construction_interest", stage: "site", title: "Are any panel types worth exploring for these locations?",
     noviceHelp: "Choose any that may suit the available surfaces. This does not select a product; Wattson and the Design Calculator can compare the practical trade-offs later.", type: "multi_choice", options: [
       { value: "existing", label: "Use panels I already have", description: "Identify existing panels and assess whether they can be incorporated into this build." },
@@ -362,11 +363,6 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     noviceHelp: "Enter the total number of panels. If you know how they are divided, also enter the number of separate arrays or panel groups; otherwise choose ‘I don’t know’ for that layout detail. Discovery will decide how many are suitable for this proposal later.",
     technicalHelp: "Record the inventory total and known array or homogeneous module-group count without asking the user to allocate a proposal quantity. Exact model, voltage, current, temperature, condition and compatibility evidence remain required before string design.",
     type: "textarea", showWhen: hasExistingPanelInterest,
-  },
-  {
-    id: "panel_area_dimensions", stage: "site", title: "How much usable space is available for panels?",
-    noviceHelp: "Enter the usable length and width of each separate roof face, fence, wall or ground area. Measure only the clear area where panels could actually fit.",
-    technicalHelp: "Record usable—not total—dimensions for each mounting plane. Keep separate faces, orientations or mounting areas on separate rows.", type: "textarea", showWhen: includesSolarPanels,
   },
   {
     id: "panel_area_constraints", stage: "site", title: "What takes up space or limits panel placement?",
@@ -456,6 +452,36 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       replacesGrid(answers)
       || (answers.utility_relationship === "grid_connected" && (answers.backup_preference === "none" || !requestsOutagePlanning(answers)))
     ),
+  },
+  {
+    id: "dc_system_voltage", stage: "design", title: "What battery or DC voltage should Wattson work with?",
+    noviceHelp: "If you already have a battery, simply choose that option here. Its label, model and condition are captured later in Site Inventory. If you do not have one, you do not need to know the voltage yet. Higher voltage usually means less current for the same power, but it changes which batteries, inverters, controllers, fuses, switches and safety rules apply.",
+    technicalHelp: "Record both nominal voltage and the real maximum charge/operating voltage. Compare load current, voltage drop, conductor/protection duty, BMS topology, inverter/controller ecosystem, series/parallel battery rules and local voltage-class boundaries. Do not assume 48 V.",
+    type: "choice", options: [
+      { value: "existing", label: "Use a battery I already have", description: "Identify the existing battery and assess whether it can be incorporated into this build." },
+      { value: "12", label: "12 V nominal", description: "Common for smaller vehicle, marine and compact systems; high-power loads draw high current." },
+      { value: "24", label: "24 V nominal", description: "Reduces current compared with 12 V and is common in larger mobile or modest off-grid systems." },
+      { value: "36", label: "36 V nominal", description: "A specialist option used by some battery and mobility equipment ecosystems." },
+      { value: "48", label: "48 V nominal", description: "Common for larger stationary/off-grid systems, but not automatically the right choice." },
+      { value: "60", label: "60 V nominal", description: "Used by some specialist systems; component availability and local voltage boundaries need checking." },
+      { value: "high_voltage", label: "Manufacturer high-voltage battery", description: "An integrated battery/inverter platform operating above common 12–60 V nominal systems." },
+    ], showWhen: shouldIncludeBattery,
+  },
+  {
+    id: "battery_chemistry", stage: "design", title: "Which battery chemistry should the design use?",
+    noviceHelp: "Battery chemistry changes usable capacity, charging limits, temperature behaviour, expected life, protection and compatibility. A specific battery the user owns remains a candidate until its label, condition and compatibility have been assessed.",
+    technicalHelp: "Confirm chemistry, nominal and maximum voltage, series/parallel rules, BMS or balancing requirements, charge profile, continuous and peak current, low-temperature charging limits, ventilation and manufacturer compatibility. Do not infer chemistry from nominal voltage.",
+    type: "choice", options: [
+      { value: "lifepo4", label: "Lithium iron phosphate (LiFePO₄/LFP)", description: "Common stationary and mobile lithium chemistry with an appropriate BMS and charge profile." },
+      { value: "other_lithium_ion", label: "Other lithium-ion", description: "For NMC, NCA or another identified lithium chemistry; exact manufacturer limits are essential." },
+      { value: "lto", label: "Lithium titanate (LTO)", description: "A specialist lithium chemistry with different cell voltage and charging characteristics." },
+      { value: "flooded_lead_acid", label: "Flooded lead-acid", description: "Vented serviceable batteries requiring the correct charging, ventilation and maintenance provisions." },
+      { value: "agm", label: "AGM lead-acid", description: "Sealed valve-regulated lead-acid batteries with manufacturer-specific charge limits." },
+      { value: "gel", label: "Gel lead-acid", description: "Valve-regulated lead-acid chemistry that can be damaged by an unsuitable charge profile." },
+      { value: "sodium_ion", label: "Sodium-ion", description: "An emerging chemistry whose exact BMS, voltage and equipment compatibility must be verified." },
+      { value: "manufacturer_system", label: "Manufacturer battery system", description: "A proprietary low- or high-voltage battery platform identified by its exact make and model." },
+      { value: "custom_home_built", label: "Custom or home-built battery", description: "Record its chemistry, configuration, BMS, limits and test evidence so Wattson can assess it without providing cell-level construction instructions." },
+    ], showWhen: hasBatteryBus,
   },
   {
     id: "current_energy_use", stage: "needs", title: "How much electricity does the property currently use?",
@@ -733,48 +759,14 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
   },
   {
     id: "architecture_preference", stage: "design", title: "Which solar and inverter arrangement should Wattson consider?",
-    noviceHelp: "Choose how the panels should convert and deliver power. This choice is independent of whether a battery is included now. Microinverters perform the panel-level inverter function, while DC optimisers still feed a compatible string or hybrid inverter.", type: "choice", options: [
+    noviceHelp: "Choose every arrangement worth considering. DC optimisers can be used with a compatible string, hybrid or separate-inverter arrangement, so you can select them alongside another option.", type: "multi_choice", options: [
       { value: "existing", label: "Assess a specific inverter I have", description: "Treat it as a candidate and include it only if its documented limits suit the design." },
       { value: "string_inverter", label: "Solar-only string inverter", description: "Panels connect in DC strings to one central inverter. Unlike a hybrid inverter, it has no direct battery connection." },
       { value: "combined", label: "Hybrid solar inverter", description: "A central solar inverter with battery-ready or integrated battery-control capability; it can still be assessed when no battery is included now." },
-      { value: "optimiser_string", label: "DC optimisers with string inverter", description: "Panel-level DC optimisers feed a specifically compatible central inverter." },
+      { value: "optimiser_string", label: "Add DC optimisers", description: "Panel-level DC optimisers can feed a compatible string, hybrid or separate-inverter arrangement." },
       { value: "microinverters", label: "Microinverters", description: "Panel-level inverters produce AC from each module or small module group." },
       { value: "modular", label: "Separate inverter and solar controllers", description: "Separate MPPT solar controllers and inverter or inverter-charger equipment designed to work together." },
     ], showWhen: includesSolarPanels,
-  },
-  {
-    id: "dc_system_voltage", stage: "design", title: "What battery or DC voltage should Wattson work with?",
-    noviceHelp: "If you already have a battery, simply choose that option here. Its label, model and condition are captured later in Site Inventory. If you do not have one, you do not need to know the voltage yet. Higher voltage usually means less current for the same power, but it changes which batteries, inverters, controllers, fuses, switches and safety rules apply.",
-    technicalHelp: "Record both nominal voltage and the real maximum charge/operating voltage. Compare load current, voltage drop, conductor/protection duty, BMS topology, inverter/controller ecosystem, series/parallel battery rules and local voltage-class boundaries. Do not assume 48 V.",
-    type: "choice", options: [
-      { value: "existing", label: "Use a battery I already have", description: "Identify the existing battery and assess whether it can be incorporated into this build." },
-      { value: "12", label: "12 V nominal", description: "Common for smaller vehicle, marine and compact systems; high-power loads draw high current." },
-      { value: "24", label: "24 V nominal", description: "Reduces current compared with 12 V and is common in larger mobile or modest off-grid systems." },
-      { value: "36", label: "36 V nominal", description: "A specialist option used by some battery and mobility equipment ecosystems." },
-      { value: "48", label: "48 V nominal", description: "Common for larger stationary/off-grid systems, but not automatically the right choice." },
-      { value: "60", label: "60 V nominal", description: "Used by some specialist systems; component availability and local voltage boundaries need checking." },
-      { value: "high_voltage", label: "Manufacturer high-voltage battery", description: "An integrated battery/inverter platform operating above common 12–60 V nominal systems." },
-    ], showWhen: shouldIncludeBattery,
-  },
-  {
-    id: "battery_chemistry", stage: "design", title: "Which battery chemistry should the design use?",
-    noviceHelp: "Battery chemistry changes usable capacity, charging limits, temperature behaviour, expected life, protection and compatibility. A specific battery the user owns remains a candidate until its label, condition and compatibility have been assessed.",
-    technicalHelp: "Confirm chemistry, nominal and maximum voltage, series/parallel rules, BMS or balancing requirements, charge profile, continuous and peak current, low-temperature charging limits, ventilation and manufacturer compatibility. Do not infer chemistry from nominal voltage.",
-    type: "choice", options: [
-      { value: "lifepo4", label: "Lithium iron phosphate (LiFePO₄/LFP)", description: "Common stationary and mobile lithium chemistry with an appropriate BMS and charge profile." },
-      { value: "other_lithium_ion", label: "Other lithium-ion", description: "For NMC, NCA or another identified lithium chemistry; exact manufacturer limits are essential." },
-      { value: "lto", label: "Lithium titanate (LTO)", description: "A specialist lithium chemistry with different cell voltage and charging characteristics." },
-      { value: "flooded_lead_acid", label: "Flooded lead-acid", description: "Vented serviceable batteries requiring the correct charging, ventilation and maintenance provisions." },
-      { value: "agm", label: "AGM lead-acid", description: "Sealed valve-regulated lead-acid batteries with manufacturer-specific charge limits." },
-      { value: "gel", label: "Gel lead-acid", description: "Valve-regulated lead-acid chemistry that can be damaged by an unsuitable charge profile." },
-      { value: "sodium_ion", label: "Sodium-ion", description: "An emerging chemistry whose exact BMS, voltage and equipment compatibility must be verified." },
-      { value: "manufacturer_system", label: "Manufacturer battery system", description: "A proprietary low- or high-voltage battery platform identified by its exact make and model." },
-      { value: "custom_home_built", label: "Custom or home-built battery", description: "Record its chemistry, configuration, BMS, limits and test evidence so Wattson can assess it without providing cell-level construction instructions." },
-    ], showWhen: hasBatteryBus,
-  },
-  {
-    id: "module_electronics_compatibility", stage: "design", title: "What equipment must the optimisers or microinverters work with?",
-    noviceHelp: "Add any panel, optimiser, microinverter or main-inverter make/model you already own or are considering. A label photo is useful. Wattson must check current, voltage, power, connector and string/branch limits before recommending that combination.", technicalHelp: "Record module Voc, Vmp, Isc and Imp; optimiser or microinverter maximum input voltage/current/Isc/power and output limits; inverter MPPT voltage range, maximum input current and maximum short-circuit current per MPPT; string/branch count and parallel inputs. Attach the manufacturer's compatibility evidence where available.", type: "textarea", showWhen: needsModuleElectronicsCompatibility,
   },
 ];
 
@@ -867,8 +859,8 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
             ? "Choose every intended role. The generator may recharge the batteries, carry high-power loads, supply selected circuits, or combine compatible roles when solar and stored energy are insufficient."
             : "Choose every intended role. In this battery-free design, the generator may carry high-power loads, supply selected circuits, or do both through a compatible and safely controlled power arrangement.",
           technicalHelp: batteryIncluded
-            ? "Define the generator source path, charger demand, transferred circuits, load steps, start controls, interlocking and neutral/earth arrangement for low-solar or low-reserve operation."
-            : "Define the generator source path, transferred circuits, PV interaction, load steps, interlocking and neutral/earth arrangement. Confirm the selected equipment supports stable battery-free operation and prevents unsafe source interconnection.",
+            ? "This tells Wattson whether the generator should charge the batteries, run high-power equipment, supply selected circuits, or start automatically when stored power is low."
+            : "This tells Wattson which equipment or circuits the generator should power and how it should work alongside the solar system.",
           options: question.options
             ?.filter((option) => batteryIncluded || !["battery_recharge", "automatic_low_reserve"].includes(option.value))
             .map((option) => option.value === "backup_circuits"

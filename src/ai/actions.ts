@@ -12,7 +12,31 @@ import type { DesignCalculatorState } from "@/domain/models";
 // Bump whenever persisted proposal semantics or downstream rendering contracts
 // change. Version 3 forces records already stamped by the incomplete v2 repair
 // back through canonical array/inverter reconciliation.
-export const PROPOSAL_ENGINE_VERSION = 5;
+export const PROPOSAL_ENGINE_VERSION = 6;
+
+export function planReplacementConnectionMerge(
+  connections: Array<{ id: string; source_ref: string; target_ref: string }>,
+  retainedId: string,
+  removedIds: string[],
+) {
+  const projected = connections.map((connection) => {
+    const sourceId = String(connection.source_ref ?? "").replace(/^component:/, "");
+    const targetId = String(connection.target_ref ?? "").replace(/^component:/, "");
+    return {
+      ...connection,
+      nextSource: removedIds.includes(sourceId) ? `component:${retainedId}` : connection.source_ref,
+      nextTarget: removedIds.includes(targetId) ? `component:${retainedId}` : connection.target_ref,
+      changed: removedIds.includes(sourceId) || removedIds.includes(targetId),
+    };
+  });
+  const occupied = new Set(projected.filter((connection) => !connection.changed).map((connection) => `${connection.nextSource}->${connection.nextTarget}`));
+  return projected.filter((connection) => connection.changed).map((connection) => {
+    const key = `${connection.nextSource}->${connection.nextTarget}`;
+    const remove = connection.nextSource === connection.nextTarget || occupied.has(key);
+    if (!remove) occupied.add(key);
+    return { id: connection.id, source_ref: connection.nextSource, target_ref: connection.nextTarget, operation: remove ? "delete" as const : "update" as const };
+  });
+}
 
 function evChargingKwFromDiscovery(discovery: Record<string, unknown>) {
   const raw = discovery.ev_planning_power_band;
@@ -208,12 +232,14 @@ function sizingFields(settings: Record<string, unknown>, mode: string, panelWatt
     panelCount: sizing.panelCount,
     energyTargetPvKw: sizing.energyTargetPvKw,
     energyTargetPanelCount: sizing.energyTargetPanelCount,
+    planningContingencyPercent: 20,
     planningPanelCapacity: sizing.planningPanelCapacity,
     fitLimited: sizing.fitLimited,
     inverterKw: sizing.inverterKw,
     evChargingKw: evChargingKwFromDiscovery(discovery),
     evChargingPhase: evChargingPhaseFromDiscovery(discovery),
     batteryUsableKwh: sizing.batteryUsableKwh,
+    calculatedBatteryUsableKwh: sizing.calculatedBatteryUsableKwh,
     sizingMethod: sizing.method,
     sizingInputs: {
       dailyEnergyKwh: sizing.dailyEnergyKwh,
@@ -1333,6 +1359,7 @@ export async function applyWattsonActions(
         } : undefined,
         energyTargetPvKw: sizing.sizing.energyTargetPvKw,
         energyTargetPanelCount: sizing.sizing.energyTargetPanelCount,
+        planningContingencyPercent: 20,
         planningPanelCapacity: sizing.sizing.planningPanelCapacity,
         fitLimited: sizing.sizing.fitLimited,
         panelManufacturer: candidate?.manufacturer ?? (retainUserModule ? previous.panelManufacturer : undefined),
@@ -1372,6 +1399,7 @@ export async function applyWattsonActions(
         generatorType: generatorDetails.generatorType,
         generatorFuel: generatorDetails.fuel,
         batteryUsableKwh: sizing.batteryUsableKwh,
+        calculatedBatteryUsableKwh: sizing.sizing.calculatedBatteryUsableKwh,
         batteryChemistry: sizing.batteryUsableKwh ? batteryChemistry : undefined,
         batteryVoltage,
         batteryAh,
@@ -1426,7 +1454,7 @@ export async function applyWattsonActions(
         nextDesign.fitLimited = true;
         nextDesign.fitStatus = "does_not_fit";
       }
-      for (const key of ["targetPvKw", "panelCount", "energyTargetPvKw", "energyTargetPanelCount", "planningPanelCapacity", "pvStrings", "panelsPerString", "stringDesign", "panelManufacturer", "panelModel", "panelSupplier", "panelProductUrl", "panelDatasheetUrl", "panelDatasheetVersion", "panelVmpV", "panelVocV", "panelImpA", "panelIscA", "panelLengthMm", "panelWidthMm", "panelThicknessMm", "panelWeightKg", "panelWeightBasis", "panelMaximumSystemVoltageV", "panelMaximumSeriesFuseA", "panelVocTemperatureCoefficientPercentPerC", "requiredPanelAreaM2", "inverterKw", "evChargingKw", "evChargingPhase", "generatorIncluded", "generatorPurchaseStatus", "generatorContinuousKw", "generatorSurgeKw", "batteryUsableKwh", "batteryChemistry", "batteryVoltage", "batteryAh", "batteryQuantity", "usableBatteryPercent"]) {
+      for (const key of ["targetPvKw", "panelCount", "energyTargetPvKw", "energyTargetPanelCount", "planningContingencyPercent", "planningPanelCapacity", "pvStrings", "panelsPerString", "stringDesign", "panelManufacturer", "panelModel", "panelSupplier", "panelProductUrl", "panelDatasheetUrl", "panelDatasheetVersion", "panelVmpV", "panelVocV", "panelImpA", "panelIscA", "panelLengthMm", "panelWidthMm", "panelThicknessMm", "panelWeightKg", "panelWeightBasis", "panelMaximumSystemVoltageV", "panelMaximumSeriesFuseA", "panelVocTemperatureCoefficientPercentPerC", "requiredPanelAreaM2", "inverterKw", "evChargingKw", "evChargingPhase", "generatorIncluded", "generatorPurchaseStatus", "generatorContinuousKw", "generatorSurgeKw", "batteryUsableKwh", "calculatedBatteryUsableKwh", "batteryChemistry", "batteryVoltage", "batteryAh", "batteryQuantity", "usableBatteryPercent"]) {
         if (nextDesign[key] === undefined) delete nextDesign[key];
       }
       settings.designCalculator = nextDesign;
@@ -1460,6 +1488,7 @@ export async function applyWattsonActions(
       calculator.targetPvKw = Number((panelCount * panelWatts / 1000).toFixed(2));
       calculator.energyTargetPvKw = dependentSizing.energyTargetPvKw;
       calculator.energyTargetPanelCount = dependentSizing.energyTargetPanelCount;
+      calculator.planningContingencyPercent = dependentSizing.planningContingencyPercent;
       calculator.planningPanelCapacity = dependentSizing.planningPanelCapacity;
       calculator.fitLimited = dependentSizing.fitLimited;
       delete calculator.pvStrings;
@@ -1497,6 +1526,7 @@ export async function applyWattsonActions(
         const batteryVoltage = Number(calculator.batteryVoltage) || 51.2;
         const usableBatteryPercent = Number(calculator.usableBatteryPercent) || 80;
         calculator.batteryUsableKwh = dependentSizing.batteryUsableKwh;
+        calculator.calculatedBatteryUsableKwh = dependentSizing.calculatedBatteryUsableKwh;
         calculator.batteryVoltage = batteryVoltage;
         calculator.usableBatteryPercent = usableBatteryPercent;
         calculator.batteryAh = Math.ceil(dependentSizing.batteryUsableKwh * 1000 / (batteryVoltage * usableBatteryPercent / 100));
@@ -1815,19 +1845,19 @@ export async function applyWattsonActions(
           .eq("project_id", projectId);
         const connectionsTableMissing = connections.error && ["PGRST205", "42P01"].includes(connections.error.code ?? "");
         if (connections.error && !connectionsTableMissing) throw connections.error;
-        for (const connection of connections.data ?? []) {
-          const sourceId = String(connection.source_ref ?? "").replace(/^component:/, "");
-          const targetId = String(connection.target_ref ?? "").replace(/^component:/, "");
-          const nextSource = removedIds.includes(sourceId) ? `component:${retainedId}` : connection.source_ref;
-          const nextTarget = removedIds.includes(targetId) ? `component:${retainedId}` : connection.target_ref;
-          if (nextSource === connection.source_ref && nextTarget === connection.target_ref) continue;
-          if (nextSource === nextTarget) {
+        const connectionMerge = planReplacementConnectionMerge(
+          (connections.data ?? []).map((connection) => ({ id: connection.id, source_ref: String(connection.source_ref ?? ""), target_ref: String(connection.target_ref ?? "") })),
+          retainedId,
+          removedIds,
+        );
+        for (const connection of connectionMerge) {
+          if (connection.operation === "delete") {
             const deletedConnection = await supabase.from("system_connections").delete().eq("id", connection.id).eq("project_id", projectId);
             if (deletedConnection.error) throw deletedConnection.error;
           } else {
             const updatedConnection = await supabase
               .from("system_connections")
-              .update({ source_ref: nextSource, target_ref: nextTarget })
+              .update({ source_ref: connection.source_ref, target_ref: connection.target_ref })
               .eq("id", connection.id)
               .eq("project_id", projectId);
             if (updatedConnection.error) throw updatedConnection.error;

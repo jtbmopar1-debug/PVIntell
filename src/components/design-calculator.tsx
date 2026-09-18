@@ -330,10 +330,10 @@ function batterySizingBasis(project: Project, currentDesign: DesignCalculatorSta
     n(currentDesign.panelWatts, defaultProposalPanel.watts),
     n(currentDesign.panelCount) || undefined,
   );
-  if (sizing.batteryUsableKwh && sizing.batterySizingBasis === "solar_assisted_typical_winter")
-    return `${round(sizing.batteryUsableKwh, 1)} kWh usable: the larger of assumed non-solar-window load (${round(sizing.assumedNonSolarLoadKwh ?? 0, 1)} kWh) and weakest-month PV shortfall (${round((sizing.dailyEnergyKwh ?? 0) - (sizing.weakestMonthPvKwh ?? 0), 1)} kWh)`;
-  if (sizing.batteryUsableKwh)
-    return `${round(sizing.dailyEnergyKwh ?? 0, 1)} kWh/day × ${sizing.batteryOnlyDays} battery-only day equivalent`;
+  if (sizing.batteryUsableKwh && sizing.calculatedBatteryUsableKwh && sizing.batterySizingBasis === "solar_assisted_typical_winter")
+    return `${round(sizing.calculatedBatteryUsableKwh, 1)} kWh calculated; ${round(sizing.batteryUsableKwh, 1)} kWh proposed with 20% planning contingency`;
+  if (sizing.batteryUsableKwh && sizing.calculatedBatteryUsableKwh)
+    return `${round(sizing.calculatedBatteryUsableKwh, 1)} kWh calculated for ${sizing.batteryOnlyDays} battery-only day equivalent; ${round(sizing.batteryUsableKwh, 1)} kWh proposed with 20% contingency`;
   return sizing.warnings.find((warning) => warning.startsWith("Battery size withheld"))
     ?? "Usable storage requires recorded daily energy, scope and source timing";
 }
@@ -466,6 +466,13 @@ function acCurrentForConnection(connection: { from: string; to: string }, design
   return acCurrentForRating(ratingKw, design);
 }
 
+function microinverterPlanningSpecification(design: DesignCalculatorState) {
+  const quantity = n(design.panelCount) > 0 ? n(design.panelCount) : undefined;
+  const combinedKw = n(design.inverterKw) > 0 ? n(design.inverterKw) : undefined;
+  const unitWatts = quantity && combinedKw ? round(combinedKw * 1000 / quantity, 0) : undefined;
+  return { quantity, combinedKw, unitWatts };
+}
+
 export function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number], design: DesignCalculatorState) {
   const supplementary = supplementaryArray(design);
   if (supplementary && node.id === "solar-pv-1") return { ...node, detail: `${design.existingPanelGroup?.proposedUseCount ?? "?"} x ${design.existingPanelGroup?.wattsEach ?? design.panelWatts ?? "?"} W user-owned panels; suitability to verify` };
@@ -487,11 +494,21 @@ export function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculato
       const recordedBatteryInverter = design.proposedAsBuiltDraft?.nodes?.find((candidate) => candidate.id === "battery-inverter");
       const hasSeparateHybridPath = Boolean(design.batteryVoltage || design.batteryUsableKwh || (recordedBatteryInverter && recordedBatteryInverter.label !== "Battery power box"));
       const existingPanelCount = supplementary && hasSeparateHybridPath ? design.existingPanelGroup?.proposedUseCount : undefined;
+      const microinverterPlan = microinverterPlanningSpecification(design);
+      const proposedUnitCount = !existingPanelCount ? microinverterPlan.quantity : undefined;
+      const proposedUnitWatts = proposedUnitCount ? microinverterPlan.unitWatts : undefined;
       return {
         ...node,
+        label: existingPanelCount
+          ? `Microinverters for ${existingPanelCount} panels`
+          : proposedUnitCount
+            ? `${proposedUnitCount} × microinverters`
+            : "Microinverters",
         detail: existingPanelCount
           ? `Existing microinverter fleet serving ${existingPanelCount} panels; combined AC nameplate and branch ratings to confirm`
-          : `${design.inverterKw} kW combined AC capacity proposed across all microinverters; exact unit count, model and branch ratings to confirm`,
+          : proposedUnitCount && proposedUnitWatts
+            ? `${proposedUnitWatts} W AC per unit planning basis; ${design.inverterKw} kW combined AC capacity; exact model, panels per unit and branch grouping to confirm`
+            : `${design.inverterKw} kW combined AC capacity proposed; exact unit count, model, panels per unit and branch grouping to confirm`,
       };
     }
     if (design.inverterPlan && design.inverterPlan.unitRatingsKw.length > 1) return {
@@ -605,11 +622,47 @@ export function schematicCanvasSize(nodes: ProposedNode[], nodeWidth = 105, node
 }
 
 export function tidySchematicNodes(nodes: ProposedNode[]) {
-  return nodes.map((node, index) => ({
+  const recognised = nodes.some((node) => /^(solar|optimisers-|controller|pv-inverter|inverter|battery|ac-safety|switchboard|earth|generator|grid-|ev-charger)/.test(node.id));
+  if (!recognised) return nodes.map((node, index) => ({
     ...node,
     x: 35 + (index % 4) * 260,
     y: 30 + Math.floor(index / 4) * 190,
   }));
+
+  const solarIds = nodes.filter((node) => node.id === "solar" || /^solar-pv-/.test(node.id)).map((node) => node.id);
+  const solarRow = (id: string) => {
+    const sourceId = id.startsWith("optimisers-") ? id.slice("optimisers-".length) : id;
+    const match = sourceId.match(/(?:solar-pv-|solar-safety-)(\d+)/);
+    const sourceIndex = solarIds.indexOf(sourceId);
+    return 30 + Math.max(0, match ? Number(match[1]) - 1 : sourceIndex) * 175;
+  };
+  const solarCentreY = 30 + Math.max(0, solarIds.length - 1) * 87.5;
+  const batteryY = Math.max(380, 30 + solarIds.length * 175);
+  const generatorY = batteryY + 190;
+  let customIndex = 0;
+
+  return nodes.map((node) => {
+    const id = node.id;
+    if (id === "solar" || /^solar-pv-/.test(id)) return { ...node, x: 35, y: solarRow(id) };
+    if (id.startsWith("optimisers-")) return { ...node, x: 200, y: solarRow(id) };
+    if (id === "solar-safety" || /^solar-safety-/.test(id) || id === "supplementary-solar-safety") return { ...node, x: 365, y: solarRow(id) };
+    if (id === "controller" || id === "pv-inverter" || id === "inverter" || /^inverter-\d+$/.test(id)) return { ...node, x: 545, y: solarCentreY };
+    if (/^inverter-(?:ac|battery)-protection-/.test(id)) return { ...node, x: id.includes("battery") ? 365 : 725, y: id.includes("battery") ? batteryY : 220 };
+    if (id === "battery") return { ...node, x: 35, y: batteryY };
+    if (id === "battery-safety") return { ...node, x: 200, y: batteryY };
+    if (id === "battery-inverter") return { ...node, x: 545, y: batteryY };
+    if (id === "ac-safety") return { ...node, x: 725, y: 220 };
+    if (id === "switchboard") return { ...node, x: 905, y: 220 };
+    if (id === "earth") return { ...node, x: 1085, y: 220 };
+    if (id === "generator") return { ...node, x: 35, y: generatorY };
+    if (id === "generator-changeover") return { ...node, x: 365, y: generatorY };
+    if (id === "grid-supply") return { ...node, x: 545, y: generatorY };
+    if (id === "grid-changeover") return { ...node, x: 725, y: generatorY };
+    if (id === "ev-charger") return { ...node, x: 1085, y: 410 };
+    const position = { x: 35 + (customIndex % 6) * 180, y: generatorY + 190 + Math.floor(customIndex / 6) * 175 };
+    customIndex += 1;
+    return { ...node, ...position };
+  });
 }
 
 type SchematicConnectionView = "all" | "ac" | "dc" | "earth";
@@ -697,6 +750,11 @@ export function schematicCardDetail(node: ProposedNode, draft: ProposedDraft, de
     const rating = node.detail.match(/(\d+(?:\.\d+)?)\s*V\s*DC\s*minimum\s*·\s*(\d+(?:\.\d+)?)\s*A\s*minimum/i);
     return rating ? `${rating[1]} V · ${rating[2]} A · DC` : "TBC · DC";
   }
+  if (node.id === "pv-inverter" && design.inverterArrangement === "microinverters") {
+    const plan = microinverterPlanningSpecification(design);
+    if (plan.quantity && plan.unitWatts && plan.combinedKw) return `${plan.quantity} × ${plan.unitWatts} W AC · ${plan.combinedKw} kW total`;
+    return plan.combinedKw ? `${plan.combinedKw} kW combined · quantity TBC` : "Quantity and rating TBC";
+  }
   if (isPhysicalInverterNode(node.id)) {
     const recordedRating = node.id === "battery-inverter" ? Number(`${node.label} ${node.detail}`.match(/\b(\d+(?:\.\d+)?)\s*kW\b/i)?.[1]) || undefined : undefined;
     const rating = recordedRating ?? (node.id === "battery-inverter" ? undefined : inverterRatingForNode(node.id, design));
@@ -776,6 +834,18 @@ function componentSpecifications(node: ProposedNode, draft: ProposedDraft, desig
       { label: "Minimum voltage rating", value: `${ratedVoltage} V DC`, note: `String nameplate Voc ${round(stringVoc, 1)} V; confirm cold-corrected maximum.` },
       { label: "Minimum current rating", value: `${ratedCurrent} A` },
       { label: "Poles / enclosure", value: "Confirm for the selected inverter, location and installation method" },
+    ];
+  }
+
+  if (node.id === "pv-inverter" && design.inverterArrangement === "microinverters") {
+    const plan = microinverterPlanningSpecification(design);
+    return [
+      { label: "Proposed quantity", value: plan.quantity ? `${plan.quantity} units` : "To be confirmed", note: "One unit per panel is the planning basis until an exact model is selected; some products serve more than one panel." },
+      { label: "Per-unit AC rating", value: plan.unitWatts ? `${plan.unitWatts} W each` : "To be confirmed" },
+      { label: "Combined AC capacity", value: plan.combinedKw ? `${plan.combinedKw} kW` : "To be confirmed" },
+      { label: "Exact equipment", value: "Manufacturer, model, panel compatibility, units per branch and gateway to be confirmed" },
+      { label: "AC system", value: `${design.connectionType === "ac_three" ? 400 : 230} V AC` },
+      { label: "Connected AC circuit", value: ac?.protectionAmps ? `${ac.protectionAmps} A planning protection · ${value(ac.cableSizeMm2, "mm² cable")}` : "Complete the route configuration" },
     ];
   }
 
@@ -1838,7 +1908,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         setChatMessages((current) => [...current, { role: "assistant", content: `Done — I’ve changed the calculated inverter requirement to **${inverterKw} kW** and selected **${arrangement}** as the planning arrangement. Connected battery current, AC aggregation, cable and protection values now require recalculation and local-rule review.` }]);
         return;
       }
-      const response = await fetch("/api/wattson/discovery-help", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: userMessage, conversationId: chatConversationId, requestId: crypto.randomUUID(), siteId: projectSiteIdFromHref(wattsonHref), projectId: projectIdFromHref(wattsonHref), discoveryAnswers: {}, question: { id: `build_${subjectId}_${chatIntent}`, title: `${subjectTitle} — ${chatIntent}`, stage: "Build It", help: `Use this selected schematic context: ${JSON.stringify({ intent: chatIntent, node: selectedNode, connection: selectedConnection, panelCount: design.panelCount, panelWatts: design.panelWatts, pvStrings: design.pvStrings, panelsPerString: design.panelsPerString, panelVmpV: design.panelVmpV, panelIscA: design.panelIscA, inverterKw: design.inverterKw, batteryVoltage: design.batteryVoltage })}` }, recentConversation: nextMessages.slice(-8) }) });
+      const response = await fetch("/api/wattson/discovery-help", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: userMessage, conversationId: chatConversationId, requestId: crypto.randomUUID(), siteId: projectSiteIdFromHref(wattsonHref), projectId: projectIdFromHref(wattsonHref), discoveryAnswers: {}, question: { id: `build_${subjectId}_${chatIntent}`, title: `${subjectTitle} — ${chatIntent}`, stage: "Build It", help: `This is a proposed-design guidance chat. Give a concrete planned answer from the recorded design. Do not push an unresolved brand or model choice back to the user merely because exact equipment has not been selected. State the equipment class, quantity, per-unit target, connection arrangement and selection limits that can be derived now, and leave only the exact product TBC. Ask for a make and model only when the user already owns or selected one, or when it is strictly necessary to verify a final product-specific limit. Use this selected schematic context: ${JSON.stringify({ proposalStatus: "proposed", intent: chatIntent, node: selectedNode, connection: selectedConnection, inverterArrangement: design.inverterArrangement, panelCount: design.panelCount, panelWatts: design.panelWatts, pvStrings: design.pvStrings, panelsPerString: design.panelsPerString, panelVmpV: design.panelVmpV, panelVocV: design.panelVocV, panelImpA: design.panelImpA, panelIscA: design.panelIscA, inverterKw: design.inverterKw, batteryVoltage: design.batteryVoltage })}` }, recentConversation: nextMessages.slice(-8) }) });
       const body = await response.json();
       if (body.conversationId) setChatConversationId(body.conversationId);
       if (!response.ok) throw new Error(body.error ?? "Wattson is unavailable");
@@ -1904,6 +1974,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
       targetPvKw: sizing.pvKw ?? Number((panelCount * panelWatts / 1000).toFixed(2)),
       energyTargetPvKw: sizing.energyTargetPvKw,
       energyTargetPanelCount: sizing.energyTargetPanelCount,
+      planningContingencyPercent: 20,
       planningPanelCapacity: sizing.planningPanelCapacity,
       fitLimited: sizing.fitLimited,
       requiredPanelAreaM2: design.panelLengthMm && design.panelWidthMm ? Number((panelCount * design.panelLengthMm * design.panelWidthMm / 1_000_000).toFixed(1)) : undefined,
@@ -1920,6 +1991,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         projectType: project.projectType,
       }),
       batteryUsableKwh: includePlannedBattery ? sizing.batteryUsableKwh : undefined,
+      calculatedBatteryUsableKwh: includePlannedBattery ? sizing.calculatedBatteryUsableKwh : undefined,
       batteryAh,
       sizingMethod: "user-adjusted",
       sizingInputs: {
@@ -1994,7 +2066,12 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const addItem = (label: string, image?: string) => {
     if (!label?.trim()) return;
     const id = `custom-${Date.now()}`;
-    onChange(repairCustomEquipmentDraft({ ...draft, nodes: [...nodes, { id, label: label.trim(), detail: "Added from the component library", image: image ?? customEquipmentImage(label), x: 35 + (nodes.length % 4) * 260, y: 30 + Math.floor(nodes.length / 4) * 190 }] }));
+    const viewport = canvasViewportRef.current;
+    const centreX = viewport ? (viewport.scrollLeft + viewport.clientWidth / 2) / zoom - nodeWidth / 2 : canvasRenderWidth / 2 - nodeWidth / 2;
+    const centreY = viewport ? (viewport.scrollTop + viewport.clientHeight / 2) / zoom - 64 : canvasSize.height / 2 - 64;
+    const x = Math.round(Math.max(20, Math.min(canvasRenderWidth - nodeWidth - 20, centreX)) / 10) * 10;
+    const y = Math.round(Math.max(20, Math.min(canvasSize.height - 148, centreY)) / 10) * 10;
+    onChange(repairCustomEquipmentDraft({ ...draft, nodes: [...nodes, { id, label: label.trim(), detail: "Added from the component library", image: image ?? customEquipmentImage(label), x, y }] }));
     setAddingItem(false);
     setAssetSearch("");
     setCustomItemName("");
@@ -2442,6 +2519,16 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
       { from: "ac-safety", to: "switchboard", label: "To power board", kind: "ac" },
       { from: "switchboard", to: "earth", label: "Safety earth wire", kind: "earth" },
     );
+  }
+  if (design.inverterArrangement === "optimiser_string" && !nodes.some((node) => node.id.startsWith("optimisers-"))) {
+    for (const solar of solarNodes) {
+      const id = `optimisers-${solar.id}`;
+      const allocated = plannedArrays.find((array, index) => `solar-pv-${index + 1}` === solar.id)?.allocatedPanelCount;
+      const quantity = solar.id === "solar" ? design.panelCount : allocated;
+      nodes.push({ id, label: quantity ? `${quantity} × DC optimisers` : "DC optimisers", detail: quantity ? `${quantity} module-level optimisers proposed; exact panel and inverter compatibility to confirm` : "One module-level optimiser per panel; quantity and compatibility to confirm", image: "/schematic-components/dc-optimisers.svg", x: 240, y: solar.y });
+      for (const connection of connections) if (connection.from === solar.id && connection.kind === "solar-dc") connection.from = id;
+      connections.push({ from: solar.id, to: id, label: "Module-level DC inputs", kind: "solar-dc" });
+    }
   }
   if (gridConnected) {
     nodes.push(

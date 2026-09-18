@@ -743,19 +743,19 @@ export function SystemSchematic({
         proposed: battery.status !== "confirmed",
         incompatible: componentSuitabilityUnresolved(battery),
       }))),
-      ...generators.map((generator) => ({
-        id: `component:${generator.id}`,
-        label: generator.name,
+      ...generators.flatMap((generator) => Array.from({ length: Math.max(1, generator.quantity) }, (_, index) => ({
+        id: index ? `component:${generator.id}:unit-${index + 1}` : `component:${generator.id}`,
+        label: generator.quantity > 1 ? `${generator.name} ${index + 1}` : generator.name,
         subtitle: [componentRating(generator), generator.manufacturer, generator.model].filter(Boolean).join(" · ") || "Generator input",
         kind: "generator" as const,
         href: componentHref(base, generator),
         imageSrc: componentImage(generator),
         proposed: generator.status !== "confirmed",
         incompatible: componentSuitabilityUnresolved(generator),
-      })),
-      ...gridComponents.map((grid) => ({
-        id: `component:${grid.id}`,
-        label: grid.name,
+      }))),
+      ...gridComponents.flatMap((grid) => Array.from({ length: Math.max(1, grid.quantity) }, (_, index) => ({
+        id: index ? `component:${grid.id}:unit-${index + 1}` : `component:${grid.id}`,
+        label: grid.quantity > 1 ? `${grid.name} ${index + 1}` : grid.name,
         subtitle:
           [grid.manufacturer, grid.model].filter(Boolean).join(" · ") ||
           "Grid / utility AC source",
@@ -763,7 +763,7 @@ export function SystemSchematic({
         href: componentHref(base, grid),
         imageSrc: GRID_CONNECTION_IMAGE,
         proposed: grid.status !== "confirmed",
-      })),
+      }))),
       ...(upstreamAcName && !gridComponents.length
         ? [
             {
@@ -798,7 +798,7 @@ export function SystemSchematic({
           imageSrc: EARTH_ELECTRODE_IMAGE,
         }
       : undefined;
-    const accessoryNodes: DiagramNode[] = accessories.map((component) => {
+    const accessoryNodes: DiagramNode[] = accessories.flatMap((component) => {
       const context = `${component.name} ${component.notes ?? ""} ${JSON.stringify(component.specs)}`.toLowerCase();
       const inlineDevice = ["isolator", "protection", "combiner"].includes(
         component.kind,
@@ -810,9 +810,9 @@ export function SystemSchematic({
           : inlineDevice && /battery|bank|bms/.test(context)
             ? "battery-inline"
             : "general";
-      return {
-        id: `component:${component.id}`,
-        label: component.name,
+      return Array.from({ length: Math.max(1, component.quantity) }, (_, index) => ({
+        id: index ? `component:${component.id}:unit-${index + 1}` : `component:${component.id}`,
+        label: component.quantity > 1 ? `${component.name} ${index + 1}` : component.name,
         subtitle: [componentRating(component), component.manufacturer, component.model].filter(Boolean).join(" · ") || component.kind,
         kind: "accessory",
         href: componentHref(base, component),
@@ -820,7 +820,7 @@ export function SystemSchematic({
         proposed: component.status !== "confirmed",
         incompatible: componentSuitabilityUnresolved(component),
         placement,
-      };
+      }));
     });
 
     const upperLeft = sourceNodes.filter((node) => node.kind === "pv");
@@ -1144,6 +1144,23 @@ export function SystemSchematic({
     const positions = new Map(diagram.positions);
     for (const [nodeRef, position] of Object.entries(positionOverrides))
       positions.set(nodeRef, position);
+    // When an existing record's quantity is increased, only unit 1 has the
+    // original saved position. Place the new physical-unit cards beside that
+    // anchor instead of leaving their generic defaults at the canvas edge.
+    for (const nodeRef of positions.keys()) {
+      const unit = nodeRef.match(/^(component:[^:]+):unit-(\d+)$/);
+      if (!unit || Object.hasOwn(positionOverrides, nodeRef)) continue;
+      const anchor = positions.get(unit[1]);
+      if (!anchor) continue;
+      const unitNumber = Number(unit[2]);
+      const step = unitNumber - 1;
+      const direction = step % 2 ? 1 : -1;
+      const distance = Math.ceil(step / 2) * 130;
+      positions.set(nodeRef, {
+        x: Math.max(20, Math.min(980, anchor.x + direction * distance)),
+        y: anchor.y,
+      });
+    }
     return new Map(Array.from(positions, ([nodeRef, position]) => [
       nodeRef,
       { x: position.x * horizontalExpansion, y: position.y },
