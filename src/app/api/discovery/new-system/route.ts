@@ -10,7 +10,7 @@ import { refreshProjectSolarResource } from "@/design/refresh-solar-resource";
 import { createClient } from "@/lib/supabase/server";
 
 const answersSchema = z.record(z.string(), z.union([z.string().max(4000), z.number(), z.array(z.string().max(100)).min(1).max(20)]));
-const draftSchema = z.object({ draftId: z.uuid().optional(), answers: answersSchema, questionId: z.string().max(100).optional() });
+const draftSchema = z.object({ draftId: z.uuid().optional(), projectId: z.uuid().optional(), answers: answersSchema, questionId: z.string().max(100).optional() });
 const completeSchema = z.object({ draftId: z.uuid().optional(), answers: answersSchema });
 const editSchema = z.object({ projectId: z.uuid(), answers: answersSchema });
 
@@ -158,6 +158,19 @@ export async function PUT(request: Request) {
   const context = await accountContext();
   if ("error" in context) return context.error;
   const answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers);
+  if (parsed.data.projectId) {
+    const project = await context.supabase.from("projects").select("id").eq("id", parsed.data.projectId).eq("owner_id", context.userId).maybeSingle();
+    if (project.error || !project.data) return Response.json({ error: project.error?.message ?? "System not found." }, { status: 404 });
+    const saved = await context.supabase.from("questionnaire_responses").upsert({
+      project_id: parsed.data.projectId,
+      template_key: "guided_new_system",
+      template_version: 1,
+      status: "draft",
+      answers,
+    }, { onConflict: "project_id,template_key" });
+    if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+    return Response.json({ saved: true, projectId: parsed.data.projectId });
+  }
   if (parsed.data.draftId) {
     const saved = await context.supabase.from("discovery_drafts").upsert({
       id: parsed.data.draftId,

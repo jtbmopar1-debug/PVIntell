@@ -51,6 +51,7 @@ interface GeminiInteraction {
   output_text?: string;
   status?: string;
   steps?: GeminiStep[];
+  outputs?: GeminiStep[];
   usage?: {
     total_input_tokens?: number;
     total_output_tokens?: number;
@@ -233,10 +234,10 @@ export const INVERTER_PHASE_TOPOLOGY_POLICY =
 export const WATTSON_REGULATION_POLICY =
   "componentRegulatoryLibrary is the single canonical list of regulatory subjects for each equipment type. currentRegulatoryGuidance contains a previously researched, cited jurisdiction overlay when one is fresh. Use that fresh overlay instead of searching again unless the user explicitly asks for the latest/current position, the cached review date is stale, or the requested subject is not covered. A topic checklist is not itself a legal rule or compliance approval. When requestClassification.regulatory is true and no adequate fresh overlay is supplied, research the complete current requirements for the confirmed Site jurisdiction from authoritative primary sources before answering. For an ordinary component question, keep the visible answer concise: give the requested technical result, include any regulatory condition that changes that result, then briefly state that additional local requirements apply and name their subjects. Offer to show the complete applicable regulation details instead of dumping them unasked. If the user asks to see the regulations, present them as one connected requirement: cover scope and exceptions, component class/certification, rating or sizing method, mounting and permitted location, clearances and access, enclosure/environmental conditions, required companion protection/isolation/earthing/labelling, and any inspection, permit, network or qualified-worker requirement that controls the result. Include only sections relevant to the component and installation, but never quote one attractive limit while omitting another condition that changes whether it is permitted. Separate legal or authority requirements from manufacturer limits and general engineering guidance. If authoritative sources do not establish the complete applicable requirement, identify what remains unverified instead of presenting a partial rule as complete.";
 
-export function visibleGeminiMessage(raw: Pick<GeminiInteraction, "output_text" | "steps">) {
+export function visibleGeminiMessage(raw: Pick<GeminiInteraction, "output_text" | "steps" | "outputs">) {
   const direct = raw.output_text?.trim();
   if (direct) return direct;
-  return (raw.steps ?? [])
+  return ([...(raw.steps ?? []), ...(raw.outputs ?? [])])
     .filter((step) => step.type === "model_output")
     .flatMap((step) => step.content ?? [])
     .filter((block) => block.type === "text" && typeof block.text === "string")
@@ -251,12 +252,13 @@ function parseInteraction(
   model: string,
   searchEnabled: boolean,
 ): GeminiWattsonResult {
-  const outputBlocks = (raw.steps ?? [])
+  const responseSteps = [...(raw.steps ?? []), ...(raw.outputs ?? [])];
+  const outputBlocks = responseSteps
     .filter((step) => step.type === "model_output")
     .flatMap((step) => step.content ?? [])
     .filter((block) => block.type === "text" && typeof block.text === "string");
   const message = visibleGeminiMessage(raw);
-  const functionCalls = (raw.steps ?? [])
+  const functionCalls = responseSteps
     .filter((step) => step.type === "function_call" && step.name)
     .map((step) => ({ name: step.name as string, arguments: step.arguments }));
   const actions = functionCalls.filter((action) => action.name !== "offer_optional_record_action");
@@ -392,6 +394,7 @@ Response style:
 - Chat history is not the system knowledge database. Conversation facts remain durable in conversationState; move them into an application record only after a separate explicit save, attach or update instruction.
 - Treat a newly mentioned value that conflicts with an existing installed record as a proposed correction, not immediate permission to edit. State the current recorded value and proposed new value in plain language, then explicitly ask whether the user wants that exact record changed. Do not call a mutating action in that turn. Only after the user clearly confirms should you use the dedicated structured update action; update the real equipment, PV array, connection or system field rather than saving only a general knowledge note. An unmistakable direct command such as “change PV3 from 5 to 6 panels” is already confirmation and does not need a second confirmation question.
 - A request to change “all”, “both”, or a stated number of existing records is a bulk structured-record request. Inspect the exact matching records and emit one dedicated update action for every matching record ID. Never substitute record_system_knowledge for any requested equipment, PV-array, connection or system-record edit. If the source values to copy or the target records are ambiguous, do not claim completion: name the ambiguity and ask one focused question. Say “done” only when every requested record has a corresponding update action.
+- When the user explicitly replaces existing equipment with another unit, use replace_system_components with every exact source component ID and the confirmed replacement details. This is one replacement mutation, not a series of ordinary field updates. Never offer to do this and then claim the chat lacks mutation tools.
 - Never infer single-phase or three-phase from the number of breaker or switch toggles. Older single-phase switchboards can contain linked multi-pole devices. Say that most ordinary homes use single-phase service, commonly around 230 V in New Zealand and many other countries or roughly 110–120 V in some overseas systems, but confirm from the meter, supply documents, main-switch labelling or an appropriate professional—not toggle count.
 - A generator selected for inclusion does not need to be purchased yet. If the discovery record says it is not purchased, carry a clearly proposed continuous and surge target through the Design Calculator and full schematic instead of demanding make/model details or omitting the generator. Keep the target provisional until load overlap, battery-charging demand, voltage, phase, waveform, start method and transfer/inverter-input compatibility are checked.
 - During a grid outage, do not assume a selected high-power load must run from the battery inverter. When generator supply is included, follow the recorded generator outage role and distinguish loads assigned to the generator from loads assigned to the battery-backed bus. Account for generator load steps and simultaneous battery-charging demand without counting the same load on both sources.
@@ -472,6 +475,7 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
     "record_added_component",
     "update_system_settings",
     "update_system_component",
+    "replace_system_components",
     "record_or_update_pv_array",
     "record_or_update_system_connection",
     "record_or_update_load",

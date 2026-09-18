@@ -27,9 +27,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   if (siteRows.error) throw siteRows.error;
   if (systemRows.error) throw systemRows.error;
   if (discoveryDraftRows.error) throw discoveryDraftRows.error;
-  const activeConversation = requestedConversationId
+  let activeConversation = requestedConversationId
     ? conversation.data ?? undefined
     : undefined;
+  if (activeConversation?.id) {
+    const contexts = await supabase.from("user_chat_messages").select("structured_context").eq("conversation_id", activeConversation.id).order("created_at", { ascending: false }).limit(100);
+    if (contexts.error) throw contexts.error;
+    const isDiscoveryConversation = (contexts.data ?? []).some((message) => message.structured_context?.kind === "discovery_help" || message.structured_context?.kind === "discovery_topic");
+    if (isDiscoveryConversation) activeConversation = undefined;
+  }
   const sites: Site[] = (siteRows.data ?? []).map((site) => ({
     id: site.id, name: site.name, location: site.location || "Location not set",
     latitude: site.latitude == null ? undefined : Number(site.latitude), longitude: site.longitude == null ? undefined : Number(site.longitude),
@@ -40,6 +46,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     const workflowOrigin: SystemSummary["workflowOrigin"] = settings.workflowOrigin ?? (settings.schematicOrigin === "structured_proposal_intake" ? "proposed-plan" : settings.systemStatus === "unconfirmed" ? "system-capture" : "discovery");
     return { id: system.id, siteId: system.site_id, name: system.name, projectType: String(system.mode).replace("_", "-") as SystemSummary["projectType"], phase: system.phase as SystemSummary["phase"], workflowOrigin };
   });
+  const discoveryEquipmentIntakeSystemIds = new Set((systemRows.data ?? []).filter((system) => {
+    const settings = (system.settings ?? {}) as { schematicOrigin?: string; workflowOrigin?: string };
+    return settings.workflowOrigin === "discovery" && settings.schematicOrigin === "structured_proposal_intake";
+  }).map((system) => system.id));
   const systemIds = systems.map((system) => system.id);
   const [arrays, activeConnections, installationSteps] = await Promise.all([
     systemIds.length ? supabase.from("pv_arrays").select("project_id,panel_watts,panel_count,orientation_degrees,tilt_degrees").in("project_id", systemIds) : Promise.resolve({ data: [], error: null }),
@@ -59,7 +69,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   }
   const resumeHrefs = Object.fromEntries(systems.filter((system) => ["discover", "design", "build", "check", "commission"].includes(system.phase)).map((system) => {
     const unfinished = (installationSteps.data ?? []).find((step) => step.project_id === system.id && !step.completed_at);
-    const href = system.workflowOrigin === "proposed-plan" ? `/proposals/new?site=${system.siteId}&system=${system.id}` : system.phase === "discover" ? `/sites/${system.siteId}/discovery?system=${system.id}` : system.phase === "design" ? `/sites/${system.siteId}/systems/${system.id}/schematic` : unfinished ? `/sites/${system.siteId}/systems/${system.id}/build/${unfinished.id}` : `/sites/${system.siteId}/systems/${system.id}?view=build`;
+    const href = system.workflowOrigin === "proposed-plan" ? `/proposals/new?site=${system.siteId}&system=${system.id}` : system.phase === "discover" && discoveryEquipmentIntakeSystemIds.has(system.id) ? `/discovery/new-system?edit=${system.id}` : system.phase === "discover" ? `/sites/${system.siteId}/discovery?system=${system.id}` : system.phase === "design" ? `/sites/${system.siteId}/systems/${system.id}/schematic` : unfinished ? `/sites/${system.siteId}/systems/${system.id}/build/${unfinished.id}` : `/sites/${system.siteId}/systems/${system.id}?view=build`;
     return [system.id, href];
   }));
   const defaultSystemSiteId = systems.find((system) => system.id === profile.data.dashboard_default_system_id)?.siteId;

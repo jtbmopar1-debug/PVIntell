@@ -274,6 +274,12 @@ export async function POST(request: Request) {
   if (conversation.error) return Response.json({ error: conversation.error.message }, { status: 400 });
   if (parsed.data.conversationId && !conversation.data) return Response.json({ error: "That Wattson conversation was not found." }, { status: 404 });
   let conversationData = conversation.data;
+  if (conversationData) {
+    const contexts = await supabase.from("user_chat_messages").select("structured_context").eq("conversation_id", conversationData.id).order("created_at", { ascending: false }).limit(100);
+    if (contexts.error) return Response.json({ error: contexts.error.message }, { status: 400 });
+    const isDiscoveryConversation = (contexts.data ?? []).some((message) => message.structured_context?.kind === "discovery_help" || message.structured_context?.kind === "discovery_topic");
+    if (isDiscoveryConversation) conversationData = null;
+  }
   if (!conversationData) {
     if (await userConversationCount(supabase, userId) >= WATTSON_CONVERSATION_LIMIT)
       return Response.json({ error: `You have reached the ${WATTSON_CONVERSATION_LIMIT}-chat limit. Delete an old chat from Wattson chats before starting another.` }, { status: 409 });
@@ -560,6 +566,7 @@ export async function POST(request: Request) {
     const activeSubjectIsUnassociated = conversationState.activeSubject?.association === "unassociated";
     const dashboardTargetIsExplicit = Boolean(parsed.data.projectId) && !activeSubjectIsUnassociated;
     const dashboardTargetIsAmbiguous = !dashboardTargetIsExplicit && (connectedSystems.length > 1 || activeSubjectIsUnassociated);
+    const componentReplacementRequested = /\breplace\b[\s\S]{0,120}\b(?:equipment|components?|batter(?:y|ies)|inverters?|panels?|controllers?|generators?)\b|\b(?:equipment|components?|batter(?:y|ies)|inverters?|panels?|controllers?|generators?)\b[\s\S]{0,120}\breplace\b/i.test(parsed.data.message);
     const ownedSystemIds = new Set(systemIds);
     const appliedActions: AppliedWattsonAction[] = [];
     const actionsBySystem = new Map<string, WattsonActionRequest[]>();
@@ -568,7 +575,7 @@ export async function POST(request: Request) {
     for (const action of actionsAllowedByDecision(candidateActions, routeDecision)) {
       const projectId = actionProjectId(action);
       if (!projectId || !ownedSystemIds.has(projectId)) continue;
-      if (dashboardTargetIsAmbiguous && ["record_added_component", "update_system_component", "record_or_update_pv_array", "record_or_update_system_connection", "record_or_update_load", "record_system_knowledge"].includes(action.name)) continue;
+      if (dashboardTargetIsAmbiguous && ["record_added_component", "update_system_component", "replace_system_components", "record_or_update_pv_array", "record_or_update_system_connection", "record_or_update_load", "record_system_knowledge"].includes(action.name)) continue;
       actionsBySystem.set(projectId, [...(actionsBySystem.get(projectId) ?? []), action]);
     }
     let blockedArchitectureQuestion: string | undefined;
@@ -753,6 +760,10 @@ export async function POST(request: Request) {
       message = message
         ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`
         : `Done — ${updateSummary}.`;
+    if (componentReplacementRequested && !appliedActions.some((action) => action.type === "component_replaced"))
+      message = dashboardTargetIsAmbiguous
+        ? "I haven’t changed any equipment yet. Which Site and system contains the equipment you want replaced?"
+        : "I haven’t changed those equipment records. I could not match every source item and the replacement to exact structured records, so I need one clarification rather than pretending it was completed.";
     if (!message)
       message = appliedActions.length ? `Done — ${updateSummary}.` : "I didn’t produce a useful reply. Please send that once more.";
     const startFirstSystem = routeDecision.intent === "new_system";

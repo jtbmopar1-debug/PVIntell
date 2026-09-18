@@ -103,7 +103,7 @@ function hasPoolUse(answers: DiscoveryAnswers) {
 
 function hasPoolEquipmentToRate(answers: DiscoveryAnswers) {
   return answerValues(answers.pool_equipment).some((value) => value !== "none")
-    || answerValues(answers.pool_heating_method).some((value) => ["heat_pump", "resistive_electric", "spa_inline_heater", "gas", "hybrid"].includes(value));
+    || answerValues(answers.pool_heating_method).some((value) => ["heat_pump", "resistive_electric", "spa_inline_heater", "self_contained_spa", "gas", "hybrid"].includes(value));
 }
 
 function hasHouseholdMotorLoads(answers: DiscoveryAnswers) {
@@ -257,8 +257,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     ], showWhen: (answers) => answers.utility_relationship === "grid_connected",
   },
   {
-    id: "ac_phase_arrangement", stage: "discovery", title: "What AC phase arrangement is available or required?",
-    noviceHelp: "Most houses use single-phase power, commonly about 230 V in New Zealand and many countries or 110–120 V in some overseas systems. Check the meter, supply paperwork, main-switch label or existing inverter. Do not decide from the number of switch toggles—older single-phase boards may have linked multi-pole switches.",
+    id: "ac_phase_arrangement", stage: "discovery", title: "What type of AC power will this system use?",
+    noviceHelp: "Choose the AC phase arrangement the inverter will supply to the property or planned loads. If the system will supply DC loads only, choose the DC-only option.",
     technicalHelp: "Record the Site supply or required inverter-output topology from reliable evidence. Never infer phase count from breaker or switch-toggle count. Confirm conductor arrangement, phase-to-neutral and phase-to-phase voltage later where appropriate.",
     type: "choice", options: [
       { value: "single_phase", label: "Single-phase", description: "One AC phase supplies the property or planned loads." },
@@ -459,14 +459,14 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
   },
   {
     id: "current_energy_use", stage: "needs", title: "How much electricity does the property currently use?",
-    noviceHelp: "Look for kWh on a recent electricity bill. Enter a monthly total if available; otherwise Ask Wattson can help build an evidence-based appliance list before you continue.",
-    technicalHelp: "Enter representative monthly consumption in kWh; seasonal history can be added during review.", type: "number", unit: "kWh/month",
+    noviceHelp: "You do not need to understand kWh. Choose the description that sounds most like the way electricity is used here, use the monthly total from a recent bill if you have one, or ask Wattson to work through the appliances with you.",
+    technicalHelp: "Choose an indicative monthly energy band or enter representative measured consumption in kWh/month. Seasonal history can be added during review.", type: "number", unit: "kWh/month",
     showWhen: (answers) => answers.utility_relationship === "grid_connected" && !isPoolOnly(answers),
   },
   {
     id: "off_grid_daily_energy_use", stage: "needs", title: "How much electricity will you use on an average day?",
-    noviceHelp: "Enter the daily kWh shown by your inverter, battery monitor or energy meter. For a new build, Ask Wattson can help estimate it from the appliances and how long they run.",
-    technicalHelp: "Enter representative daily energy in kWh/day. Wattson needs this before proposing an exact panel count or battery capacity.",
+    noviceHelp: "You do not need to understand kWh. Choose the description that sounds most like the life you expect to live here, or ask Wattson to work through the appliances with you.",
+    technicalHelp: "Choose an indicative daily energy band or enter a representative measured average in kWh/day. Wattson will refine an estimate before proposing exact capacity.",
     type: "number", unit: "kWh/day", showWhen: (answers) => answers.utility_relationship === "off_grid" && !isPoolOnly(answers),
   },
   {
@@ -588,6 +588,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "resistive_electric", label: "Electric resistance heater", description: "Direct electric heating with high power demand." },
       { value: "domestic_hot_water", label: "Filled from domestic hot water", description: "Common for an indoor spa bath; include the energy needed for the household cylinder, geyser or other water heater to recover after filling." },
       { value: "spa_inline_heater", label: "Built-in spa-bath heater", description: "Maintains water temperature during use. Record its electrical input rating alongside the jet or air-pump load." },
+      { value: "self_contained_spa", label: "Self-contained spa / hot tub / jacuzzi", description: "A packaged spa with an electric heater and circulation or jet pumps. Record the heater and each pump separately because they may run together." },
       { value: "gas", label: "Gas heater", description: "Heat comes mainly from gas; pumps, ignition and controls still use electricity." },
       { value: "hybrid", label: "More than one method", description: "For example solar collectors with heat-pump or gas backup." },
     ], showWhen: hasPoolUse,
@@ -778,8 +779,16 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
 ];
 
 export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
+  const proposalEquipment = new Set(answerValues(answers.proposal_intake_equipment));
+  const yellowEquipmentQuestions = new Set([
+    ...(proposalEquipment.size ? ["existing_power_equipment_status", "existing_power_equipment"] : []),
+    ...(proposalEquipment.has("panels") ? ["panel_construction_interest", "existing_panel_selection"] : []),
+    ...(proposalEquipment.has("inverter") ? ["architecture_preference"] : []),
+    ...(proposalEquipment.has("battery") ? ["battery_requirement", "battery_chemistry"] : []),
+    ...(proposalEquipment.has("generator") ? ["generator_requirement", "generator_details"] : []),
+  ]);
   return newSystemQuestions
-    .filter((question) => !question.showWhen || question.showWhen(answers))
+    .filter((question) => !yellowEquipmentQuestions.has(question.id) && (!question.showWhen || question.showWhen(answers)))
     .map((question) => {
       if (question.id === "shade_affected_areas") {
         let areas: Array<{ id?: unknown; name?: unknown }> = [];

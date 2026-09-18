@@ -68,7 +68,7 @@ function completedSystemIntent(message: string) {
 }
 
 function structuredRecordChangeIntent(message: string) {
-  return /\b(?:update|change|charge(?=\s+to\b)|correct|set|make|standardise|standardize|copy)\b/i.test(message) && /\b(?:records?|equipment|components?|batter(?:y|ies)|inverters?|panels?|pv\s*strings?|arrays?|connections?)\b/i.test(message);
+  return /\b(?:update|change|charge(?=\s+to\b)|correct|replace|remove|set|make|standardise|standardize|copy)\b/i.test(message) && /\b(?:records?|equipment|components?|batter(?:y|ies)|inverters?|panels?|pv\s*strings?|arrays?|connections?)\b/i.test(message);
 }
 
 function uniformExistingArrayUpdates(message: string, project: Project) {
@@ -717,11 +717,11 @@ export async function POST(request: Request) {
           ? `${message}\n\nUpdated in PVIntell: ${updateSummary}.`
           : `Done — ${updateSummary}.`;
       if (recordChangeRequested) {
-        const recordUpdates = appliedActions.filter((action) => ["component_updated", "pv_array_updated", "connection_updated", "settings_updated"].includes(action.type));
+        const recordUpdates = appliedActions.filter((action) => ["component_updated", "component_replaced", "pv_array_updated", "connection_updated", "settings_updated"].includes(action.type));
         const requestedCount = requestedBulkCount(parsed.data.message);
         if (!recordUpdates.length) {
           message = "I haven’t changed those records. I could not map that request to the exact structured records and fields, so I need one clarification rather than pretending it was completed.";
-        } else if (requestedCount && recordUpdates.length < requestedCount) {
+        } else if (requestedCount && !recordUpdates.some((action) => action.type === "component_replaced") && recordUpdates.length < requestedCount) {
           message = `I updated ${recordUpdates.length} of the ${requestedCount} requested records, so this is not complete yet. ${recordUpdates.map((action) => action.summary).join("; ")}.`;
         }
       }

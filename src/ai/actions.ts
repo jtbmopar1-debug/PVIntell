@@ -538,6 +538,23 @@ const updateComponentSchema = z
       ([key, item]) => key !== "component_id" && item !== undefined,
     ),
   );
+const replaceComponentsSchema = z.object({
+  source_component_ids: z.array(z.uuid()).min(1).max(20),
+  component_type: componentType,
+  component_name: z.string().trim().min(1).max(120),
+  manufacturer: z.string().trim().min(1).max(120).optional(),
+  model: z.string().trim().min(1).max(160).optional(),
+  quantity: z.number().int().min(1).max(1000).default(1),
+  installation_location: z.string().trim().min(1).max(240).optional(),
+  notes: z.string().trim().min(1).max(2000).optional(),
+  serial_number: z.string().trim().min(1).max(200).optional(),
+  firmware_version: z.string().trim().min(1).max(120).optional(),
+  manual_url: z.url().max(1000).optional(),
+  specifications: z.array(z.object({
+    name: z.string().trim().min(1).max(100),
+    value: z.string().trim().min(1).max(500),
+  })).max(30).optional(),
+});
 const pvArrayActionSchema = z
   .object({
     operation: z.enum(["add", "update"]),
@@ -645,6 +662,7 @@ export interface AppliedWattsonAction {
     | "component_proposed"
     | "preliminary_design_updated"
     | "component_updated"
+    | "component_replaced"
     | "design_preference_updated"
     | "design_discovery_updated"
     | "system_knowledge_updated"
@@ -917,6 +935,49 @@ export const wattsonActionTools = [
         },
       },
       required: ["component_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    type: "function",
+    name: "replace_system_components",
+    description:
+      "Replace one or more exact existing component records with one replacement component after the user explicitly requests or confirms that replacement. Supply every source component UUID. All source records must exist in the same system and have the same component type as the replacement. This preserves schematic connections by moving them to the retained replacement record, then removes the superseded records. Never use for an ambiguous match or a hypothetical upgrade.",
+    parameters: {
+      type: "object",
+      properties: {
+        project_id: {
+          type: "string",
+          description: "Exact system UUID. Required when working from dashboard context.",
+        },
+        source_component_ids: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          maxItems: 20,
+          description: "Exact UUID of every existing component being replaced.",
+        },
+        component_type: { type: "string", enum: componentType.options },
+        component_name: { type: "string" },
+        manufacturer: { type: "string" },
+        model: { type: "string" },
+        quantity: { type: "integer", minimum: 1, maximum: 1000 },
+        installation_location: { type: "string" },
+        notes: { type: "string" },
+        serial_number: { type: "string" },
+        firmware_version: { type: "string" },
+        manual_url: { type: "string" },
+        specifications: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { name: { type: "string" }, value: { type: "string" } },
+            required: ["name", "value"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["source_component_ids", "component_type", "component_name", "quantity"],
       additionalProperties: false,
     },
   },
@@ -1702,6 +1763,87 @@ export async function applyWattsonActions(
       applied.push({
         type: "component_updated",
         summary: `Updated ${label} specifications`,
+      });
+    }
+
+    if (action.name === "replace_system_components") {
+      const parsed = replaceComponentsSchema.safeParse(action.arguments);
+      if (!parsed.success) continue;
+      const input = parsed.data;
+      const sourceIds = [...new Set(input.source_component_ids)];
+      const current = await supabase
+        .from("system_components")
+        .select("id,type,display_name")
+        .eq("project_id", projectId)
+        .in("id", sourceIds);
+      if (current.error) throw current.error;
+      if ((current.data ?? []).length !== sourceIds.length) continue;
+      if (current.data!.some((component) => component.type !== input.component_type)) continue;
+
+      const retainedId = sourceIds[0];
+      const removedIds = sourceIds.slice(1);
+      const specifications = Object.fromEntries(
+        (input.specifications ?? []).map((specification) => [specification.name, specification.value]),
+      );
+      const replacement = await supabase
+        .from("system_components")
+        .update({
+          type: input.component_type,
+          display_name: input.component_name,
+          manufacturer: input.manufacturer ?? null,
+          model: input.model ?? null,
+          quantity: input.quantity,
+          installation_location: input.installation_location ?? null,
+          notes: input.notes ?? null,
+          serial_number: input.serial_number ?? null,
+          firmware_version: input.firmware_version ?? null,
+          manual_url: input.manual_url ?? null,
+          specifications,
+          confidence: "confirmed",
+        })
+        .eq("id", retainedId)
+        .eq("project_id", projectId)
+        .select("id")
+        .maybeSingle();
+      if (replacement.error) throw replacement.error;
+      if (!replacement.data) continue;
+
+      if (removedIds.length) {
+        const connections = await supabase
+          .from("system_connections")
+          .select("id,source_ref,target_ref")
+          .eq("project_id", projectId);
+        const connectionsTableMissing = connections.error && ["PGRST205", "42P01"].includes(connections.error.code ?? "");
+        if (connections.error && !connectionsTableMissing) throw connections.error;
+        for (const connection of connections.data ?? []) {
+          const sourceId = String(connection.source_ref ?? "").replace(/^component:/, "");
+          const targetId = String(connection.target_ref ?? "").replace(/^component:/, "");
+          const nextSource = removedIds.includes(sourceId) ? `component:${retainedId}` : connection.source_ref;
+          const nextTarget = removedIds.includes(targetId) ? `component:${retainedId}` : connection.target_ref;
+          if (nextSource === connection.source_ref && nextTarget === connection.target_ref) continue;
+          if (nextSource === nextTarget) {
+            const deletedConnection = await supabase.from("system_connections").delete().eq("id", connection.id).eq("project_id", projectId);
+            if (deletedConnection.error) throw deletedConnection.error;
+          } else {
+            const updatedConnection = await supabase
+              .from("system_connections")
+              .update({ source_ref: nextSource, target_ref: nextTarget })
+              .eq("id", connection.id)
+              .eq("project_id", projectId);
+            if (updatedConnection.error) throw updatedConnection.error;
+          }
+        }
+        const removed = await supabase
+          .from("system_components")
+          .delete()
+          .eq("project_id", projectId)
+          .in("id", removedIds);
+        if (removed.error) throw removed.error;
+      }
+
+      applied.push({
+        type: "component_replaced",
+        summary: `Replaced ${sourceIds.length} component${sourceIds.length === 1 ? "" : "s"} with ${input.component_name} and preserved its schematic connections`,
       });
     }
 

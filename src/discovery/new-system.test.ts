@@ -9,6 +9,15 @@ describe("new-system discovery", () => {
     { id: "preference", stage: "design", title: "Preference", noviceHelp: "", type: "text" },
   ];
 
+  it("removes only recorded yellow-intake equipment questions from combined discovery", () => {
+    const ordinary = visibleDiscoveryQuestions({ utility_relationship: "grid_connected", existing_power_equipment_status: "yes", battery_requirement: "include", generator_requirement: "include" }).map((question) => question.id);
+    expect(ordinary).toEqual(expect.arrayContaining(["panel_construction_interest", "existing_power_equipment", "battery_requirement", "generator_requirement", "generator_details", "architecture_preference"]));
+
+    const combined = visibleDiscoveryQuestions({ utility_relationship: "grid_connected", existing_power_equipment_status: "yes", battery_requirement: "include", generator_requirement: "include", proposal_intake_equipment: ["panels", "inverter", "battery", "generator"] }).map((question) => question.id);
+    expect(combined).not.toEqual(expect.arrayContaining(["panel_construction_interest", "existing_panel_selection", "existing_power_equipment_status", "existing_power_equipment", "battery_requirement", "generator_requirement", "generator_details", "architecture_preference", "battery_chemistry"]));
+    expect(combined).toContain("generator_outage_role");
+  });
+
   it("unlocks discovery modules only after every preceding module is complete", () => {
     expect(sequentialDiscoveryStageProgress(stagedQuestions, new Set()).map(({ id, unlocked, complete }) => ({ id, unlocked, complete }))).toEqual([
       { id: "discovery", unlocked: true, complete: false },

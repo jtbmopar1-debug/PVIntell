@@ -15,6 +15,7 @@ import type { OnboardingAnswers } from "@/onboarding/assessment";
 import { useUnitPreferences, type UnitPreferences } from "@/preferences/units";
 
 const EditableSiteMap = dynamic(() => import("@/components/editable-site-map"), { ssr: false });
+const vehicleBoatCompatibleBuildingTypes = new Set(["vehicle_boat", "cabin_mobile", "pool_spa", "other"]);
 
 const evTravelLabels: Record<UnitPreferences["distance"], Record<string, string>> = {
   km: {
@@ -34,7 +35,7 @@ function discoveryQuestionForUnits(question: DiscoveryQuestion, distance: UnitPr
   return { ...question, options: question.options.map((option) => ({ ...option, label: evTravelLabels[distance][option.value] ?? option.label })) };
 }
 
-export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestionId, discoveryDraftId, initialDiscoveryConversationId, existingSystemId, siteDiscoveryId, returnUrl, stageFilter }: {
+export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestionId, discoveryDraftId, initialDiscoveryConversationId, existingSystemId, proposedEquipment = [], siteDiscoveryId, returnUrl, stageFilter }: {
   profile: OnboardingAnswers;
   sites: Array<{ id: string; name: string }>;
   initialAnswers: DiscoveryAnswers;
@@ -42,6 +43,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   discoveryDraftId?: string;
   initialDiscoveryConversationId?: string;
   existingSystemId?: string;
+  proposedEquipment?: Array<{ id: string; label: string; detail: string }>;
   /** A Site owns one combined Site + System discovery brief. */
   siteDiscoveryId?: string;
   returnUrl?: string;
@@ -99,7 +101,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     try {
       const response = await fetch(siteDiscoveryId ? `/api/sites/${siteDiscoveryId}/discovery` : "/api/discovery/new-system", {
         method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ draftId: discoveryDraftId, answers: nextAnswers, questionId: nextQuestionId }),
+        body: JSON.stringify({ draftId: discoveryDraftId, projectId: existingSystemId, answers: nextAnswers, questionId: nextQuestionId }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not save discovery");
@@ -280,7 +282,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
             setSite={(siteId, siteName) => setAnswers((current) => ({ ...current, site_id: siteId, site_name: siteName }))}
             setSiteLocation={(location) => setAnswers((current) => ({ ...current, ...location }))}
             onAskWattson={() => openDiscoveryHelp(question)}
-          /> : <Review answers={answers} questions={questions} onSelectQuestion={returnToQuestion}/>}
+          /> : <Review answers={answers} questions={questions} proposedEquipment={proposedEquipment} proposedEquipmentEditHref={existingSystemId && proposedEquipment.length ? `/proposals/new?from=discovery&system=${existingSystemId}` : undefined} onSelectQuestion={returnToQuestion}/>}
           {siteDiscoveryId && <div className="mt-4 rounded-xl border border-[#f1ce71] bg-[#fff9df] p-3 text-xs leading-5 text-[#725800]">This is the complete brief for this Site, including its proposed system. Saving changes flags every proposed design at this Site for review; nothing is silently overwritten.</div>}
           {error && <div className="mt-4 rounded-xl border border-[#efb6a7] bg-[#fff1ed] p-3 text-xs text-[#9b3f2c]">{error}</div>}
           <div className="mt-5 flex items-center justify-between gap-3"><button type="button" onClick={() => returningToReview ? (setReturningToReview(false), setIndex(questions.length)) : void back()} disabled={(!returningToReview && index===0) || saving} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold disabled:opacity-40"><ArrowLeft size={15}/>{returningToReview ? "Back to review" : "Back"}</button>{reviewing?<button type="button" onClick={() => incompleteQuestions.length ? returnToQuestion(incompleteQuestions[0].id) : void complete()} disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{incompleteQuestions.length ? <CircleHelp size={16}/> : null}{incompleteQuestions.length ? `Complete ${incompleteQuestions.length} missing answer${incompleteQuestions.length === 1 ? "" : "s"}` : "Save and build proposal"}</button>:question?<button type="button" onClick={() => void next()} disabled={!currentAnswerComplete || (question.id==="site_name" && sites.length>0 && !answers.site_id) || (question.id==="system_name" && combinedInitialSetup && (!answers.site_name || (sites.length>0 && !answers.site_id))) || saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{returningToReview ? "Save answer and return to review" : "Continue"}<ArrowRight size={15}/></button>:null}</div>
@@ -394,6 +396,54 @@ function DiscoveryHelpText({ text }: { text: string }) {
   return <>{text.slice(0, emphasisIndex)}<strong className="font-extrabold text-ink">{separatelyRecordedHotWaterStore}</strong>{text.slice(emphasisIndex + separatelyRecordedHotWaterStore.length)}</>;
 }
 
+const dailyUseBands = [
+  { value: "daily_under_3", label: "Essentials only — lights, phone, laptop and small fridge — about 2 kWh/day", description: "Lights, phone, laptop and a small fridge. Wattson will initially plan around 2 kWh/day." },
+  { value: "daily_3_6", label: "Small efficient setup — essentials, occasional washing and small appliances — about 4.5 kWh/day", description: "Essentials plus occasional washing or small appliances. Wattson will initially plan around 4.5 kWh/day." },
+  { value: "daily_6_12", label: "Everyday small home — fridge, laundry, TV, computers and kitchen appliances — about 9 kWh/day", description: "Fridge, laundry, TV, computers and kitchen appliances. Wattson will initially plan around 9 kWh/day." },
+  { value: "daily_12_25", label: "All-electric home — regular cooking, hot water, pumps or heating/cooling — about 18.5 kWh/day", description: "Regular cooking, hot water, pumps or heating/cooling. Wattson will initially plan around 18.5 kWh/day." },
+  { value: "daily_25_50", label: "High-use home — substantial heating/cooling, EV charging or workshop loads — about 37.5 kWh/day", description: "Substantial heating/cooling, EV charging or workshop loads. Wattson will initially plan around 37.5 kWh/day." },
+  { value: "daily_over_50", label: "Very high use — large home, business, farm or multiple major loads — allow about 60 kWh/day initially", description: "A large home, business, farm or multiple major loads. Wattson will start at 60 kWh/day and refine it from the recorded loads." },
+];
+
+const monthlyUseBands = [
+  { value: "monthly_under_90", label: "Essentials only — lights, phone, laptop and small fridge — about 60 kWh/month", description: "Lights, phone, laptop and a small fridge. Wattson will initially plan around 60 kWh/month." },
+  { value: "monthly_90_180", label: "Small efficient setup — essentials, occasional washing and small appliances — about 135 kWh/month", description: "Essentials plus occasional washing or small appliances. Wattson will initially plan around 135 kWh/month." },
+  { value: "monthly_180_365", label: "Everyday small home — fridge, laundry, TV, computers and kitchen appliances — about 275 kWh/month", description: "Fridge, laundry, TV, computers and kitchen appliances. Wattson will initially plan around 275 kWh/month." },
+  { value: "monthly_365_760", label: "All-electric home — regular cooking, hot water, pumps or heating/cooling — about 560 kWh/month", description: "Regular cooking, hot water, pumps or heating/cooling. Wattson will initially plan around 560 kWh/month." },
+  { value: "monthly_760_1520", label: "High-use home — substantial heating/cooling, EV charging or workshop loads — about 1,140 kWh/month", description: "Substantial heating/cooling, EV charging or workshop loads. Wattson will initially plan around 1,140 kWh/month." },
+  { value: "monthly_over_1520", label: "Very high use — large home, business, farm or multiple major loads — allow about 1,825 kWh/month initially", description: "A large home, business, farm or multiple major loads. Wattson will start at about 1,825 kWh/month and refine it from the recorded loads." },
+];
+
+function DailyEnergyUseCard({ question, profile, value, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
+  const gridConnected = question.id === "current_energy_use";
+  const useBands = gridConnected ? monthlyUseBands : dailyUseBands;
+  const unit = gridConnected ? "kWh/month" : "kWh/day";
+  const exact = typeof value === "number" || value === "exact";
+  const selected = useBands.find((option) => option.value === value);
+  return <section className="card overflow-hidden bg-white">
+    <EvPageHeader question={question} profile={profile}/>
+    <div className="space-y-5 p-6 md:p-8">
+      <fieldset>
+        <legend className="text-xs font-bold">Which description sounds closest to how you will use electricity?</legend>
+        <div className="mt-2 grid gap-2 sm:hidden">
+          {useBands.map((option) => <button key={option.value} type="button" onClick={() => setAnswer(option.value)} className={`rounded-xl border px-3 py-3 text-left text-[11px] font-semibold leading-5 ${value === option.value ? "theme-selected-tile border-brand bg-[#edf5fd] ring-1 ring-[#b8d7f1]" : "border-line bg-white"}`}>{option.label}</button>)}
+          <button type="button" onClick={() => setAnswer("exact")} className={`rounded-xl border px-3 py-3 text-left text-[11px] font-semibold ${exact ? "theme-selected-tile border-brand bg-[#edf5fd] ring-1 ring-[#b8d7f1]" : "border-line bg-white"}`}>I know the exact average</button>
+          <button type="button" onClick={() => setAnswer(unknownAnswer)} className={`rounded-xl border px-3 py-3 text-left text-[11px] font-semibold ${value === unknownAnswer ? "theme-selected-tile border-brand bg-[#edf5fd] ring-1 ring-[#b8d7f1]" : "border-line bg-white"}`}>I don’t know — help me work it out</button>
+        </div>
+        <select value={exact ? "exact" : String(value ?? "")} onChange={(event) => setAnswer(event.target.value)} className="field mt-1.5 hidden sm:block">
+          <option value="">Choose the closest description</option>
+          {useBands.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          <option value="exact">I know the exact average</option>
+          <option value={unknownAnswer}>I don’t know — help me work it out</option>
+        </select>
+      </fieldset>
+      {selected ? <p className="rounded-xl border border-line bg-[#f8fbfe] p-3 text-[11px] leading-5 text-muted">{selected.description} Wattson will refine this estimate using the loads you add later.</p> : null}
+      {exact ? <label className="block text-xs font-bold">Exact average {gridConnected ? "monthly" : "daily"} use<div className="relative mt-1.5"><input type="number" min="0" step="0.1" value={typeof value === "number" ? value : ""} onChange={(event) => setAnswer(event.target.value === "" ? "exact" : Number(event.target.value))} className="field mt-0 pr-28" placeholder={`Enter ${gridConnected ? "monthly" : "daily"} use`}/><span className="pointer-events-none absolute inset-y-0 right-10 grid place-items-center text-xs font-semibold text-muted">{unit}</span></div></label> : null}
+      <div className="flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Wattson can estimate this from the appliances and equipment you expect to use.</span></div>
+    </div>
+  </section>;
+}
+
 function QuestionCard({ question, value, profile, distanceUnit, sites, selectedSiteId, siteName, siteLocationAnswers, panelLocations, panelAreaDimensions, setAnswer, setRelatedAnswer, setSite, setSiteLocation, onAskWattson }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; distanceUnit: UnitPreferences["distance"]; sites: Array<{ id: string; name: string }>; selectedSiteId: string; siteName: string; siteLocationAnswers: DiscoveryAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setRelatedAnswer: (key: string, value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void; setSiteLocation: (location: DiscoveryAnswers) => void; onAskWattson: () => void }) {
   const unknown = value === unknownAnswer;
   const choices = question.type === "choice" || question.type === "multi_choice";
@@ -423,6 +473,9 @@ function QuestionCard({ question, value, profile, distanceUnit, sites, selectedS
   if (question.id === "existing_power_equipment") {
     return <ExistingPowerEquipmentCard question={question} profile={profile} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
+  if (question.id === "current_energy_use" || question.id === "off_grid_daily_energy_use") {
+    return <DailyEnergyUseCard question={question} profile={profile} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
+  }
   if (question.id === "orientation_and_pitch") {
     return <OrientationCard question={question} profile={profile} panelLocations={panelLocations} panelAreaDimensions={panelAreaDimensions} value={value} setAnswer={setAnswer} onAskWattson={onAskWattson}/>;
   }
@@ -450,7 +503,7 @@ function QuestionCard({ question, value, profile, distanceUnit, sites, selectedS
   }
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">{question.stage}</div><h1 className="mt-3 max-w-3xl font-display text-2xl font-extrabold tracking-[-.04em] md:text-[34px]">{question.title}</h1><div className="mt-5 flex items-start gap-3 rounded-2xl bg-white/80 p-4"><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-[#eaf2fb] text-brand"><Bot size={17}/></span><div><strong className="text-xs">Why Wattson asks</strong><p className="mt-1 text-xs leading-5 text-muted"><DiscoveryHelpText text={helpIntroduction}/></p>{helpNote ? <p className="mt-3 rounded-xl border border-[#ead07a] bg-[#fff8d8] px-3 py-2.5 text-xs font-semibold leading-5 text-[#6f5513]">{helpNote}</p> : null}</div></div></div>
-    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const existingPanelsExclusive=question.id==="panel_construction_interest";const disabled=existingPanelsExclusive&&currentValues.includes("existing")&&option.value!=="existing";const nextValues=existingPanelsExclusive&&option.value==="existing"?(selected?[]:["existing"]):option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const captureExisting=option.value==="existing"&&["architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" disabled={disabled} onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${selected?"theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2] disabled:hover:border-line"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.id === "pool_heating_profile" && !unknown ? <PoolHeatingCalculator embedded locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} onSave={setAnswer}/>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="pointer-events-none absolute inset-y-0 right-10 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
+    <div className="p-6 md:p-8">{choices?<div className="grid gap-3 sm:grid-cols-2">{question.options?.map((option)=>{const currentValues=Array.isArray(value)?value:typeof value==="string"&&value!==unknownAnswer?[value]:[];const selected=question.type==="multi_choice"?currentValues.includes(option.value):value===option.value;const existingPanelsExclusive=question.id==="panel_construction_interest";const vehicleBoatSelected=question.id==="building_type"&&currentValues.includes("vehicle_boat");const disabled=(existingPanelsExclusive&&currentValues.includes("existing")&&option.value!=="existing")||(vehicleBoatSelected&&!vehicleBoatCompatibleBuildingTypes.has(option.value));const ordinaryNextValues=existingPanelsExclusive&&option.value==="existing"?(selected?[]:["existing"]):option.value==="none"?["none"]:selected?currentValues.filter((item)=>item!==option.value):[...currentValues.filter((item)=>item!=="none"),option.value];const nextValues=question.id==="building_type"&&option.value==="vehicle_boat"&&!selected?[...currentValues.filter((item)=>vehicleBoatCompatibleBuildingTypes.has(item)&&item!=="vehicle_boat"),"vehicle_boat"]:ordinaryNextValues;const captureExisting=option.value==="existing"&&["architecture_preference","dc_system_voltage"].includes(question.id);const assessCustomBattery=question.id==="battery_chemistry"&&option.value==="custom_home_built";const explainModuleChoice=question.id==="module_level_electronics"&&["compare","existing_mixed"].includes(option.value);return <button key={option.value} type="button" disabled={disabled} onClick={()=>{setAnswer(question.type==="multi_choice"?nextValues:option.value);if((captureExisting||assessCustomBattery||explainModuleChoice)&&!selected)onAskWattson();}} className={`rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-45 ${selected?"theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]":"border-line bg-white hover:border-[#8ab0d2] disabled:hover:border-line"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{option.label}</strong>{selected&&<Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">{option.description}</p></button>})}</div>:question.id === "pool_heating_profile" && !unknown ? <PoolHeatingCalculator embedded locationLabel={String(siteLocationAnswers.site_location ?? profile.location ?? "")} onSave={setAnswer}/>:question.type==="textarea"?<textarea rows={6} disabled={unknown} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(event.target.value)} className="field mt-0 min-h-36 py-3 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this after the questionnaire":"Type what you know…"}/>:<div className="relative"><input type={question.type} disabled={unknown} min={question.type==="number"?0:undefined} value={unknown?"":String(value??"")} onChange={(event)=>setAnswer(question.type==="number"&&event.target.value!==""?Number(event.target.value):event.target.value)} className="field mt-0 pr-28 disabled:bg-[#eef2f6]" placeholder={unknown?"Wattson will revisit this":"Type your answer"}/>{question.unit&&<span className="pointer-events-none absolute inset-y-0 right-10 grid place-items-center text-xs font-semibold text-muted">{question.unit}</span>}</div>}
       {needsLocalAuthorityCheck && <p className="mt-4 rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[11px] leading-5 text-[#765918]">Ground, fence, wall and canopy arrays might be restricted or require planning, building or other consent. Check with the relevant local authority before purchasing equipment or starting work.</p>}
       <div className="mt-5 flex flex-wrap items-center gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help now, then return and answer this question.</span></div>
     </div>
@@ -508,8 +561,8 @@ function PoolHeaterCapacityCard({ question, profile, value, locationLabel, setAn
   </section>;
 }
 
-const poolLoadLabels: Record<string, string> = { filtration_pump: "Filtration or circulation pump", booster_cleaner_pump: "Booster or cleaner pump", sanitation: "Sanitation equipment", spa_jet_air_pump: "Spa jet or air pump", water_feature: "Water feature or auxiliary pump", controls: "Controls and automation", heat_pump: "Heat pump or air conditioning", resistive_electric: "Electric resistance heater", spa_inline_heater: "Built-in spa-bath heater", gas: "Gas heater controls and ignition", domestic_hot_water: "Domestic hot-water supply", water_pump: "Water, bore or pressure pump", septic_pump: "Sewage or septic pump", septic_aerator: "Septic aerator or treatment blower", sump_drainage_pump: "Sump or drainage pump", compressor: "Air compressor", welder: "Welder", saw_tools: "Large saws or workshop tools", refrigeration: "Refrigerator or upright freezer", chest_freezer: "Chest freezer", electric_water: "Electric water heating", pool_heat_pump: "Pool or spa electrical heating", ev: "EV charging", electric_oven: "Electric oven", electric_cooktop: "Electric cooktop", induction: "Induction cooktop", air_fryer: "Air fryer", microwave: "Microwave" };
-const ratedPoolHeatingMethods = new Set(["heat_pump", "resistive_electric", "spa_inline_heater", "gas", "hybrid"]);
+const poolLoadLabels: Record<string, string> = { filtration_pump: "Filtration or circulation pump", booster_cleaner_pump: "Booster or cleaner pump", sanitation: "Sanitation equipment", spa_jet_air_pump: "Spa jet or air pump", water_feature: "Water feature or auxiliary pump", controls: "Controls and automation", heat_pump: "Heat pump or air conditioning", resistive_electric: "Electric resistance heater", spa_inline_heater: "Built-in spa-bath heater", self_contained_spa: "Self-contained spa heater", gas: "Gas heater controls and ignition", domestic_hot_water: "Domestic hot-water supply", water_pump: "Water, bore or pressure pump", septic_pump: "Sewage or septic pump", septic_aerator: "Septic aerator or treatment blower", sump_drainage_pump: "Sump or drainage pump", compressor: "Air compressor", welder: "Welder", saw_tools: "Large saws or workshop tools", refrigeration: "Refrigerator or upright freezer", chest_freezer: "Chest freezer", electric_water: "Electric water heating", pool_heat_pump: "Pool or spa electrical heating", ev: "EV charging", electric_oven: "Electric oven", electric_cooktop: "Electric cooktop", induction: "Induction cooktop", air_fryer: "Air fryer", microwave: "Microwave" };
+const ratedPoolHeatingMethods = new Set(["heat_pump", "resistive_electric", "spa_inline_heater", "self_contained_spa", "gas", "hybrid"]);
 type HeatPumpUnit = {
   name?: string;
   model?: string;
@@ -1413,7 +1466,30 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
   </div>;
 }
 
-function Review({ answers, questions, onSelectQuestion }: { answers: DiscoveryAnswers; questions: DiscoveryQuestion[]; onSelectQuestion: (questionId: string) => void }) {
+function Review({ answers, questions, proposedEquipment, proposedEquipmentEditHref, onSelectQuestion }: { answers: DiscoveryAnswers; questions: DiscoveryQuestion[]; proposedEquipment: Array<{ id: string; label: string; detail: string }>; proposedEquipmentEditHref?: string; onSelectQuestion: (questionId: string) => void }) {
+  const incomplete = questions.filter((question) => !discoveryAnswerComplete(question.id, answers[question.id], answers));
+  const blueYellowDiscovery = answers.existing_proposal_status === "yes" || (Array.isArray(answers.proposal_intake_equipment) && answers.proposal_intake_equipment.length > 0);
+  const reviewHeaderClass = blueYellowDiscovery ? "bg-[linear-gradient(110deg,#eaf3fb_0%,#eef5fc_42%,#fff2ad_100%)]" : "bg-[#eef5fc]";
+  const recordedTypes = new Set(Array.isArray(answers.proposal_intake_equipment) ? answers.proposal_intake_equipment.map(String) : []);
+  if (Array.isArray(answers.panel_construction_interest) && answers.panel_construction_interest.includes("existing")) recordedTypes.add("panels");
+  if (answers.existing_power_equipment_status === "yes") recordedTypes.add("inverter");
+  if (answers.battery_requirement === "include") recordedTypes.add("battery");
+  if (["include", "existing", "planned"].includes(String(answers.generator_requirement))) recordedTypes.add("generator");
+  const fallbackEquipment = [
+    ["panels", "Panels / array"],
+    ["inverter", "Inverter or controller"],
+    ["battery", "Battery storage"],
+    ["generator", "Generator"],
+  ].filter(([type]) => recordedTypes.has(type)).map(([type, label]) => ({ id: `recorded-${type}`, label, detail: "Recorded in the yellow equipment intake" }));
+  const displayedEquipment = proposedEquipment.length ? proposedEquipment : fallbackEquipment;
+  return <section className="card overflow-hidden bg-white">
+    <div className={`border-b border-line p-6 md:p-8 ${reviewHeaderClass}`}><div className="eyebrow">Review</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">{incomplete.length ? "Complete your discovery" : "Ready for Wattson"}</h1><p className="mt-2 text-sm leading-6 text-muted">{incomplete.length ? `${incomplete.length} visible question${incomplete.length === 1 ? " is" : "s are"} still unanswered. Select any highlighted card to complete it before Wattson prepares the design.` : "Every visible question has been answered. These confirmed answers will form the design brief."}</p></div>
+    {blueYellowDiscovery && displayedEquipment.length ? <div className="border-b border-line bg-[#fffaf0] p-6 md:p-8"><div><div className="eyebrow">Proposed equipment</div><h2 className="mt-2 font-display text-xl font-extrabold">Equipment you want to use</h2><p className="mt-1 text-xs leading-5 text-muted">These items came from the yellow equipment intake and will be assessed as part of this design.</p></div><div className="mt-4 grid gap-3 md:grid-cols-2">{displayedEquipment.map((item) => proposedEquipmentEditHref ? <Link key={item.id} href={proposedEquipmentEditHref} className="rounded-2xl border border-[#e5b92e] bg-[#fff8d8] p-4 transition hover:border-[#b99100]"><div className="text-xs font-extrabold">{item.label}</div><div className="mt-2 text-[11px] leading-5 text-muted">{item.detail || "Specifications recorded in the equipment intake"}</div></Link> : <div key={item.id} className="rounded-2xl border border-[#e5b92e] bg-[#fff8d8] p-4"><div className="text-xs font-extrabold">{item.label}</div><div className="mt-2 text-[11px] leading-5 text-muted">{item.detail}</div></div>)}</div></div> : null}
+    <div className="[&>section]:contents [&>section>div:first-child]:hidden"><DiscoveryReviewQuestions answers={answers} questions={questions} onSelectQuestion={onSelectQuestion}/></div>
+  </section>;
+}
+
+function DiscoveryReviewQuestions({ answers, questions, onSelectQuestion }: { answers: DiscoveryAnswers; questions: DiscoveryQuestion[]; onSelectQuestion: (questionId: string) => void }) {
   const incomplete=questions.filter((question)=>!discoveryAnswerComplete(question.id, answers[question.id], answers));
   return <section className="card overflow-hidden bg-white"><div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8"><div className="eyebrow">Review</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">{incomplete.length ? "Complete your discovery" : "Ready for Wattson"}</h1><p className="mt-2 text-sm leading-6 text-muted">{incomplete.length ? `${incomplete.length} visible question${incomplete.length === 1 ? " is" : "s are"} still unanswered. Select any highlighted card to complete it before Wattson prepares the design.` : "Every visible question has been answered. These confirmed answers will form the design brief."}</p></div><div className="grid gap-3 p-6 md:grid-cols-2 md:p-8">{questions.map((question)=>{const missing=!discoveryAnswerComplete(question.id, answers[question.id], answers);return <button type="button" key={question.id} onClick={()=>onSelectQuestion(question.id)} className={`rounded-2xl border p-4 text-left transition hover:border-brand ${missing?"border-[#e7b43b] bg-[#fff9df] ring-1 ring-[#f1ce71]":"border-line bg-white"}`}><div className={`text-[10px] font-bold uppercase tracking-[.12em] ${missing?"text-[#8a6400]":"text-muted"}`}>{question.stage}{missing?" · Answer required":""}</div><div className="mt-2 text-xs font-bold">{question.title}</div><div className={`mt-2 text-xs ${missing?"font-bold text-[#8a6400]":"text-muted"}`}>{answerLabel(question,answers[question.id])}</div></button>})}</div></section>;
 }

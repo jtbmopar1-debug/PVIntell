@@ -11,6 +11,37 @@ const componentHasEnteredDetails = (component: z.infer<typeof componentSchema>) 
   || Boolean(component.batteryType || component.bmsCompatibility);
 const schema = z.object({ systemId: z.string().uuid().optional(), siteId: z.string().min(1), siteName: z.string().trim().max(120).optional(), systemName: z.string().trim().min(1).max(120), projectType: z.enum(["off-grid", "grid-tied", "hybrid"]), arrays: z.array(arraySchema).max(100), components: z.array(componentSchema).max(100), acknowledgeWarnings: z.boolean().default(false), discoveryContext: z.object({ draftId: z.string().uuid().optional(), continueDiscovery: z.boolean().default(false) }).optional() }).transform((value) => ({ ...value, components: value.components.filter(componentHasEnteredDetails) })).refine((value) => value.arrays.length + value.components.length > 0, "Add at least one proposed item.");
 
+const discoveryEquipmentAnswers = (input: z.infer<typeof schema>) => {
+  const equipment: string[] = [];
+  const answers: Record<string, string | string[]> = {};
+  if (input.arrays.length) {
+    equipment.push("panels");
+    answers.panel_construction_interest = ["existing"];
+  }
+  if (input.components.some((component) => component.type === "inverter")) {
+    equipment.push("inverter");
+    answers.existing_power_equipment_status = "yes";
+    answers.architecture_preference = "existing";
+  }
+  const battery = input.components.find((component) => component.type === "battery");
+  if (battery) {
+    equipment.push("battery");
+    answers.battery_requirement = "include";
+    const chemistry = battery.batteryType === "other_lithium" ? "other_lithium_ion" : battery.batteryType;
+    if (chemistry && chemistry !== "other") answers.battery_chemistry = chemistry;
+  }
+  if (input.components.some((component) => component.type === "generator")) {
+    equipment.push("generator");
+    answers.generator_requirement = "include";
+  }
+  return { ...answers, proposal_intake_equipment: equipment };
+};
+const mergeDiscoveryEquipmentAnswers = (current: Record<string, unknown>, input: z.infer<typeof schema>) => {
+  const answers = { ...current };
+  for (const key of ["proposal_intake_equipment", "panel_construction_interest", "existing_power_equipment_status", "architecture_preference", "battery_requirement", "battery_chemistry", "generator_requirement"]) delete answers[key];
+  return { ...answers, ...discoveryEquipmentAnswers(input) };
+};
+
 const arrayRows = (projectId: string, input: z.infer<typeof schema>, warnings: string[]) => input.arrays.map((array) => ({ project_id: projectId, name: array.name, manufacturer: array.manufacturer || null, panel_model: array.model || null, panel_type: array.panelType, panel_count: array.panelCount, panel_watts: array.panelWatts, strings: array.strings ?? null, panels_per_string: array.panelsPerString ?? null, maximum_power_voltage_v: array.vmp ?? null, open_circuit_voltage_v: array.voc ?? null, maximum_power_current_a: array.imp ?? null, short_circuit_current_a: array.isc ?? null, tilt_degrees: array.tilt ?? null, orientation_degrees: array.orientation ?? null, installation_notes: array.location || null, specifications: { "Mounting option": array.mount, "Proposal status": warnings.length ? "Compatibility review pending" : "Compatibility checks passed" }, confidence: warnings.length ? "estimated" : "confirmed" }));
 
 const componentRows = (projectId: string, input: z.infer<typeof schema>, warnings: string[]) => input.components.map((component) => ({ project_id: projectId, type: component.type, display_name: component.name, manufacturer: component.manufacturer || null, model: component.model || null, quantity: component.quantity, notes: component.notes || null, specifications: { ...(component.rating ? { "Rated power": component.type === "inverter" ? `${component.rating} kW` : `${component.rating} W` } : {}), ...(component.type === "battery" && component.batteryKwh ? { "Nominal energy": `${component.batteryKwh} kWh` } : {}), ...(component.type === "battery" && component.batteryAh ? { "Rated capacity": `${component.batteryAh} Ah` } : {}), ...(component.type === "battery" && component.batteryType ? { "Battery type": component.batteryType.replaceAll("_", " ") } : {}), ...(component.type === "battery" && component.bmsCompatibility ? { "BMS compatibility": component.bmsCompatibility.replaceAll("_", " ") } : {}), ...(component.voltage ? { "Nominal voltage": `${component.voltage} V` } : {}), ...(component.mpptMin ? { "MPPT minimum voltage": `${component.mpptMin} V` } : {}), ...(component.mpptMax ? { "MPPT maximum voltage": `${component.mpptMax} V` } : {}), ...(component.maxPvVoltage ? { "Maximum PV voltage": `${component.maxPvVoltage} V` } : {}), ...(component.maxInputCurrent ? { "Maximum PV input current": `${component.maxInputCurrent} A` } : {}), ...(component.batteryVoltageMin ? { "Battery voltage minimum": `${component.batteryVoltageMin} V` } : {}), ...(component.batteryVoltageMax ? { "Battery voltage maximum": `${component.batteryVoltageMax} V` } : {}), "Proposal status": warnings.length ? "Compatibility review pending" : "Compatibility checks passed" }, confidence: warnings.length ? "estimated" : "confirmed" }));
@@ -110,7 +141,7 @@ export async function POST(request: Request) {
         const assessment = (profile.data.onboarding_assessment ?? {}) as { guidedNewSystem?: { answers?: Record<string, unknown> } };
         discoveryAnswers = assessment.guidedNewSystem?.answers ?? {};
       }
-      const questionnaire = await supabase.from("questionnaire_responses").upsert({ project_id: systemId, template_key: "guided_new_system", template_version: 1, status: "draft", answers: { ...discoveryAnswers, existing_proposal_status: "yes", site_id: siteId, system_name: parsed.data.systemName } }, { onConflict: "project_id,template_key" });
+      const questionnaire = await supabase.from("questionnaire_responses").upsert({ project_id: systemId, template_key: "guided_new_system", template_version: 1, status: "draft", answers: { ...mergeDiscoveryEquipmentAnswers(discoveryAnswers, parsed.data), existing_proposal_status: "yes", system_name: parsed.data.systemName } }, { onConflict: "project_id,template_key" });
       if (questionnaire.error) throw questionnaire.error;
       if (conversationId) {
         const linkedConversation = await supabase.from("user_conversations").update({ site_id: siteId, project_id: systemId }).eq("id", conversationId).eq("owner_id", userId);
@@ -159,6 +190,13 @@ export async function PATCH(request: Request) {
   const updatedSettings = { ...settings, systemStatus: discoveryOrigin ? "discovery" : "proposed", schematicOrigin: "structured_proposal_intake", ...(specifiedInverter ? { designCalculator: { ...previousCalculator, inverterKw: specifiedInverter.rating, updatedBy: "user" } } : {}) };
   const updated = await supabase.from("projects").update({ name: parsed.data.systemName, mode: parsed.data.projectType.replace("-", "_"), phase: parsed.data.discoveryContext?.continueDiscovery ? "discover" : "design", settings: updatedSettings }).eq("id", parsed.data.systemId).eq("owner_id", userId);
   if (updated.error) return Response.json({ error: updated.error.message }, { status: 400 });
+  if (parsed.data.discoveryContext) {
+    const questionnaire = await supabase.from("questionnaire_responses").select("answers").eq("project_id", parsed.data.systemId).eq("template_key", "guided_new_system").maybeSingle();
+    if (questionnaire.error) return Response.json({ error: questionnaire.error.message }, { status: 400 });
+    const currentAnswers = (questionnaire.data?.answers ?? {}) as Record<string, unknown>;
+    const savedAnswers = await supabase.from("questionnaire_responses").upsert({ project_id: parsed.data.systemId, template_key: "guided_new_system", template_version: 1, status: "draft", answers: mergeDiscoveryEquipmentAnswers(currentAnswers, parsed.data) }, { onConflict: "project_id,template_key" });
+    if (savedAnswers.error) return Response.json({ error: savedAnswers.error.message }, { status: 400 });
+  }
   if (oldArrays.data?.length) await supabase.from("pv_arrays").delete().in("id", oldArrays.data.map((row) => row.id));
   if (oldComponents.data?.length) await supabase.from("system_components").delete().in("id", oldComponents.data.map((row) => row.id));
   return Response.json({ siteId: project.data.site_id, systemId: parsed.data.systemId, warnings: issues.warnings, url: parsed.data.discoveryContext?.continueDiscovery ? `/discovery/new-system?edit=${parsed.data.systemId}` : `/sites/${project.data.site_id}/systems/${parsed.data.systemId}/schematic` });

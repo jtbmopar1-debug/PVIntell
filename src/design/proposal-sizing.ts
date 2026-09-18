@@ -92,6 +92,21 @@ function energyAsDailyKwh(value: unknown, defaultPeriod: "day" | "month") {
   if (typeof value !== "string") return undefined;
 
   const normalized = value.trim().toLowerCase().replace(/(?<=\d),(?=\d)/g, "");
+  const estimatedBandKwh: Record<string, number> = {
+    daily_under_3: 2,
+    daily_3_6: 4.5,
+    daily_6_12: 9,
+    daily_12_25: 18.5,
+    daily_25_50: 37.5,
+    daily_over_50: 60,
+    monthly_under_90: 2,
+    monthly_90_180: 4.5,
+    monthly_180_365: 9,
+    monthly_365_760: 18.5,
+    monthly_760_1520: 37.5,
+    monthly_over_1520: 60,
+  };
+  if (estimatedBandKwh[normalized]) return estimatedBandKwh[normalized];
   if (!normalized || /\b(?:no|none|unknown|unpowered|without)\b/.test(normalized)) return undefined;
   // A kW nameplate is power, not energy. Reject it unless the text explicitly
   // supplies an energy unit as well.

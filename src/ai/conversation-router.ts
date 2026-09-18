@@ -14,6 +14,7 @@ const mutatingActions = new Set([
   "update_system_settings",
   "update_project_settings",
   "update_system_component",
+  "replace_system_components",
   "record_or_update_pv_array",
   "record_or_update_system_connection",
   "record_or_update_load",

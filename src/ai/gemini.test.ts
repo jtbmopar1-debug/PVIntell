@@ -19,6 +19,13 @@ describe("Gemini visible response parsing", () => {
     })).toBe("The MRBF sizes remain provisional.");
   });
 
+  it("accepts visible text from the legacy outputs response shape", () => {
+    expect(visibleGeminiMessage({
+      output_text: "",
+      outputs: [{ type: "model_output", content: [{ type: "text", text: "All three batteries are Micromall units." }] }],
+    })).toBe("All three batteries are Micromall units.");
+  });
+
   it("trims the top-level visible response", () => {
     expect(visibleGeminiMessage({ output_text: "  Confirm the battery fault current first.  " }))
       .toBe("Confirm the battery fault current first.");

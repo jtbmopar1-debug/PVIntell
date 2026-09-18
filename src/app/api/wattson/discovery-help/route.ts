@@ -58,10 +58,12 @@ export async function POST(request: Request) {
   }
 
   let conversationId = parsed.data.conversationId;
+  let conversationLinkedByDraft = false;
   if (!conversationId && parsed.data.discoveryDraftId) {
     const draft = await supabase.from("discovery_drafts").select("conversation_id").eq("id", parsed.data.discoveryDraftId).eq("owner_id", userId).maybeSingle();
     if (draft.error || !draft.data) return Response.json({ error: "Discovery draft not found." }, { status: 404 });
     conversationId = draft.data.conversation_id ?? undefined;
+    conversationLinkedByDraft = Boolean(conversationId);
   }
   const helpContext = parsed.data.question.stage === "Build It" || parsed.data.question.id.startsWith("build_") ? "build" : parsed.data.question.stage === "Configure" || parsed.data.question.id.startsWith("configure_") ? "configure" : parsed.data.question.stage === "Schematic" || parsed.data.question.id.startsWith("schematic_") ? "schematic" : "discovery";
   const discoveryName = typeof parsed.data.discoveryAnswers?.system_name === "string" ? parsed.data.discoveryAnswers.system_name.trim() : "";
@@ -69,22 +71,37 @@ export async function POST(request: Request) {
   const conversationTitle = helpContext === "discovery"
     ? conversationName ? `Discovery — ${conversationName}` : "Guided system discovery"
     : `${helpContext === "build" ? "Build It" : helpContext === "configure" ? "Configure" : "Schematic"} — ${parsed.data.question.title}`;
-  if (!conversationId) {
-    const existing = await supabase.from("user_conversations").select("id,title,site_id,project_id").eq("owner_id", userId).order("updated_at", { ascending: false }).limit(100);
-    if (existing.error) return Response.json({ error: existing.error.message }, { status: 400 });
-    const normalizedName = discoveryName.toLocaleLowerCase();
-    conversationId = (existing.data ?? []).find((item) => {
-      if (helpContext !== "discovery") return item.title === conversationTitle && (!parsed.data.projectId || item.project_id === parsed.data.projectId) && (!parsed.data.siteId || item.site_id === parsed.data.siteId);
-      if (!/discovery/i.test(item.title ?? "")) return false;
-      if (parsed.data.projectId && item.project_id === parsed.data.projectId) return true;
-      if (parsed.data.siteId && item.site_id === parsed.data.siteId) return true;
-      return Boolean(normalizedName && (item.title ?? "").toLocaleLowerCase().includes(normalizedName));
-    })?.id;
-  }
   const topicIntroduction = `${helpContext === "discovery" ? "Discovery topic" : helpContext === "build" ? "Build It item" : helpContext === "configure" ? "Configuration item" : "Schematic item"}: ${parsed.data.question.title}\n\nLet’s work only on this item. What part would you like me to explain or help you identify?`;
   if (conversationId) {
-    const owned = await supabase.from("user_conversations").select("id").eq("id", conversationId).eq("owner_id", userId).maybeSingle();
+    const owned = await supabase.from("user_conversations").select("id,site_id,project_id").eq("id", conversationId).eq("owner_id", userId).maybeSingle();
     if (owned.error || !owned.data) return Response.json({ error: "Discovery chat not found." }, { status: 404 });
+    const matchesProject = parsed.data.projectId ? owned.data.project_id === parsed.data.projectId : owned.data.project_id === null;
+    const matchesSite = !parsed.data.siteId || owned.data.site_id === null || owned.data.site_id === parsed.data.siteId;
+    if (!matchesProject || (!conversationLinkedByDraft && !matchesSite)) conversationId = undefined;
+  }
+  if (conversationId) {
+    const existingMessages = await supabase.from("user_chat_messages").select("id,structured_context").eq("conversation_id", conversationId).order("created_at");
+    if (existingMessages.error) return Response.json({ error: existingMessages.error.message }, { status: 400 });
+    const discoveryMessageIds = (existingMessages.data ?? []).filter((message) => {
+      const context = message.structured_context && typeof message.structured_context === "object" ? message.structured_context as Record<string, unknown> : {};
+      return context.kind === "discovery_help" || context.kind === "discovery_topic";
+    }).map((message) => message.id);
+    const containsOtherMessages = discoveryMessageIds.length < (existingMessages.data ?? []).length;
+    if (containsOtherMessages) {
+      if (discoveryMessageIds.length) {
+        const separated = await supabase.from("user_conversations").insert({ owner_id: userId, site_id: parsed.data.siteId ?? null, project_id: parsed.data.projectId ?? null, title: conversationTitle }).select("id").single();
+        if (separated.error) return Response.json({ error: separated.error.message }, { status: 400 });
+        const moved = await supabase.from("user_chat_messages").update({ conversation_id: separated.data.id }).in("id", discoveryMessageIds);
+        if (moved.error) return Response.json({ error: moved.error.message }, { status: 400 });
+        conversationId = separated.data.id;
+      } else conversationId = undefined;
+      if (parsed.data.discoveryDraftId) {
+        const relinked = await supabase.from("discovery_drafts").update({ conversation_id: conversationId ?? null }).eq("id", parsed.data.discoveryDraftId).eq("owner_id", userId);
+        if (relinked.error) return Response.json({ error: relinked.error.message }, { status: 400 });
+      }
+    }
+  }
+  if (conversationId) {
     await supabase.from("user_conversations").update({ title: conversationTitle }).eq("id", conversationId).eq("owner_id", userId);
     const recentSubjects = await supabase.from("user_chat_messages").select("structured_context").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(12);
     const latestQuestionId = (recentSubjects.data ?? []).map((message) => message.structured_context && typeof message.structured_context === "object" ? message.structured_context as Record<string, unknown> : {}).map((context) => typeof context.questionId === "string" ? context.questionId : context.question && typeof context.question === "object" && "id" in context.question ? String((context.question as Record<string, unknown>).id) : undefined).find(Boolean);

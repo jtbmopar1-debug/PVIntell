@@ -106,18 +106,20 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
   const nextSteps = useMemo(() => {
     const installedHref = selectedSite ? `/record-installed?site=${selectedSite.id}` : "/record-installed";
     const guidedDraft = profile.assessment.guidedNewSystem;
-    const hasGuidedDraft = guidedDraft?.status === "draft" && Boolean(guidedDraft.questionId || Object.keys(guidedDraft.answers ?? {}).length);
-    const steps: Array<{ title: string; detail: string; href: string; kind: "continue" | "new" | "planned" | "installed" }> = discoveryDrafts.map((draft) => {
+    const legacyDraftName = typeof guidedDraft?.answers?.system_name === "string" ? guidedDraft.answers.system_name.trim() : "";
+    const legacyRepresentedBySystem = guidedDraft?.answers?.existing_proposal_status === "yes" && systems.some((system) => system.workflowOrigin === "discovery" && system.name === legacyDraftName);
+    const hasGuidedDraft = !legacyRepresentedBySystem && guidedDraft?.status === "draft" && Boolean(guidedDraft.questionId || Object.keys(guidedDraft.answers ?? {}).length);
+    const steps: Array<{ title: string; detail: string; href: string; kind: "continue" | "combined" | "new" | "planned" | "installed" }> = discoveryDrafts.map((draft) => {
       const name = typeof draft.answers?.system_name === "string" ? draft.answers.system_name.trim() : "";
       return { title: name ? `Continue System Build — ${name}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: `/discovery/new-system?draft=${draft.id}`, kind: "continue" };
     });
     if (hasGuidedDraft) {
-      const legacyName = typeof guidedDraft?.answers?.system_name === "string" ? guidedDraft.answers.system_name.trim() : "";
-      steps.unshift({ title: legacyName ? `Continue System Build — ${legacyName}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: "/discovery/new-system", kind: "continue" });
+      steps.unshift({ title: legacyDraftName ? `Continue System Build — ${legacyDraftName}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", href: "/discovery/new-system", kind: "continue" });
     }
     systems.filter((system) => resumeHrefs[system.id]).reverse().forEach((system) => {
       const proposedPlan = system.workflowOrigin === "proposed-plan";
-      steps.unshift({ title: proposedPlan ? `Proposed Plan - ${system.name}` : `Continue System Build — ${system.name}`, detail: proposedPlan ? "Return to this saved proposed plan and edit its equipment or specifications." : "Return to this proposal's saved discovery, design or build stage.", href: resumeHrefs[system.id], kind: proposedPlan ? "planned" : "continue" });
+      const combinedDiscovery = resumeHrefs[system.id].startsWith("/discovery/new-system?edit=");
+      steps.unshift({ title: proposedPlan ? `Proposed Plan - ${system.name}` : `Continue System Build — ${system.name}`, detail: proposedPlan ? "Return to this saved proposed plan and edit its equipment or specifications." : "Return to this proposal's saved discovery, design or build stage.", href: resumeHrefs[system.id], kind: proposedPlan ? "planned" : combinedDiscovery ? "combined" : "continue" });
     });
     steps.push({ title: "I already have a proposed plan", detail: "Specify the panels, arrays, inverter, battery, generator and other equipment you want, then build the proposed schematic.", href: `/proposals/new${selectedSite ? `?site=${selectedSite.id}` : ""}`, kind: "planned" });
     steps.push({ title: steps.length ? "Build another system for me" : "Build a system for me", detail: "Have a full system layout designed for your needs.", href: "/discovery/new-system?new=1", kind: "new" });
@@ -295,12 +297,12 @@ export function Dashboard({ profile, sites, systems, discoveryDrafts = [], conne
             <div className="eyebrow">Let’s get started</div>
             <div className={`mt-5 grid gap-4 ${connectedSiteSystems.length ? "md:grid-cols-3" : "sm:grid-cols-2"}`}>
               {nextSteps.map((step) => (
-                <Link key={`${step.kind}:${step.href}`} href={step.href} className={`min-h-36 rounded-2xl border p-5 transition hover:-translate-y-0.5 hover:shadow-md md:p-6 ${step.kind === "planned" ? "border-[#e5b92e] bg-[#f6c945] hover:bg-[#f9d65b]" : step.kind === "new" ? "theme-new-system-action border-[#76abd0] bg-[#b9dcf5] hover:bg-[#c9e5f7]" : step.kind === "continue" ? "theme-continue-discovery-action border-[#76abd0] bg-[#b9dcf5] hover:bg-[#c9e5f7]" : "border-[#d98243] bg-[#f4b183] hover:bg-[#f8c39d]"}`}>
-                  <div className="flex items-center justify-between gap-3"><strong className={`text-base ${step.kind === "new" ? "text-[#123d2b]" : step.kind === "continue" ? "text-[#103b5b]" : "text-brand"}`}>{step.title}</strong><span className={`grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 ${step.kind === "new" ? "text-[#123d2b]" : step.kind === "continue" ? "text-[#103b5b]" : "text-brand"}`}><ArrowRight size={17} /></span></div>
-                  <p className={`mt-3 max-w-xl text-xs leading-5 ${step.kind === "new" ? "text-[#294f3d]" : step.kind === "continue" ? "text-[#284f6b]" : "text-[#3f5870]"}`}>{step.detail}</p>
+                <Link key={`${step.kind}:${step.href}`} href={step.href} className={`min-h-36 rounded-2xl border p-5 transition hover:-translate-y-0.5 hover:shadow-md md:p-6 ${step.kind === "planned" ? "border-[#e5b92e] bg-[#f6c945] hover:bg-[#f9d65b]" : step.kind === "combined" ? "border-[#76abd0] bg-[linear-gradient(110deg,#b9dcf5_0%,#d8eaf4_48%,#ffe993_100%)] hover:bg-[linear-gradient(110deg,#c9e5f7_0%,#e1edf2_48%,#ffefa9_100%)]" : step.kind === "new" ? "theme-new-system-action border-[#76abd0] bg-[#b9dcf5] hover:bg-[#c9e5f7]" : step.kind === "continue" ? "theme-continue-discovery-action border-[#76abd0] bg-[#b9dcf5] hover:bg-[#c9e5f7]" : "border-[#d98243] bg-[#f4b183] hover:bg-[#f8c39d]"}`}>
+                  <div className="flex items-center justify-between gap-3"><strong className={`text-base ${step.kind === "new" ? "text-[#123d2b]" : step.kind === "continue" || step.kind === "combined" ? "text-[#103b5b]" : "text-brand"}`}>{step.title}</strong><span className={`grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 ${step.kind === "new" ? "text-[#123d2b]" : step.kind === "continue" || step.kind === "combined" ? "text-[#103b5b]" : "text-brand"}`}><ArrowRight size={17} /></span></div>
+                  <p className={`mt-3 max-w-xl text-xs leading-5 ${step.kind === "new" ? "text-[#294f3d]" : step.kind === "continue" || step.kind === "combined" ? "text-[#284f6b]" : "text-[#3f5870]"}`}>{step.detail}</p>
                 </Link>
               ))}
-              {connectedSiteSystems.length ? <button type="button" onClick={openMonitor} className="min-h-36 rounded-2xl border border-[#e5b92e] bg-[#f6c945] p-5 text-left transition hover:-translate-y-0.5 hover:bg-[#f9d65b] hover:shadow-md md:p-6"><div className="flex items-center justify-between gap-3"><strong className="text-base text-brand">Connect live systems</strong><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 text-brand"><Zap size={17}/></span></div><p className="mt-3 max-w-xl text-xs leading-5 text-[#3f5870]">Open live readings for {connectedSiteSystems.length === 1 ? connectedSiteSystems[0].name : `${connectedSiteSystems.length} connected systems at ${selectedSite?.name}`}.</p></button> : null}
+              {connectedSiteSystems.length ? <button type="button" onClick={openMonitor} className="min-h-36 rounded-2xl border border-[#65a77b] bg-[#a9dcb9] p-5 text-left transition hover:-translate-y-0.5 hover:bg-[#bce7c9] hover:shadow-md md:p-6"><div className="flex items-center justify-between gap-3"><strong className="text-base text-[#123d2b]">Connect live systems</strong><span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/55 text-[#123d2b]"><Zap size={17}/></span></div><p className="mt-3 max-w-xl text-xs leading-5 text-[#294f3d]">Open live readings for {connectedSiteSystems.length === 1 ? connectedSiteSystems[0].name : `${connectedSiteSystems.length} connected systems at ${selectedSite?.name}`}.</p></button> : null}
             </div>
           </section>
         </div>

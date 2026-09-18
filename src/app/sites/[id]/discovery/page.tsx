@@ -11,6 +11,12 @@ export default async function SiteDiscoveryPage({ params, searchParams }: { para
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") redirect("/login");
+  if (system) {
+    const project = await supabase.from("projects").select("settings").eq("id", system).eq("site_id", id).eq("owner_id", userId).maybeSingle();
+    if (project.error) throw new Error(project.error.message);
+    const settings = (project.data?.settings ?? {}) as { schematicOrigin?: string; workflowOrigin?: string };
+    if (settings.workflowOrigin === "discovery" && settings.schematicOrigin === "structured_proposal_intake") redirect(`/discovery/new-system?edit=${system}`);
+  }
   const [profile, site, sites, discovery] = await Promise.all([
     supabase.from("profiles").select("onboarding_status,onboarding_assessment").eq("id", userId).single(),
     supabase.from("sites").select("id,name").eq("id", id).eq("owner_id", userId).maybeSingle(),
