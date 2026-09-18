@@ -26,6 +26,37 @@ import type { ComponentSpec, PVArray } from "@/domain/models";
 import { inverterPowerInputKw } from "@/lib/power-units";
 import type { ComponentRegulatoryBundle } from "@/regulations/component-regulatory-library";
 
+const labelUploadLimit = 7.5 * 1024 * 1024;
+
+async function responseBody(response: Response): Promise<Record<string, any>> {
+  const text = await response.text();
+  if (!text) return {};
+  try { return JSON.parse(text) as Record<string, any>; }
+  catch { return { error: text.slice(0, 500) }; }
+}
+
+async function prepareLabelPhoto(file: File) {
+  if (file.size <= labelUploadLimit) return file;
+  const bitmap = await createImageBitmap(file);
+  let longest = 2200;
+  let quality = .82;
+  let blob: Blob | null = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const scale = Math.min(1, longest / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (blob && blob.size <= labelUploadLimit) break;
+    longest = Math.round(longest * .75);
+    quality = Math.max(.58, quality - .08);
+  }
+  bitmap.close();
+  if (!blob || blob.size > labelUploadLimit) throw new Error("This photo is too large to prepare. Please choose a smaller image.");
+  return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg", lastModified: file.lastModified });
+}
+
 const componentTypes: Array<[ComponentSpec["kind"], string]> = [
   ["inverter", "Inverter / charger"],
   ["battery", "Battery / bank"],
@@ -590,15 +621,16 @@ export function ComponentDetail({
     setAnalyzing(true);
     setError("");
     setExtraction(undefined);
-    const body = new FormData();
-    body.set("file", file);
-    body.set("projectId", systemId);
     try {
+      const preparedFile = await prepareLabelPhoto(file);
+      const body = new FormData();
+      body.set("file", preparedFile);
+      body.set("projectId", systemId);
       const response = await fetch("/api/equipment/analyze-label", {
         method: "POST",
         body,
       });
-      const result = await response.json();
+      const result = await responseBody(response);
       if (!response.ok)
         throw new Error(result.error ?? "Could not read the equipment label");
       setExtraction(result.extraction);
@@ -721,7 +753,7 @@ export function ComponentDetail({
             specifications: { ...specifications, "Wiring arrangement": panelConnection },
           }),
         });
-        const body = await response.json();
+        const body = await responseBody(response);
         if (!response.ok) throw new Error(body.error ?? "Could not save PV arrays");
         router.push(back);
         router.refresh();
@@ -735,7 +767,7 @@ export function ComponentDetail({
           body: JSON.stringify(payload),
         },
       );
-      const body = await response.json();
+      const body = await responseBody(response);
       if (!response.ok)
         throw new Error(body.error ?? "Could not save equipment");
       if (!component && returnTo && typeof body.component?.id === "string") {
@@ -752,7 +784,7 @@ export function ComponentDetail({
           body: JSON.stringify({ projectId: systemId, positions }),
         });
         if (!positioned.ok) {
-          const positionBody = await positioned.json().catch(() => ({}));
+          const positionBody = await responseBody(positioned);
           throw new Error(positionBody.error ?? "Equipment was saved, but its schematic position could not be set");
         }
       }
