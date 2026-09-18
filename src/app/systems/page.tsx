@@ -21,17 +21,17 @@ export default async function SystemsPage({ searchParams }: { searchParams: Prom
   if (draftRows.error) throw draftRows.error;
   const sites: Site[] = (siteRows.data ?? []).map((site) => ({ id: site.id, name: site.name, location: site.location || "Location not set", latitude: site.latitude == null ? undefined : Number(site.latitude), longitude: site.longitude == null ? undefined : Number(site.longitude), timezone: site.timezone || "UTC", locationSource: site.location_source || "manual", locationConfirmed: Boolean(site.location_confirmed) }));
   const systems: SystemSummary[] = (systemRows.data ?? []).map((system) => {
-    const settings = (system.settings ?? {}) as { designCalculator?: DesignCalculatorState; systemStatus?: string; schematicOrigin?: string; gridRelationship?: string };
+    const settings = (system.settings ?? {}) as { designCalculator?: DesignCalculatorState; systemStatus?: string; schematicOrigin?: string; gridRelationship?: string; workflowOrigin?: SystemSummary["workflowOrigin"] };
     const completedAreas = system.phase === "discover" ? [] : ["setup"];
     const reviewableComponents = (settings.designCalculator?.proposedAsBuiltDraft?.nodes ?? []).filter((node) => !node.authorityCheck);
     if (reviewableComponents.length > 0 && reviewableComponents.every((node) => node.reviewed === true)) completedAreas.push("design");
     if (settings.designCalculator?.proposedChecklist?.["proposed-schematic"]) completedAreas.push("proposed-schematic");
     const wattsonProposal = settings.systemStatus === "proposed" || settings.schematicOrigin === "wattson_conceptual" || settings.schematicOrigin === "wattson_proposal";
-    const workflowOrigin: SystemSummary["workflowOrigin"] = settings.schematicOrigin === "structured_proposal_intake"
+    const workflowOrigin: SystemSummary["workflowOrigin"] = settings.workflowOrigin ?? (settings.schematicOrigin === "structured_proposal_intake"
       ? "proposed-plan"
       : settings.systemStatus === "unconfirmed"
         ? "system-capture"
-        : "discovery";
+        : "discovery");
     if (workflowOrigin === "proposed-plan") completedAreas.push("proposed-plan");
     return { id: system.id, siteId: system.site_id, name: system.name, projectType: String(system.mode).replace("_", "-") as SystemSummary["projectType"], phase: system.phase as SystemSummary["phase"], completedAreas, statusUnconfirmed: !wattsonProposal && settings.systemStatus === "unconfirmed", statusProposed: wattsonProposal || workflowOrigin === "proposed-plan", workflowOrigin, gridRelationshipUnconfirmed: settings.gridRelationship === "unconfirmed" };
   });

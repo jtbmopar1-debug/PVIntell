@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 const optionalNumber = z.number().nonnegative().optional();
 const arraySchema = z.object({ name: z.string().trim().min(1).max(80), manufacturer: z.string().trim().max(120).optional(), model: z.string().trim().max(120).optional(), panelType: z.enum(["monofacial", "bifacial", "thin-film", "flexible", "other", "unknown"]), panelCount: z.number().int().positive(), panelWatts: z.number().positive(), strings: z.number().int().positive().optional(), panelsPerString: z.number().int().positive().optional(), vmp: optionalNumber, voc: optionalNumber, imp: optionalNumber, isc: optionalNumber, mount: z.string().trim().max(120), location: z.string().trim().max(200).optional(), tilt: z.number().min(0).max(90).optional(), orientation: z.number().min(0).max(360).optional() });
 const componentSchema = z.object({ type: z.enum(["inverter", "battery", "generator"]), name: z.string().trim().min(1).max(120), manufacturer: z.string().trim().max(120).optional(), model: z.string().trim().max(120).optional(), quantity: z.number().int().positive().max(100), rating: optionalNumber, batteryKwh: optionalNumber, batteryAh: optionalNumber, capacityInputBasis: z.enum(["kWh", "Ah"]).optional(), batteryType: z.string().trim().max(80).optional(), bmsCompatibility: z.string().trim().max(80).optional(), voltage: optionalNumber, batteryVoltageMin: optionalNumber, batteryVoltageMax: optionalNumber, mpptMin: optionalNumber, mpptMax: optionalNumber, maxPvVoltage: optionalNumber, maxInputCurrent: optionalNumber, notes: z.string().trim().max(2000).optional() });
-const schema = z.object({ systemId: z.string().uuid().optional(), siteId: z.string().min(1), siteName: z.string().trim().max(120).optional(), systemName: z.string().trim().min(1).max(120), projectType: z.enum(["off-grid", "grid-tied", "hybrid"]), arrays: z.array(arraySchema).max(100), components: z.array(componentSchema).max(100), acknowledgeWarnings: z.boolean().default(false) }).refine((value) => value.arrays.length + value.components.length > 0, "Add at least one proposed item.");
+const schema = z.object({ systemId: z.string().uuid().optional(), siteId: z.string().min(1), siteName: z.string().trim().max(120).optional(), systemName: z.string().trim().min(1).max(120), projectType: z.enum(["off-grid", "grid-tied", "hybrid"]), arrays: z.array(arraySchema).max(100), components: z.array(componentSchema).max(100), acknowledgeWarnings: z.boolean().default(false), discoveryContext: z.object({ draftId: z.string().uuid().optional(), continueDiscovery: z.boolean().default(false) }).optional() }).refine((value) => value.arrays.length + value.components.length > 0, "Add at least one proposed item.");
 
 const arrayRows = (projectId: string, input: z.infer<typeof schema>, warnings: string[]) => input.arrays.map((array) => ({ project_id: projectId, name: array.name, manufacturer: array.manufacturer || null, panel_model: array.model || null, panel_type: array.panelType, panel_count: array.panelCount, panel_watts: array.panelWatts, strings: array.strings ?? null, panels_per_string: array.panelsPerString ?? null, maximum_power_voltage_v: array.vmp ?? null, open_circuit_voltage_v: array.voc ?? null, maximum_power_current_a: array.imp ?? null, short_circuit_current_a: array.isc ?? null, tilt_degrees: array.tilt ?? null, orientation_degrees: array.orientation ?? null, installation_notes: array.location || null, specifications: { "Mounting option": array.mount, "Proposal status": warnings.length ? "Compatibility review pending" : "Compatibility checks passed" }, confidence: warnings.length ? "estimated" : "confirmed" }));
 
@@ -72,12 +72,14 @@ export async function POST(request: Request) {
     }
     systemId = await createSystem(supabase, userId, siteId, parsed.data.systemName, parsed.data.projectType, "User-specified proposed system; not installed or commissioned.");
     const specifiedInverter = parsed.data.components.find((component) => component.type === "inverter" && component.rating);
-    const project = await supabase.from("projects").update({ phase: "design", settings: {
+    const fromDiscovery = Boolean(parsed.data.discoveryContext);
+    const project = await supabase.from("projects").update({ phase: parsed.data.discoveryContext?.continueDiscovery ? "discover" : "design", settings: {
       autonomyDays: 2,
       priorities: [],
       startingGoal: "User-specified proposed system",
       goal: "User-specified proposed system",
       schematicOrigin: "structured_proposal_intake",
+      workflowOrigin: fromDiscovery ? "discovery" : "proposed-plan",
       systemStatus: "proposed",
       ...(specifiedInverter ? { designCalculator: { inverterKw: specifiedInverter.rating, updatedBy: "user" } } : {}),
     } }).eq("id", systemId).eq("owner_id", userId);
@@ -89,6 +91,32 @@ export async function POST(request: Request) {
     if (parsed.data.components.length) {
       const components = await supabase.from("system_components").insert(componentRows(systemId, parsed.data, issues.warnings));
       if (components.error) throw components.error;
+    }
+    if (parsed.data.discoveryContext) {
+      let discoveryAnswers: Record<string, unknown> = {};
+      let conversationId: string | null = null;
+      if (parsed.data.discoveryContext.draftId) {
+        const draft = await supabase.from("discovery_drafts").select("answers,conversation_id").eq("id", parsed.data.discoveryContext.draftId).eq("owner_id", userId).maybeSingle();
+        if (draft.error || !draft.data) throw draft.error ?? new Error("Discovery draft not found.");
+        discoveryAnswers = (draft.data.answers ?? {}) as Record<string, unknown>;
+        conversationId = draft.data.conversation_id;
+      } else {
+        const profile = await supabase.from("profiles").select("onboarding_assessment").eq("id", userId).single();
+        if (profile.error) throw profile.error;
+        const assessment = (profile.data.onboarding_assessment ?? {}) as { guidedNewSystem?: { answers?: Record<string, unknown> } };
+        discoveryAnswers = assessment.guidedNewSystem?.answers ?? {};
+      }
+      const questionnaire = await supabase.from("questionnaire_responses").upsert({ project_id: systemId, template_key: "guided_new_system", template_version: 1, status: "draft", answers: { ...discoveryAnswers, existing_proposal_status: "yes", site_id: siteId, system_name: parsed.data.systemName } }, { onConflict: "project_id,template_key" });
+      if (questionnaire.error) throw questionnaire.error;
+      if (conversationId) {
+        const linkedConversation = await supabase.from("user_conversations").update({ site_id: siteId, project_id: systemId }).eq("id", conversationId).eq("owner_id", userId);
+        if (linkedConversation.error) throw linkedConversation.error;
+      }
+      if (parsed.data.discoveryContext.draftId) {
+        const removedDraft = await supabase.from("discovery_drafts").delete().eq("id", parsed.data.discoveryContext.draftId).eq("owner_id", userId);
+        if (removedDraft.error) throw removedDraft.error;
+      }
+      return Response.json({ siteId, systemId, url: parsed.data.discoveryContext.continueDiscovery ? `/discovery/new-system?edit=${systemId}` : `/sites/${siteId}/systems/${systemId}/schematic` }, { status: 201 });
     }
     return Response.json({ siteId, systemId, url: `/sites/${siteId}/systems/${systemId}/schematic` }, { status: 201 });
   } catch (problem) {

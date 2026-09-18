@@ -36,8 +36,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
     timezone: site.timezone || profile.data.timezone || "UTC", locationSource: site.location_source || "manual", locationConfirmed: Boolean(site.location_confirmed),
   }));
   const systems: SystemSummary[] = (systemRows.data ?? []).map((system) => {
-    const settings = (system.settings ?? {}) as { schematicOrigin?: string; systemStatus?: string };
-    const workflowOrigin: SystemSummary["workflowOrigin"] = settings.schematicOrigin === "structured_proposal_intake" ? "proposed-plan" : settings.systemStatus === "unconfirmed" ? "system-capture" : "discovery";
+    const settings = (system.settings ?? {}) as { schematicOrigin?: string; systemStatus?: string; workflowOrigin?: SystemSummary["workflowOrigin"] };
+    const workflowOrigin: SystemSummary["workflowOrigin"] = settings.workflowOrigin ?? (settings.schematicOrigin === "structured_proposal_intake" ? "proposed-plan" : settings.systemStatus === "unconfirmed" ? "system-capture" : "discovery");
     return { id: system.id, siteId: system.site_id, name: system.name, projectType: String(system.mode).replace("_", "-") as SystemSummary["projectType"], phase: system.phase as SystemSummary["phase"], workflowOrigin };
   });
   const systemIds = systems.map((system) => system.id);

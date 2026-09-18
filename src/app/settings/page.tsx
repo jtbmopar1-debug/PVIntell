@@ -29,8 +29,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const settings = [
     ...(hasGuidedDraft ? [{ href: "/discovery/new-system", title: legacyDraftName ? `Continue System Build — ${legacyDraftName}` : "Continue System Build", detail: "Return to the exact discovery question where you left off.", icon: Wrench, highlight: true }] : []),
     ...resumableProjects.map((project) => {
-      const projectSettings = (project.settings ?? {}) as { schematicOrigin?: string; systemStatus?: string };
-      const proposedPlan = projectSettings.schematicOrigin === "structured_proposal_intake";
+      const projectSettings = (project.settings ?? {}) as { schematicOrigin?: string; systemStatus?: string; workflowOrigin?: "discovery" | "proposed-plan" | "system-capture" };
+      const proposedPlan = (projectSettings.workflowOrigin ?? (projectSettings.schematicOrigin === "structured_proposal_intake" ? "proposed-plan" : undefined)) === "proposed-plan";
       const capturedSystem = !proposedPlan && projectSettings.systemStatus === "unconfirmed";
       const unfinished = steps.data?.find((step) => step.project_id === project.id && !step.completed_at);
       const href = proposedPlan ? `/proposals/new?site=${project.site_id}&system=${project.id}` : project.phase === "discover" ? `/sites/${project.site_id}/discovery?system=${project.id}` : project.phase === "design" ? `/sites/${project.site_id}/systems/${project.id}/design` : unfinished ? `/sites/${project.site_id}/systems/${project.id}/build/${unfinished.id}` : `/sites/${project.site_id}/systems/${project.id}?view=build`;

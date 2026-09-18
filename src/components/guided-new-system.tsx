@@ -190,7 +190,10 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     if (question.id === "existing_proposal_status" && answers.existing_proposal_status === "yes") {
       await save(answers, question.id);
       const selectedSiteId = siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined);
-      router.push(`/proposals/new${selectedSiteId ? `?site=${encodeURIComponent(selectedSiteId)}` : ""}`);
+      const proposalQuery = new URLSearchParams({ from: "discovery" });
+      if (selectedSiteId) proposalQuery.set("site", selectedSiteId);
+      if (discoveryDraftId) proposalQuery.set("draft", discoveryDraftId);
+      router.push(`/proposals/new?${proposalQuery.toString()}`);
       return;
     }
     if (returningToReview) {

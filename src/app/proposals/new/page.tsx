@@ -13,7 +13,7 @@ const specificationText = (specifications: unknown, key: string) => {
   return typeof value === "string" ? value : undefined;
 };
 
-export default async function NewProposalPage({ searchParams }: { searchParams: Promise<{ site?: string; system?: string }> }) {
+export default async function NewProposalPage({ searchParams }: { searchParams: Promise<{ site?: string; system?: string; from?: string; draft?: string }> }) {
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
@@ -40,5 +40,5 @@ export default async function NewProposalPage({ searchParams }: { searchParams: 
       components: (components.data ?? []).filter((component) => ["inverter", "battery", "generator"].includes(component.type)).map((component) => ({ id: component.id, type: component.type as "inverter" | "battery" | "generator", name: component.display_name, manufacturer: component.manufacturer ?? "", model: component.model ?? "", quantity: Number(component.quantity ?? 1), rating: specificationNumber(component.specifications, "Rated power"), batteryKwh: specificationNumber(component.specifications, "Nominal energy"), batteryAh: specificationNumber(component.specifications, "Rated capacity"), batteryType: specificationText(component.specifications, "Battery type")?.replaceAll(" ", "_"), bmsCompatibility: specificationText(component.specifications, "BMS compatibility")?.replaceAll(" ", "_"), voltage: specificationNumber(component.specifications, "Nominal voltage"), batteryVoltageMin: specificationNumber(component.specifications, "Battery voltage minimum"), batteryVoltageMax: specificationNumber(component.specifications, "Battery voltage maximum"), mpptMin: specificationNumber(component.specifications, "MPPT minimum voltage"), mpptMax: specificationNumber(component.specifications, "MPPT maximum voltage"), maxPvVoltage: specificationNumber(component.specifications, "Maximum PV voltage"), maxInputCurrent: specificationNumber(component.specifications, "Maximum PV input current"), notes: component.notes ?? "" })),
     };
   }
-  return <ProposalIntake sites={sites.data ?? []} initialSiteId={query.site} initialProposal={initialProposal}/>;
+  return <ProposalIntake sites={sites.data ?? []} initialSiteId={query.site} initialProposal={initialProposal} discoveryContext={query.from === "discovery" ? { draftId: query.draft } : undefined}/>;
 }
