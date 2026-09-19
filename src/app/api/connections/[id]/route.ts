@@ -4,8 +4,11 @@ import { assessCableAgainstEndpoints, withCompatibilityWarning } from "@/lib/con
 
 const schema = z.object({
   projectId: z.uuid(),
+  sourceRef: z.string().trim().min(1).max(160).optional(),
+  targetRef: z.string().trim().min(1).max(160).optional(),
   name: z.string().trim().min(1).max(120),
   connectionType: z.enum(["dc", "ac", "data", "earth", "other"]),
+  circuitRole: z.enum(["pv_dc", "battery_dc", "auxiliary_dc", "unspecified"]).default("unspecified"),
   polarity: z.enum(["positive", "negative", "pair", "na"]).default("na"),
   cableSize: z.string().trim().max(120).optional(),
   cableLength: z.string().trim().max(120).optional(),
@@ -31,15 +34,22 @@ export async function PATCH(
   const input = parsed.data;
   const current = await supabase.from("system_connections").select("source_ref,target_ref").eq("id", id).eq("project_id", input.projectId).single();
   if (current.error) return Response.json({ error: current.error.message }, { status: 400 });
-  const endpointIds = [current.data.source_ref, current.data.target_ref].filter((ref) => ref.startsWith("component:")).map((ref) => ref.slice("component:".length));
+  const sourceRef = input.sourceRef ?? current.data.source_ref;
+  const targetRef = input.targetRef ?? current.data.target_ref;
+  if (sourceRef === targetRef)
+    return Response.json({ error: "Connect two different items." }, { status: 400 });
+  const endpointIds = [sourceRef, targetRef].filter((ref) => ref.startsWith("component:")).map((ref) => ref.slice("component:".length));
   const endpointResult = endpointIds.length ? await supabase.from("system_components").select("display_name,specifications").eq("project_id", input.projectId).in("id", endpointIds) : { data: [], error: null };
   if (endpointResult.error) return Response.json({ error: endpointResult.error.message }, { status: 400 });
-  const compatibilityWarning = input.cableSize ? assessCableAgainstEndpoints(input.cableSize, endpointResult.data ?? []) : undefined;
+  const compatibilityWarning = input.cableSize ? assessCableAgainstEndpoints(input.cableSize, endpointResult.data ?? [], input.circuitRole) : undefined;
   const updated = await supabase
     .from("system_connections")
     .update({
+      source_ref: sourceRef,
+      target_ref: targetRef,
       name: input.name,
       connection_type: input.connectionType,
+      circuit_role: input.connectionType === "dc" ? input.circuitRole : "unspecified",
       polarity: input.connectionType === "dc" ? input.polarity : "na",
       cable_size: input.cableSize || null,
       cable_length: input.cableLength || null,

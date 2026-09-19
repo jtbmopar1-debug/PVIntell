@@ -2,7 +2,7 @@ import { extractEquipmentLabel } from "@/ai/equipment-label";
 import { createClient } from "@/lib/supabase/server";
 
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
-const maxFileBytes = 8 * 1024 * 1024;
+const maxFileBytes = 2 * 1024 * 1024;
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   const projectId = formData.get("projectId");
   if (!(file instanceof File) || typeof projectId !== "string") return Response.json({ error: "Choose a label photo first." }, { status: 400 });
   if (!allowedTypes.has(file.type)) return Response.json({ error: "Use a JPEG, PNG or WebP photo." }, { status: 400 });
-  if (!file.size || file.size > maxFileBytes) return Response.json({ error: "The photo must be smaller than 8 MB." }, { status: 400 });
+  if (!file.size || file.size > maxFileBytes) return Response.json({ error: "The prepared label photo must be smaller than 2 MB." }, { status: 400 });
 
   const owned = await supabase.from("projects").select("id,site_id").eq("id", projectId).maybeSingle();
   if (owned.error || !owned.data) return Response.json({ error: "System not found." }, { status: 404 });

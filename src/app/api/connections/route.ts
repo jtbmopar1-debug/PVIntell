@@ -8,6 +8,7 @@ const schema = z.object({
   targetRef: z.string().trim().min(1).max(160),
   name: z.string().trim().min(1).max(120).default("Connection"),
   connectionType: z.enum(["dc", "ac", "data", "earth", "other"]),
+  circuitRole: z.enum(["pv_dc", "battery_dc", "auxiliary_dc", "unspecified"]).default("unspecified"),
   polarity: z.enum(["positive", "negative", "pair", "na"]).default("na"),
   cableSize: z.string().trim().max(120).optional(),
   cableLength: z.string().trim().max(120).optional(),
@@ -29,24 +30,10 @@ export async function POST(request: Request) {
   const input = parsed.data;
   if (input.sourceRef === input.targetRef)
     return Response.json({ error: "Connect two different items." }, { status: 400 });
-  const existing = await supabase
-    .from("system_connections")
-    .select("id")
-    .eq("project_id", input.projectId)
-    .eq("source_ref", input.sourceRef)
-    .eq("target_ref", input.targetRef)
-    .maybeSingle();
-  if (existing.error)
-    return Response.json({ error: existing.error.message }, { status: 400 });
-  if (existing.data)
-    return Response.json(
-      { error: "A connection between these two items already exists. Open its connection label to review or update it." },
-      { status: 409 },
-    );
   const endpointIds = [input.sourceRef, input.targetRef].filter((ref) => ref.startsWith("component:")).map((ref) => ref.slice("component:".length));
   const endpointResult = endpointIds.length ? await supabase.from("system_components").select("display_name,specifications").eq("project_id", input.projectId).in("id", endpointIds) : { data: [], error: null };
   if (endpointResult.error) return Response.json({ error: endpointResult.error.message }, { status: 400 });
-  const compatibilityWarning = input.cableSize ? assessCableAgainstEndpoints(input.cableSize, endpointResult.data ?? []) : undefined;
+  const compatibilityWarning = input.cableSize ? assessCableAgainstEndpoints(input.cableSize, endpointResult.data ?? [], input.circuitRole) : undefined;
   const created = await supabase
     .from("system_connections")
     .insert({
@@ -55,6 +42,7 @@ export async function POST(request: Request) {
       target_ref: input.targetRef,
       name: input.name,
       connection_type: input.connectionType,
+      circuit_role: input.connectionType === "dc" ? input.circuitRole : "unspecified",
       polarity: input.connectionType === "dc" ? input.polarity : "na",
       cable_size: input.cableSize || null,
       cable_length: input.cableLength || null,

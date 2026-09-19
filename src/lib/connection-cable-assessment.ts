@@ -27,11 +27,17 @@ export function documentedEndpointCableRequirement(endpoint: { display_name: str
   return undefined;
 }
 
-export function assessCableAgainstEndpoints(cableSize: string, endpoints: Array<{ display_name: string; specifications: Record<string, unknown> | null }>) {
+export function assessCableAgainstEndpoints(
+  cableSize: string,
+  endpoints: Array<{ display_name: string; specifications: Record<string, unknown> | null }>,
+  circuitRole: "pv_dc" | "battery_dc" | "auxiliary_dc" | "unspecified" = "unspecified",
+) {
   const recordedArea = cableAreaMm2(cableSize);
   if (!cableSize.trim()) return undefined;
   if (!recordedArea) return `Cable compatibility needs verification: “${cableSize}” could not be resolved to a conductor area. Record the jacket size or manufacturer datasheet; outside diameter is not conductor size.`;
-  const requirements = endpoints.flatMap((endpoint) => {
+  // Battery-conductor minima on hybrid inverters apply to the battery port,
+  // not to PV strings arriving at an MPPT or to an auxiliary DC circuit.
+  const requirements = circuitRole === "pv_dc" || circuitRole === "auxiliary_dc" ? [] : endpoints.flatMap((endpoint) => {
     const requiredArea = documentedEndpointCableRequirement(endpoint);
     return requiredArea ? [{ ...endpoint, requiredArea }] : [];
   });

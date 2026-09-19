@@ -115,6 +115,7 @@ export interface SystemConnection {
   targetRef: string;
   name: string;
   connectionType: "dc" | "ac" | "data" | "earth" | "other";
+  circuitRole?: "pv_dc" | "battery_dc" | "auxiliary_dc" | "unspecified";
   polarity?: "positive" | "negative" | "pair" | "na";
   cableSize?: string;
   cableLength?: string;

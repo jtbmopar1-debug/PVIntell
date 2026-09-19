@@ -464,6 +464,7 @@ export async function loadWorkspace(
       targetRef: connection.target_ref,
       name: connection.name,
       connectionType: connection.connection_type,
+      circuitRole: connection.circuit_role ?? "unspecified",
       polarity: connection.polarity ?? "na",
       cableSize: connection.cable_size ?? undefined,
       cableLength: connection.cable_length ?? undefined,

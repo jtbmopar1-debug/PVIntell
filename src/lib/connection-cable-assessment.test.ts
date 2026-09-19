@@ -24,4 +24,12 @@ describe("connection cable compatibility", () => {
   it("uses the exact-model requirement for older inverter records", () => {
     expect(assessCableAgainstEndpoints("0G battery cable", [{ display_name: "Deye hybrid inverter SUN-10K-SG02LP1-AU", specifications: {} }])).toContain("below the 95 mm² minimum");
   });
+
+  it("does not apply a battery-port cable minimum to a PV input circuit", () => {
+    expect(assessCableAgainstEndpoints(
+      "6 mm2 PV cable",
+      [{ display_name: "Deye hybrid inverter SUN-10K-SG02LP1-AU", specifications: {} }],
+      "pv_dc",
+    )).toBeUndefined();
+  });
 });

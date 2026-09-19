@@ -21,6 +21,7 @@ import {
   Smartphone,
   Sun,
   Trash2,
+  Undo2,
   WandSparkles,
   X,
   Zap,
@@ -91,6 +92,13 @@ function text(value: unknown) {
   return value === undefined || value === null || value === ""
     ? undefined
     : String(value);
+}
+
+function inferredCircuitRole(connection?: Pick<SystemConnection, "circuitRole" | "name">) {
+  if (connection?.circuitRole && connection.circuitRole !== "unspecified") return connection.circuitRole;
+  if (/\b(?:pv|solar|panel|string|array|mppt)\b/i.test(connection?.name ?? "")) return "pv_dc" as const;
+  if (/\bbatter(?:y|ies)\b|\bbusbar\b/i.test(connection?.name ?? "")) return "battery_dc" as const;
+  return "unspecified" as const;
 }
 
 function componentHref(base: string, component?: ComponentSpec) {
@@ -350,29 +358,52 @@ function NodeCard({
 function ConnectionPath({
   connection,
   positions,
+  nodeIds,
   onOpen,
+  onReconnect,
   showLabel,
   laneOffset = 0,
+  sourcePortOffset = 0,
+  targetPortOffset = 0,
 }: {
   connection: ConnectionDetail;
   positions: Map<string, { x: number; y: number }>;
+  nodeIds: Set<string>;
   onOpen: (connection: ConnectionDetail) => void;
+  onReconnect: (connection: ConnectionDetail) => void;
   showLabel: boolean;
   laneOffset?: number;
+  sourcePortOffset?: number;
+  targetPortOffset?: number;
 }) {
-  const source = positions.get(connection.sourceId);
-  const target = positions.get(connection.targetId);
-  if (!source || !target) return null;
+  const storedSource = positions.get(connection.sourceId);
+  const storedTarget = positions.get(connection.targetId);
+  if (!storedSource && !storedTarget) return null;
+  // Deleted/replaced equipment can leave one valid end of a saved connection.
+  // Prefer its former saved position; otherwise draw a short reachable stub.
+  const source = storedSource ?? {
+    x: Math.max(20, (storedTarget?.x ?? 280) - 260),
+    y: storedTarget?.y ?? 80,
+  };
+  const target = storedTarget ?? {
+    x: (storedSource?.x ?? 20) + nodeSize.width + 80,
+    y: storedSource?.y ?? 80,
+  };
   const travelsRight = source.x <= target.x;
   const x1 = travelsRight ? source.x + nodeSize.width : source.x;
-  const y1 = source.y + nodeSize.height / 2;
+  const y1 = source.y + nodeSize.height / 2 + sourcePortOffset;
   const x2 = travelsRight ? target.x : target.x + nodeSize.width;
-  const y2 = target.y + nodeSize.height / 2;
+  const y2 = target.y + nodeSize.height / 2 + targetPortOffset;
   const direction = travelsRight ? 1 : -1;
   const bend = Math.max(55, Math.abs(x2 - x1) * 0.45);
   const path = `M ${x1} ${y1} C ${x1 + direction * bend} ${y1 + laneOffset}, ${x2 - direction * bend} ${y2 + laneOffset}, ${x2} ${y2}`;
   const labelX = (x1 + x2) / 2 - 43;
   const labelY = (y1 + y2) / 2 - 13 + laneOffset;
+  const sourceMissing = !nodeIds.has(connection.sourceId);
+  const targetMissing = !nodeIds.has(connection.targetId);
+  const danglingEnd = sourceMissing !== targetMissing
+    ? sourceMissing ? { x: x1, y: y1 } : { x: x2, y: y2 }
+    : undefined;
   const isAc =
     connection.saved?.connectionType === "ac" ||
     connection.connectionType === "ac" ||
@@ -419,6 +450,25 @@ function ConnectionPath({
         className="cursor-pointer"
         onClick={() => onOpen(connection)}
       />
+      {danglingEnd && connection.saved && (
+        <foreignObject x={danglingEnd.x - 15} y={danglingEnd.y - 15} width="30" height="30">
+          <button
+            type="button"
+            draggable
+            onClick={(event) => { event.stopPropagation(); onReconnect(connection); }}
+            onDragStart={(event) => {
+              event.dataTransfer.setData("text/pvintell-reconnect", connection.id);
+              event.dataTransfer.effectAllowed = "move";
+              onReconnect(connection);
+            }}
+            title="Reconnect this loose cable"
+            aria-label={`Reconnect loose end of ${connection.label}`}
+            className="grid size-[30px] cursor-grab place-items-center rounded-full border-2 border-white bg-[#0872ba] text-white shadow-md active:cursor-grabbing"
+          >
+            <Plus size={17} strokeWidth={3}/>
+          </button>
+        </foreignObject>
+      )}
       {showLabel && (
         <foreignObject x={labelX} y={labelY} width="86" height="30">
           <button
@@ -569,6 +619,7 @@ export function SystemSchematic({
   }
   const [selected, setSelected] = useState<ConnectionDetail>();
   const [connectingFrom, setConnectingFrom] = useState<DiagramNode>();
+  const [reconnecting, setReconnecting] = useState<ConnectionDetail>();
   const [connectionMode, setConnectionMode] = useState(false);
   const [draftEnds, setDraftEnds] = useState<{
     source: DiagramNode;
@@ -581,6 +632,7 @@ export function SystemSchematic({
   const [error, setError] = useState("");
   const [, setMovingNode] = useState<DiagramNode>();
   const [layoutMessage, setLayoutMessage] = useState("");
+  const [layoutUndo, setLayoutUndo] = useState<Array<Record<string, { x: number; y: number }>>>([]);
   const [showConnectionLabels, setShowConnectionLabels] = useState(false);
   const [connectionView, setConnectionView] = useState<ConnectionView>("all");
   const [editorConnectionType, setEditorConnectionType] = useState<SystemConnection["connectionType"]>("dc");
@@ -1076,6 +1128,7 @@ export function SystemSchematic({
         targetId: connection.targetRef,
         values: [
           ["Connection", effectiveConnectionType.toUpperCase()],
+          ["Circuit purpose", inferredCircuitRole(connection).replaceAll("_", " ").toUpperCase()],
           ["Polarity", polarity],
           ["Cable size", connection.cableSize ?? "Not recorded"],
           ["Cable length", connection.cableLength ?? "Not recorded"],
@@ -1114,6 +1167,28 @@ export function SystemSchematic({
   const visibleConnections = diagram.connections.filter((connection) =>
     connectionView === "all" || connection.connectionType === connectionView,
   );
+  const diagramNodes = [
+    ...diagram.sourceNodes,
+    ...diagram.inverterNodes,
+    ...(diagram.outputNode ? [diagram.outputNode] : []),
+    ...diagram.accessoryNodes,
+    ...(diagram.earthNode ? [diagram.earthNode] : []),
+  ];
+  const diagramNodeIds = new Set(diagramNodes.map((node) => node.id));
+
+  function beginReconnect(connection: ConnectionDetail) {
+    const attachedRef = diagramNodeIds.has(connection.sourceId)
+      ? connection.sourceId
+      : diagramNodeIds.has(connection.targetId)
+        ? connection.targetId
+        : undefined;
+    const attachedNode = diagramNodes.find((node) => node.id === attachedRef);
+    if (!attachedNode || !connection.saved) return;
+    setReconnecting(connection);
+    setConnectingFrom(attachedNode);
+    setConnectionMode(true);
+    setError("");
+  }
 
   function openConnectionEditor(connection: ConnectionDetail) {
     if (connection.saved) {
@@ -1121,15 +1196,8 @@ export function SystemSchematic({
       setDraftEnds(undefined);
       return;
     }
-    const nodes = [
-      ...diagram.sourceNodes,
-      ...diagram.inverterNodes,
-      ...(diagram.outputNode ? [diagram.outputNode] : []),
-      ...diagram.accessoryNodes,
-      ...(diagram.earthNode ? [diagram.earthNode] : []),
-    ];
-    const source = nodes.find((node) => node.id === connection.sourceId);
-    const target = nodes.find((node) => node.id === connection.targetId);
+    const source = diagramNodes.find((node) => node.id === connection.sourceId);
+    const target = diagramNodes.find((node) => node.id === connection.targetId);
     if (!source || !target) return;
     setSelected(undefined);
     setDraftEnds({ source, target });
@@ -1140,7 +1208,7 @@ export function SystemSchematic({
   const canvasWidth = Math.max(1100, canvasFrameWidth / canvasZoom);
   const horizontalExpansion = canvasWidth / 1100;
 
-  const displayPositions = useMemo(() => {
+  const logicalPositions = useMemo(() => {
     const positions = new Map(diagram.positions);
     for (const [nodeRef, position] of Object.entries(positionOverrides))
       positions.set(nodeRef, position);
@@ -1161,11 +1229,14 @@ export function SystemSchematic({
         y: anchor.y,
       });
     }
-    return new Map(Array.from(positions, ([nodeRef, position]) => [
+    return positions;
+  }, [diagram.positions, positionOverrides]);
+  const displayPositions = useMemo(() => {
+    return new Map(Array.from(logicalPositions, ([nodeRef, position]) => [
       nodeRef,
       { x: position.x * horizontalExpansion, y: position.y },
     ]));
-  }, [diagram.positions, horizontalExpansion, positionOverrides]);
+  }, [horizontalExpansion, logicalPositions]);
   const canvasHeight = Math.max(
     diagram.height,
     ...Array.from(displayPositions.values()).map(
@@ -1187,6 +1258,7 @@ export function SystemSchematic({
       x: Math.round(boundedX / gridSize) * gridSize,
       y: Math.round(boundedY / gridSize) * gridSize,
     };
+    setLayoutUndo((current) => [...current, Object.fromEntries(logicalPositions)].slice(-20));
     setPositionOverrides((current) => ({ ...current, [nodeRef]: position }));
     setMovingNode(undefined);
     setLayoutMessage("Saving layout…");
@@ -1216,6 +1288,7 @@ export function SystemSchematic({
   }
 
   async function tidyLayout() {
+    setLayoutUndo((current) => [...current, Object.fromEntries(logicalPositions)].slice(-20));
     const positions = Array.from(diagram.positions.entries()).map(
       ([nodeRef, position]) => ({ nodeRef, ...position }),
     );
@@ -1247,28 +1320,81 @@ export function SystemSchematic({
     }
   }
 
-  function completeConnection(target: DiagramNode) {
+  async function undoLayout() {
+    const previous = layoutUndo.at(-1);
+    if (!previous) return;
+    const positions = Object.entries(previous).map(([nodeRef, position]) => ({ nodeRef, ...position }));
+    setPositionOverrides(previous);
+    setLayoutUndo((current) => current.slice(0, -1));
+    setLayoutMessage("Restoring previous layout...");
+    try {
+      const response = await fetch("/api/schematic-positions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId: project.id, positions }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not restore layout");
+      setLayoutMessage("Previous layout restored");
+    } catch (problem) {
+      setLayoutUndo((current) => [...current, previous]);
+      setLayoutMessage(problem instanceof Error ? problem.message : "Could not restore layout");
+    }
+  }
+
+  async function completeConnection(target: DiagramNode) {
     if (!connectingFrom || connectingFrom.id === target.id) {
       setConnectingFrom(undefined);
+      setReconnecting(undefined);
       if (connectingFrom?.id === target.id) setConnectionMode(false);
       return;
     }
-    const existing = diagram.connections.find((connection) =>
-      connection.saved && (
-        connection.sourceId === connectingFrom.id && connection.targetId === target.id ||
-        connection.sourceId === target.id && connection.targetId === connectingFrom.id
-      ),
-    );
-    if (existing) {
-      setSelected(existing);
-      setDraftEnds(undefined);
-      setConnectingFrom(undefined);
-      setConnectionMode(false);
+    if (reconnecting?.saved) {
+      const saved = reconnecting.saved;
+      const sourceWasMissing = !diagramNodeIds.has(reconnecting.sourceId);
+      const payload = {
+        projectId: project.id,
+        sourceRef: sourceWasMissing ? target.id : saved.sourceRef,
+        targetRef: sourceWasMissing ? saved.targetRef : target.id,
+        name: saved.name,
+        connectionType: saved.connectionType,
+        circuitRole: inferredCircuitRole(saved),
+        polarity: saved.polarity ?? "na",
+        cableSize: saved.cableSize,
+        cableLength: saved.cableLength,
+        breakerSize: saved.breakerSize,
+        fuseSize: saved.fuseSize,
+        isolator: saved.isolator,
+        route: saved.route,
+        notes: saved.notes,
+      };
+      setSaving(true);
       setError("");
+      try {
+        const response = await fetch(`/api/connections/${saved.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Could not reconnect cable");
+        setLayoutMessage(`Reconnected ${saved.name}`);
+        setReconnecting(undefined);
+        setConnectingFrom(undefined);
+        setConnectionMode(false);
+        router.refresh();
+      } catch (problem) {
+        const message = problem instanceof Error ? problem.message : "Could not reconnect cable";
+        setError(message);
+        setLayoutMessage(message);
+      } finally {
+        setSaving(false);
+      }
       return;
     }
     setDraftEnds({ source: connectingFrom, target });
     setConnectingFrom(undefined);
+    setReconnecting(undefined);
     setConnectionMode(false);
     setError("");
   }
@@ -1284,6 +1410,7 @@ export function SystemSchematic({
       targetRef: existing?.targetRef ?? draftEnds?.target.id,
       name: formData.get("name"),
       connectionType: formData.get("connectionType"),
+      circuitRole: formData.get("circuitRole"),
       polarity: formData.get("polarity"),
       cableSize: formData.get("cableSize"),
       cableLength: formData.get("cableLength"),
@@ -1413,10 +1540,38 @@ export function SystemSchematic({
           : (editorConnection?.connectionType ?? defaultConnectionType) === "dc"
             ? "pair"
             : "na";
+  const editorCircuitRole = editorConnection
+    ? inferredCircuitRole(editorConnection)
+    : draftEnds?.source.kind === "pv" || draftEnds?.target.kind === "pv"
+      ? "pv_dc"
+      : draftEnds?.source.kind === "battery" || draftEnds?.target.kind === "battery"
+        ? "battery_dc"
+        : "unspecified";
 
   useEffect(() => {
     if (editorOpen) setEditorConnectionType(editorConnection?.connectionType ?? defaultConnectionType);
   }, [defaultConnectionType, editorConnection?.connectionType, editorOpen]);
+
+  function portOffset(connection: ConnectionDetail, endpointId: string) {
+    const endpointPosition = displayPositions.get(endpointId);
+    if (!endpointPosition) return 0;
+    const otherId = connection.sourceId === endpointId ? connection.targetId : connection.sourceId;
+    const otherPosition = displayPositions.get(otherId);
+    const side = !otherPosition || otherPosition.x < endpointPosition.x ? "left" : "right";
+    const incident = visibleConnections
+      .filter((candidate) => {
+        if (candidate.sourceId !== endpointId && candidate.targetId !== endpointId) return false;
+        const candidateOtherId = candidate.sourceId === endpointId ? candidate.targetId : candidate.sourceId;
+        const candidateOtherPosition = displayPositions.get(candidateOtherId);
+        const candidateSide = !candidateOtherPosition || candidateOtherPosition.x < endpointPosition.x ? "left" : "right";
+        return candidateSide === side;
+      })
+      .sort((a, b) => `${a.connectionType}:${a.polarity}:${a.id}`.localeCompare(`${b.connectionType}:${b.polarity}:${b.id}`));
+    if (incident.length < 2) return 0;
+    const index = incident.findIndex((candidate) => candidate.id === connection.id);
+    const spacing = Math.min(22, 110 / (incident.length - 1));
+    return (index - (incident.length - 1) / 2) * spacing;
+  }
 
   return (
     <div className="min-h-screen bg-canvas">
@@ -1539,14 +1694,15 @@ export function SystemSchematic({
               <label className="sr-only" htmlFor="installed-schematic-connection-view">Show schematic connections</label>
               <select id="installed-schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as ConnectionView)} className="h-9 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC only</option><option value="dc">DC only</option><option value="data">Comms only</option><option value="earth">Earth only</option></select>
               <button type="button" onClick={() => void tidyLayout()} aria-label="Tidy schematic layout" title="Tidy layout" className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><WandSparkles size={13}/><span className="schematic-tool-label">Tidy layout</span></button>
+              <button type="button" onClick={() => void undoLayout()} disabled={!layoutUndo.length} aria-label="Undo last schematic layout change" title="Undo" className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand disabled:cursor-not-allowed disabled:opacity-40"><Undo2 size={13}/><span className="schematic-tool-label">Undo</span></button>
               <button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-label={showConnectionLabels ? "Hide connection labels" : "Show connection labels"} title={showConnectionLabels ? "Hide labels" : "Show labels"} className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>}<span className="schematic-tool-label">{showConnectionLabels ? "Hide labels" : "Show labels"}</span></button>
               <button type="button" onClick={() => setAdding((value) => !value)} aria-label="Add schematic item" title="Add item" className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/><span className="schematic-tool-label">Add item</span></button>
-              <button type="button" onClick={() => { setConnectionMode((value) => !value); setConnectingFrom(undefined); }} aria-pressed={connectionMode} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-[10px] font-bold ${connectionMode ? "border-brand bg-brand text-white" : "border-line bg-white text-brand"}`}><Link2 size={13}/><span>{connectionMode ? "Cancel connect" : "Connect items"}</span></button>
+              <button type="button" onClick={() => { setConnectionMode((value) => !value); setConnectingFrom(undefined); setReconnecting(undefined); }} aria-pressed={connectionMode} className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-[10px] font-bold ${connectionMode ? "border-brand bg-brand text-white" : "border-line bg-white text-brand"}`}><Link2 size={13}/><span>{connectionMode ? "Cancel connect" : "Connect items"}</span></button>
               {adding && <div className="component-library-modal fixed inset-0 z-[80] flex items-center justify-center p-2 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="component-library-title"><button type="button" className="absolute inset-0 bg-[#071b2d]/55 backdrop-blur-[2px]" onClick={() => setAdding(false)} aria-label="Close component library"/><div className="relative flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-line bg-white text-left normal-case tracking-normal shadow-2xl sm:max-h-[min(86dvh,760px)]"><div className="shrink-0 border-b border-line p-3 sm:p-4"><div className="flex items-start gap-3"><div className="min-w-0 flex-1"><div id="component-library-title" className="eyebrow">Component library</div><input autoFocus value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} placeholder="Search pictures and equipment" className="field mt-2"/></div><button type="button" onClick={() => setAdding(false)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-line text-muted hover:bg-[#eef3f8]" aria-label="Close component library"><X size={16}/></button></div><div className="thin-scrollbar mt-3 flex gap-1.5 overflow-x-auto pb-1" aria-label="Component groups">{assetGroups.map((group) => <button key={group.id} type="button" onClick={() => setAssetGroup(group.id)} aria-pressed={assetGroup === group.id} className={`shrink-0 rounded-full border px-3 py-1.5 text-[10px] font-bold ${assetGroup === group.id ? "border-brand bg-brand text-white" : "border-line bg-white text-brand hover:bg-[#eef3f8]"}`}>{group.label}</button>)}</div></div><div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-2 sm:p-3"><div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{visibleAssets.map((asset) => <button key={asset.fileName} type="button" onClick={() => router.push(`${base}/equipment/new?type=${asset.type}&name=${encodeURIComponent(asset.label)}&image=${encodeURIComponent(asset.url)}&returnTo=${schematicReturn}`)} className="flex min-h-20 items-center gap-3 rounded-xl border border-line p-2 text-left text-[10px] font-bold hover:border-[#7aa6d1] hover:bg-[#eef3f8]"><Image src={asset.url} alt="" width={70} height={56} className="h-14 w-[70px] shrink-0 rounded-lg object-contain p-1"/><span className="line-clamp-3">{asset.label}</span></button>)}</div>{!visibleAssets.length && <p className="px-2 py-6 text-center text-xs text-muted">No matching schematic pictures in this group.</p>}<button type="button" onClick={() => router.push(`${base}/equipment/new?type=other&name=Other%20equipment&returnTo=${schematicReturn}`)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-line py-2.5 text-xs font-bold text-brand"><Plus size={14}/>Add without a library picture</button></div></div></div>}
             </div>
             <div className="schematic-zoom-controls flex shrink-0 items-center gap-1 border-l border-line pl-2"><span className="mr-1 text-[9px] font-bold text-muted">Zoom</span><button type="button" onClick={() => setCanvasZoom((value) => Math.max(.3, Number((value - .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out">−</button><button type="button" onClick={() => setCanvasZoom(1)} className="h-8 min-w-12 rounded-lg border border-line bg-white px-2 text-[9px] font-bold" aria-label="Reset zoom">{Math.round(canvasZoom * 100)}%</button><button type="button" onClick={() => setCanvasZoom((value) => Math.min(1.4, Number((value + .1).toFixed(2))))} className="grid size-8 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in">+</button></div>
           </div>
-          {connectionMode ? <div className="border-b border-[#e3c65a] bg-[#fff4bd] px-4 py-3 text-xs font-bold text-brand" role="status">{connectingFrom ? `Selected ${connectingFrom.label}. Tap the destination card.` : "Tap the first item you want to connect."}</div> : null}
+          {connectionMode ? <div className="border-b border-[#e3c65a] bg-[#fff4bd] px-4 py-3 text-xs font-bold text-brand" role="status">{reconnecting ? `Loose ${reconnecting.label} selected. Drag it or tap the item it should connect to.` : connectingFrom ? `Selected ${connectingFrom.label}. Tap the destination card.` : "Tap the first item you want to connect."}</div> : null}
           <div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the system map a clear postcard-sized canvas.</span></div></div>
           <div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto touch-auto bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
             <svg
@@ -1594,15 +1750,22 @@ export function SystemSchematic({
               {visibleConnections.map((connection) => {
                 const parallel = visibleConnections.filter((candidate) => candidate.sourceId === connection.sourceId && candidate.targetId === connection.targetId);
                 const parallelIndex = parallel.findIndex((candidate) => candidate.id === connection.id);
-                const laneOffset = parallel.length > 1 ? (parallelIndex - (parallel.length - 1) / 2) * 22 : 0;
+                const sourcePortOffset = portOffset(connection, connection.sourceId);
+                const targetPortOffset = portOffset(connection, connection.targetId);
+                const parallelOffset = parallel.length > 1 ? (parallelIndex - (parallel.length - 1) / 2) * 22 : 0;
+                const laneOffset = parallelOffset + (sourcePortOffset + targetPortOffset) * 0.45;
                 return (
                 <ConnectionPath
                   key={connection.id}
                   connection={connection}
                   positions={displayPositions}
+                  nodeIds={diagramNodeIds}
                   onOpen={openConnectionEditor}
+                  onReconnect={beginReconnect}
                   showLabel={showConnectionLabels || connection.unconfirmed === true}
                   laneOffset={laneOffset}
+                  sourcePortOffset={sourcePortOffset}
+                  targetPortOffset={targetPortOffset}
                 />
                 );
               })}
@@ -1732,7 +1895,17 @@ export function SystemSchematic({
                   <option value="na">Not applicable / unspecified</option>
                 </select>
               </label>}
+              {editorConnectionType === "dc" && <label className="text-xs font-bold">
+                DC circuit purpose
+                <select name="circuitRole" defaultValue={editorCircuitRole} className="field">
+                  <option value="pv_dc">Solar panels / PV input</option>
+                  <option value="battery_dc">Battery / battery bus</option>
+                  <option value="auxiliary_dc">Other DC equipment</option>
+                  <option value="unspecified">Not defined yet</option>
+                </select>
+              </label>}
               {editorConnectionType !== "dc" && <input type="hidden" name="polarity" value="na"/>}
+              {editorConnectionType !== "dc" && <input type="hidden" name="circuitRole" value="unspecified"/>}
               <label className="text-xs font-bold">
                 Cable size
                 <input name="cableSize" defaultValue={editorConnection?.cableSize} placeholder="e.g. 35 mm² or 6 mm² TPS" className="field" />
