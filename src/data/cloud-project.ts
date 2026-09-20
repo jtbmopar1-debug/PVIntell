@@ -439,9 +439,7 @@ export async function loadWorkspace(
       reason: assumption.reason ?? "",
       confidence: assumption.confidence,
     })),
-    components: (components.data ?? [])
-      .filter((component) => !(component.confidence === "estimated" && String(component.notes ?? "").startsWith("Proposed by Wattson")))
-      .map((component) => ({
+    components: (components.data ?? []).map((component) => ({
       id: component.id,
       kind: component.type,
       name: component.display_name ?? component.model ?? component.type,
@@ -456,7 +454,7 @@ export async function loadWorkspace(
       photoUrl: component.photo_url ?? undefined,
       status: component.confidence,
       specs: component.specifications ?? {},
-      })),
+    })),
     connections: (connections.data ?? []).map((connection) => ({
       id: connection.id,
       projectId: connection.project_id,

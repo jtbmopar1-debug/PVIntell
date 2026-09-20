@@ -25,7 +25,7 @@ export interface GeminiWattsonResult {
   usage: GeminiUsage;
   actions: WattsonActionRequest[];
   offeredAction?: {
-    kind: "record_equipment" | "attach_record" | "create_system";
+    kind: "save_evidence" | "record_equipment" | "attach_record" | "create_system";
     description: string;
     action?: WattsonActionRequest;
   };
@@ -270,7 +270,7 @@ function parseInteraction(
   const offeredDescription = offeredArguments?.description;
   const offeredActionName = offeredArguments?.action_name;
   const offeredActionArguments = offeredArguments?.action_arguments;
-  const offeredAction: GeminiWattsonResult["offeredAction"] = (offeredKind === "record_equipment" || offeredKind === "attach_record" || offeredKind === "create_system")
+  const offeredAction: GeminiWattsonResult["offeredAction"] = (offeredKind === "save_evidence" || offeredKind === "record_equipment" || offeredKind === "attach_record" || offeredKind === "create_system")
     && typeof offeredDescription === "string"
     ? {
         kind: offeredKind,
@@ -467,6 +467,7 @@ When the user asks for regulation, compliance, approval or grid-connection infor
 Never describe general guidance as a legal requirement.
 For efficiency, cost, battery-life or operating-strategy comparisons, do not invent exact efficiencies, losses, cycle-life effects or prices. Use recorded manufacturer values or current cited authoritative data. Otherwise label figures as illustrative, show the assumptions or formula, and explain which missing facts could change the result. Do not call a strategy economically best without considering the true source of upstream energy, tariffs or fuel, conversion losses, battery throughput, reserve requirements and forecast solar/load conditions.
 Do not assume battery chemistry from voltage or appearance. If chemistry, manufacturer limits or BMS behaviour are not confirmed in PVIntell, make the recommendation conditional and ask for them before recommending exact SOC, voltage or current thresholds.
+When a user asks to include a battery and no battery chemistry or battery family is recorded, establish that choice before proposing battery hardware, nominal voltage, amp-hour capacity, quantity or usable-percentage assumptions. You may record the chemistry-neutral usable-storage requirement, but never silently default to lithium, LiFePO4 or any other chemistry. Ask one concise battery-type question and keep the schematic battery placeholder chemistry-neutral until it is answered.
 Treat custom, home-built and salvaged EV batteries as unverified high-risk equipment. Before considering one suitable, require credible evidence of its exact identity and chemistry, provenance and damage/water/crash history, electrical and mechanical condition, BMS and contactor operation, isolation monitoring, pre-charge control, voltage/current/temperature limits, thermal management, enclosure, protection, inverter compatibility, test results and any required inspection or approval. If any safety-critical evidence cannot be supplied or verified, explicitly recommend that the battery NOT be used in the build. The user may still choose to retain it in their plan or record, but keep the warning and unverified status visible and never describe that user choice as safe, suitable, compatible or approved. Never suggest bypassing a BMS, contactor, interlock or isolation protection, and never provide improvised live high-voltage connection instructions.
 When recommending control thresholds, distinguish everyday operating mode from emergency recovery mode. Account for hysteresis and avoid control hunting, but never change a safety-critical or operational setting without the user's explicit confirmation and an exact target component.
 When an image is attached, inspect it conservatively. Extract only clearly visible label values and preserve their meaning. Never invent unreadable values. If readable label values appear to match exactly one existing PV array or component in the active system, state the match and offer one direct next step: “Would you like me to update [record name] with these label values?” Do this before giving extended sizing commentary. If more than one record could match, ask which record the label belongs to. An unambiguous match is not permission to mutate a record: update or attach it only when the current user message explicitly requests that action and identifies the target; otherwise retain it as conversation evidence and answer the user's question.`;
@@ -496,7 +497,7 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
       parameters: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["record_equipment", "attach_record", "create_system"] },
+          kind: { type: "string", enum: ["save_evidence", "record_equipment", "attach_record", "create_system"] },
           description: { type: "string" },
           action_name: { type: "string", enum: [...designToolNames] },
           action_arguments: { type: "object", additionalProperties: true },
@@ -540,17 +541,7 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
         `Gemini request failed with status ${response.status}.`,
     );
   const result = parseInteraction(raw, model, route.search);
-  if (!result.message && result.offeredAction && allowOptionalRecordAction) {
-    return askGemini({
-      message: `${message}\n\nReturn the useful plain-language answer in visible text. Do not call or offer any record action in this response, and do not claim that any record was changed.`,
-      project,
-      recentConversation,
-      questionnaireContext,
-      monitoringContext,
-      image,
-      allowActions: false,
-      allowOptionalRecordAction: false,
-    });
-  }
+  if (!result.message && result.offeredAction && allowOptionalRecordAction)
+    result.message = `${result.offeredAction.description} Would you like me to make that change?`;
   return result;
 }

@@ -102,7 +102,10 @@ function hasPoolUse(answers: DiscoveryAnswers) {
 }
 
 function hasPoolEquipmentToRate(answers: DiscoveryAnswers) {
-  return answerValues(answers.pool_equipment).some((value) => value !== "none")
+  // This is a routing choice: the following heating question determines
+  // whether it becomes a combined spa pump/inline-heater record or another
+  // heating arrangement. It is not a standalone load-rating card.
+  return answerValues(answers.pool_equipment).some((value) => value !== "none" && value !== "spa_pump_inline_heater")
     || answerValues(answers.pool_heating_method).some((value) => ["heat_pump", "resistive_electric", "spa_inline_heater", "self_contained_spa", "gas", "hybrid"].includes(value));
 }
 
@@ -448,24 +451,10 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     type: "choice", options: [
       { value: "include", label: "Include battery storage", description: "Design suitable storage for the recorded energy goals and operating limits." },
       { value: "none", label: "No battery storage", description: "Keep the proposed system battery-free." },
-    ], showWhen: (answers) => !isPoolOnly(answers) && (
+    ], showWhen: (answers) => (
       replacesGrid(answers)
       || (answers.utility_relationship === "grid_connected" && (answers.backup_preference === "none" || !requestsOutagePlanning(answers)))
     ),
-  },
-  {
-    id: "dc_system_voltage", stage: "design", title: "What battery or DC voltage should Wattson work with?",
-    noviceHelp: "If you already have a battery, simply choose that option here. Its label, model and condition are captured later in Site Inventory. If you do not have one, you do not need to know the voltage yet. Higher voltage usually means less current for the same power, but it changes which batteries, inverters, controllers, fuses, switches and safety rules apply.",
-    technicalHelp: "Record both nominal voltage and the real maximum charge/operating voltage. Compare load current, voltage drop, conductor/protection duty, BMS topology, inverter/controller ecosystem, series/parallel battery rules and local voltage-class boundaries. Do not assume 48 V.",
-    type: "choice", options: [
-      { value: "existing", label: "Use a battery I already have", description: "Identify the existing battery and assess whether it can be incorporated into this build." },
-      { value: "12", label: "12 V nominal", description: "Common for smaller vehicle, marine and compact systems; high-power loads draw high current." },
-      { value: "24", label: "24 V nominal", description: "Reduces current compared with 12 V and is common in larger mobile or modest off-grid systems." },
-      { value: "36", label: "36 V nominal", description: "A specialist option used by some battery and mobility equipment ecosystems." },
-      { value: "48", label: "48 V nominal", description: "Common for larger stationary/off-grid systems, but not automatically the right choice." },
-      { value: "60", label: "60 V nominal", description: "Used by some specialist systems; component availability and local voltage boundaries need checking." },
-      { value: "high_voltage", label: "Manufacturer high-voltage battery", description: "An integrated battery/inverter platform operating above common 12–60 V nominal systems." },
-    ], showWhen: shouldIncludeBattery,
   },
   {
     id: "battery_chemistry", stage: "design", title: "Which battery chemistry should the design use?",
@@ -482,6 +471,20 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "manufacturer_system", label: "Manufacturer battery system", description: "A proprietary low- or high-voltage battery platform identified by its exact make and model." },
       { value: "custom_home_built", label: "Custom or home-built battery", description: "Record its chemistry, configuration, BMS, limits and test evidence so Wattson can assess it without providing cell-level construction instructions." },
     ], showWhen: hasBatteryBus,
+  },
+  {
+    id: "dc_system_voltage", stage: "design", title: "What battery or DC voltage should Wattson work with?",
+    noviceHelp: "If you already have a battery, simply choose that option here. Its label, model and condition are captured later in Site Inventory. If you do not have one, you do not need to know the voltage yet. Higher voltage usually means less current for the same power, but it changes which batteries, inverters, controllers, fuses, switches and safety rules apply.",
+    technicalHelp: "Record both nominal voltage and the real maximum charge/operating voltage. Compare load current, voltage drop, conductor/protection duty, BMS topology, inverter/controller ecosystem, series/parallel battery rules and local voltage-class boundaries. Do not assume 48 V.",
+    type: "choice", options: [
+      { value: "existing", label: "Use a battery I already have", description: "Identify the existing battery and assess whether it can be incorporated into this build." },
+      { value: "12", label: "12 V nominal", description: "Common for smaller vehicle, marine and compact systems; high-power loads draw high current." },
+      { value: "24", label: "24 V nominal", description: "Reduces current compared with 12 V and is common in larger mobile or modest off-grid systems." },
+      { value: "36", label: "36 V nominal", description: "A specialist option used by some battery and mobility equipment ecosystems." },
+      { value: "48", label: "48 V nominal", description: "Common for larger stationary/off-grid systems, but not automatically the right choice." },
+      { value: "60", label: "60 V nominal", description: "Used by some specialist systems; component availability and local voltage boundaries need checking." },
+      { value: "high_voltage", label: "Manufacturer high-voltage battery", description: "An integrated battery/inverter platform operating above common 12–60 V nominal systems." },
+    ], showWhen: shouldIncludeBattery,
   },
   {
     id: "current_energy_use", stage: "needs", title: "How much electricity does the property currently use?",
@@ -600,6 +603,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "booster_cleaner_pump", label: "Booster or cleaner pump", description: "A separate pump for cleaning, pressure-side equipment or another water circuit." },
       { value: "sanitation", label: "Sanitation equipment", description: "Salt chlorinator, ozone, UV, dosing or similar water-treatment equipment." },
       { value: "spa_jet_air_pump", label: "Spa jet or air pump", description: "Intermittent pumps or blowers used during spa operation." },
+      { value: "spa_pump_inline_heater", label: "Spa pump / inline heater", description: "Choose this for a spa or spa bath with a pump and built-in heater. The next question records how it is heated before Wattson asks for the electrical ratings." },
       { value: "water_feature", label: "Water feature or auxiliary pump", description: "Fountains, waterfalls, swim jets, covers or other powered pool equipment." },
       { value: "controls", label: "Controls and automation", description: "Timers, controllers, sensors and communications that remain powered." },
       { value: "none", label: "No separate equipment to include", description: "Only use this when the pool or spa has no electrical equipment in scope." },
@@ -614,7 +618,7 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "resistive_electric", label: "Electric resistance heater", description: "Direct electric heating with high power demand." },
       { value: "domestic_hot_water", label: "Filled from domestic hot water", description: "Common for an indoor spa bath; include the energy needed for the household cylinder, geyser or other water heater to recover after filling." },
       { value: "spa_inline_heater", label: "Built-in spa-bath heater", description: "Maintains water temperature during use. Record its electrical input rating alongside the jet or air-pump load." },
-      { value: "self_contained_spa", label: "Self-contained spa / hot tub / jacuzzi", description: "A packaged spa with an electric heater and circulation or jet pumps. Record the heater and each pump separately because they may run together." },
+      { value: "self_contained_spa", label: "Self-contained spa / hot tub / jacuzzi", description: "A packaged spa with a pump motor and resistive heater. The pump starts first; once water flow is established, the heater may switch on." },
       { value: "gas", label: "Gas heater", description: "Heat comes mainly from gas; pumps, ignition and controls still use electricity." },
       { value: "hybrid", label: "More than one method", description: "For example solar collectors with heat-pump or gas backup." },
     ], showWhen: hasPoolUse,
@@ -822,6 +826,11 @@ export function visibleDiscoveryQuestions(answers: DiscoveryAnswers) {
           ...question,
           noviceHelp: `${question.noviceHelp} Note: some hybrid and off-grid inverters require a battery. Check that the model selected supports battery-free operation and the planned generator connection.`,
           technicalHelp: "Confirm the selected inverter's documented battery-free operating support and generator input or transfer compatibility where applicable.",
+          options: question.options?.map((option) => option.value === "combined"
+            ? { ...option, description: "Battery-free only when the exact hybrid inverter explicitly supports it. Otherwise include a compatible battery or choose a solar-only inverter." }
+            : option.value === "modular"
+              ? { ...option, description: "Many inverter-chargers and charge controllers expect a battery. Confirm documented battery-free operation before selecting this arrangement." }
+              : option),
         };
       }
       if (question.id === "backup_duration" && answers.utility_relationship === "grid_connected") {

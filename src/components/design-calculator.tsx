@@ -16,7 +16,7 @@ import { assessPanelSurfaces } from "@/design/panel-surfaces";
 import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
 import { balancedPanelAllocation, buildPvArrayPlan, resizeUserPvArrayPlan, setPvArrayPanelCount, splitPvArrayPlan } from "@/design/pv-array-plan";
 import { suggestPvDcStringCable } from "@/design/pv-dc-cable-sizing";
-import type { DesignCalculatorState, Project, Site } from "@/domain/models";
+import type { ComponentSpec as EquipmentComponentSpec, DesignCalculatorState, Project, Site } from "@/domain/models";
 import { EARTH_ELECTRODE_IMAGE, GRID_CONNECTION_IMAGE } from "@/ui/assets";
 
 const n = (value: unknown, fallback = 0) => {
@@ -29,6 +29,10 @@ const n = (value: unknown, fallback = 0) => {
   return fallback;
 };
 const round = (value: number, places = 1) => Number.isFinite(value) ? value.toFixed(places) : "—";
+const confirmedBatteryChemistry = (value: unknown) => {
+  const chemistry = String(value ?? "").trim();
+  return chemistry && !/planning (?:assumption|selection)/i.test(chemistry) ? chemistry : undefined;
+};
 const supplementaryArray = (design: DesignCalculatorState) => {
   const group = design.existingPanelGroup;
   if (!group?.supplementaryTargetPvKw) return undefined;
@@ -471,6 +475,23 @@ function microinverterPlanningSpecification(design: DesignCalculatorState) {
   const combinedKw = n(design.inverterKw) > 0 ? n(design.inverterKw) : undefined;
   const unitWatts = quantity && combinedKw ? round(combinedKw * 1000 / quantity, 0) : undefined;
   return { quantity, combinedKw, unitWatts };
+}
+
+function proposedComponentEditAnchor(nodeId: string) {
+  if (nodeId === "solar" || nodeId.startsWith("solar-pv-")) return "solar";
+  if (nodeId.startsWith("solar-safety") || nodeId === "pv-combiner" || nodeId.includes("optimiser")) return "strings";
+  if (nodeId === "generator" || nodeId.startsWith("generator-")) return "generator";
+  return "power";
+}
+
+function proposedComponentEquipmentType(nodeId: string): EquipmentComponentSpec["kind"] {
+  if (nodeId === "battery" || nodeId === "battery-inverter") return nodeId === "battery" ? "battery" : "inverter";
+  if (nodeId === "generator" || nodeId.startsWith("generator-")) return "generator";
+  if (nodeId === "controller" || nodeId === "charge-controller") return "charger";
+  if (nodeId === "solar" || nodeId.startsWith("solar-pv-")) return "panel";
+  if (nodeId.includes("inverter") || nodeId === "inverter" || nodeId.startsWith("inverter-")) return "inverter";
+  if (nodeId.includes("earth")) return "other";
+  return "protection";
 }
 
 export function planningNodeDetail(node: NonNullable<NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>["nodes"]>[number], design: DesignCalculatorState) {
@@ -1225,8 +1246,9 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
     const wattsonSizedWithoutDailyEnergy = saved.updatedBy === "wattson" && !discoveredDailyEnergyKwh(project);
     const batterySizing = includeBattery ? proposalBatterySizing(project, wattsonSizedWithoutDailyEnergy ? undefined : n(saved.batteryUsableKwh) || undefined, saved.updatedBy !== "wattson") : { usableKwh: undefined, acceptedSavedValue: false };
     const proposedBatteryUsableKwh = batterySizing.usableKwh ?? 0;
-    const batteryVoltage = includeBattery ? n(saved.batteryVoltage, 51.2) : 0;
-    const usableBatteryPercent = n(saved.usableBatteryPercent, 80);
+    const batteryChemistry = includeBattery ? confirmedBatteryChemistry(saved.batteryChemistry) : undefined;
+    const batteryVoltage = batteryChemistry ? n(saved.batteryVoltage) : 0;
+    const usableBatteryPercent = batteryChemistry ? n(saved.usableBatteryPercent) : 0;
     const discoveredAc = discoveredAcSupply(project);
     const generator = discoveredGenerator(project);
     const inverterKw = wattsonSizedWithoutDailyEnergy ? suggestedInverterKw(project) : proposedInverterKw(project, saved);
@@ -1263,11 +1285,11 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       panelMaximumSystemVoltageV: saved.panelMaximumSystemVoltageV,
       panelMaximumSeriesFuseA: saved.panelMaximumSeriesFuseA,
       panelVocTemperatureCoefficientPercentPerC: saved.panelVocTemperatureCoefficientPercentPerC,
-      batteryChemistry: includeBattery ? saved.batteryChemistry ?? "LiFePO₄ (planning assumption)" : undefined,
+      batteryChemistry,
       batteryVoltage: batteryVoltage || undefined,
       batteryUsableKwh: proposedBatteryUsableKwh || undefined,
-      batteryAh: (batterySizing.acceptedSavedValue ? saved.batteryAh : undefined) ?? (proposedBatteryUsableKwh ? Math.ceil((proposedBatteryUsableKwh * 1000) / Math.max(batteryVoltage * (usableBatteryPercent / 100), 1)) : undefined),
-      batteryQuantity: saved.batteryQuantity ?? 1,
+      batteryAh: batteryChemistry ? (batterySizing.acceptedSavedValue ? saved.batteryAh : undefined) ?? (proposedBatteryUsableKwh && batteryVoltage && usableBatteryPercent ? Math.ceil((proposedBatteryUsableKwh * 1000) / (batteryVoltage * (usableBatteryPercent / 100))) : undefined) : undefined,
+      batteryQuantity: batteryChemistry ? saved.batteryQuantity ?? 1 : undefined,
       inverterKw,
       generatorIncluded: generator.included,
       generatorPurchaseStatus: saved.generatorPurchaseStatus ?? generator.purchaseStatus,
@@ -1276,12 +1298,27 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       generatorContinuousKw,
       generatorSurgeKw: saved.generatorSurgeKw ?? generator.surgeKw,
       generatorConnectionMethod: saved.generatorConnectionMethod ?? generator.connectionMethod,
-      usableBatteryPercent,
+      usableBatteryPercent: usableBatteryPercent || undefined,
       electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site),
       ...recommendedPanelOrientation(saved, site.latitude),
     };
   });
   const [status, setStatus] = useState("");
+  useEffect(() => {
+    const editTarget = new URLSearchParams(window.location.search).get("edit");
+    const heading = {
+      solar: "Solar array and physical fit",
+      strings: "Series and parallel layout for the schematic",
+      power: "Inverter and battery",
+      generator: "Generator planning",
+    }[editTarget ?? ""];
+    if (!heading) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = Array.from(document.querySelectorAll("h2")).find((element) => element.textContent?.trim() === heading)?.closest("section");
+      target?.scrollIntoView({ block: "start", behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
   const set = <K extends keyof DesignCalculatorState>(key: K, value: DesignCalculatorState[K]) => setDesign((current) => {
     if (key === "panelType" && ["monofacial", "bifacial", "flexible"].includes(String(value))) {
       const profile = proposalPanelProfile(value);
@@ -1487,6 +1524,8 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
 
     </div>
 
+    <section className="card overflow-hidden"><div className="flex items-center gap-3 border-b border-line p-5"><Zap className="text-brand" size={20}/><h2 className="font-extrabold">Generator planning</h2></div><div className="grid gap-4 p-5 sm:grid-cols-2"><NumberField label="Continuous rating" value={design.generatorContinuousKw} unit="kW" onChange={(value) => set("generatorContinuousKw", value)}/><NumberField label="Motor-start / surge rating" value={design.generatorSurgeKw} unit="kW" onChange={(value) => set("generatorSurgeKw", value)}/><label className="space-y-1.5 text-xs font-bold sm:col-span-2"><span>Connection method</span><select value={design.generatorConnectionMethod ?? ""} onChange={(event) => set("generatorConnectionMethod", event.target.value || undefined)} className="h-11 w-full rounded-xl border border-line bg-white px-3"><option value="">To be confirmed</option><option value="inverter_input">Inverter generator input</option><option value="ats">Automatic transfer switch</option><option value="changeover">Manual changeover</option><option value="portable_inlet">Portable generator inlet</option><option value="direct_wired">Fixed direct-wired supply</option></select></label></div></section>
+
     <div className="rounded-2xl border border-[#f0d57c] bg-[#fff8d8] p-4 text-xs leading-5"><Calculator className="mr-2 inline text-[#b77d00]" size={16}/><strong>Working design only.</strong> Exact PV string voltage/current limits, cable installation method, ambient temperature, fault current, breaker curves, manufacturer instructions and local electrical requirements still have to be checked before build values are accepted.</div>
     <button onClick={() => void save()} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white"><Save size={15}/>Save advanced changes</button>
       </div>
@@ -1564,12 +1603,13 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
     const inverterKw = wattsonSizedWithoutDailyEnergy ? suggestedInverterKw(project) : proposedInverterKw(project, saved);
     const generator = discoveredGenerator(project);
     const generatorContinuousKw = saved.generatorContinuousKw ?? proposedGeneratorKw(generator, inverterKw);
-    const batteryVoltage = includeBattery ? saved.batteryVoltage ?? 51.2 : undefined;
-    const usableBatteryPercent = includeBattery ? saved.usableBatteryPercent ?? 80 : undefined;
+    const batteryChemistry = includeBattery ? confirmedBatteryChemistry(saved.batteryChemistry) : undefined;
+    const batteryVoltage = batteryChemistry ? saved.batteryVoltage : undefined;
+    const usableBatteryPercent = batteryChemistry ? saved.usableBatteryPercent : undefined;
     const batterySizing = includeBattery ? proposalBatterySizing(project, wattsonSizedWithoutDailyEnergy ? undefined : n(saved.batteryUsableKwh) || undefined, saved.updatedBy !== "wattson") : { usableKwh: undefined, acceptedSavedValue: false };
     const batteryUsableKwh = includeBattery ? batterySizing.usableKwh : undefined;
-    const batteryAh = includeBattery ? (batterySizing.acceptedSavedValue ? saved.batteryAh : undefined) ?? (batteryUsableKwh ? Math.ceil((batteryUsableKwh * 1000) / Math.max(n(batteryVoltage) * (n(usableBatteryPercent, 80) / 100), 1)) : undefined) : undefined;
-    return { ...saved, panelWatts, panelCount, targetPvKw: rejectWattsonPanelSizing ? undefined : saved.targetPvKw, mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project), pvStrings: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.strings, panelsPerString: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.panelsPerString, stringDesign: rejectWattsonPanelSizing ? undefined : recoveredStringLayout, panelVmpV: saved.panelVmpV, panelVocV: saved.panelVocV, panelImpA: saved.panelImpA, panelIscA: saved.panelIscA, inverterKw, batteryVoltage, batteryUsableKwh, batteryAh, batteryQuantity: includeBattery ? saved.batteryQuantity ?? 1 : undefined, usableBatteryPercent, generatorIncluded: generator.included, generatorPurchaseStatus: saved.generatorPurchaseStatus ?? generator.purchaseStatus, generatorType: saved.generatorType ?? generator.generatorType, generatorFuel: saved.generatorFuel ?? generator.fuel, generatorContinuousKw, generatorSurgeKw: saved.generatorSurgeKw ?? generator.surgeKw, generatorConnectionMethod: saved.generatorConnectionMethod ?? generator.connectionMethod, electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site) };
+    const batteryAh = batteryChemistry ? (batterySizing.acceptedSavedValue ? saved.batteryAh : undefined) ?? (batteryUsableKwh && batteryVoltage && usableBatteryPercent ? Math.ceil((batteryUsableKwh * 1000) / (n(batteryVoltage) * (n(usableBatteryPercent) / 100))) : undefined) : undefined;
+    return { ...saved, panelWatts, panelCount, targetPvKw: rejectWattsonPanelSizing ? undefined : saved.targetPvKw, mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project), pvStrings: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.strings, panelsPerString: rejectWattsonPanelSizing ? undefined : recoveredStringLayout?.panelsPerString, stringDesign: rejectWattsonPanelSizing ? undefined : recoveredStringLayout, panelVmpV: saved.panelVmpV, panelVocV: saved.panelVocV, panelImpA: saved.panelImpA, panelIscA: saved.panelIscA, inverterKw, batteryChemistry, batteryVoltage, batteryUsableKwh, batteryAh, batteryQuantity: batteryChemistry ? saved.batteryQuantity ?? 1 : undefined, usableBatteryPercent, generatorIncluded: generator.included, generatorPurchaseStatus: saved.generatorPurchaseStatus ?? generator.purchaseStatus, generatorType: saved.generatorType ?? generator.generatorType, generatorFuel: saved.generatorFuel ?? generator.fuel, generatorContinuousKw, generatorSurgeKw: saved.generatorSurgeKw ?? generator.surgeKw, generatorConnectionMethod: saved.generatorConnectionMethod ?? generator.connectionMethod, electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site) };
   });
   const [status, setStatus] = useState("");
   const [introOpen, setIntroOpen] = useState(showIntro);
@@ -1611,6 +1651,7 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
     setStatus("Saving schematic…");
     const response = await fetch("/api/design-calculator", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, design: nextDesign }) });
     const body = await response.json();
+    if (response.ok && body.design) setDesign(body.design);
     setStatus(response.ok ? "Schematic saved" : body.error ?? "Could not save schematic");
   }
 
@@ -1620,6 +1661,7 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
     setStatus("Saving redesign…");
     const response = await fetch("/api/design-calculator", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, design: savedDesign }) });
     const body = await response.json();
+    if (response.ok && body.design) setDesign(body.design);
     setStatus(response.ok ? "Redesign saved" : body.error ?? "Could not save redesign");
   }
 
@@ -1643,7 +1685,7 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
       setStatus(body.error ?? "Could not save the proposed schematic.");
       return;
     }
-    setDesign(nextDesign);
+    setDesign(body.design ?? nextDesign);
     router.push(`${base}?view=build`);
   }
 
@@ -1708,6 +1750,7 @@ function ProposedSchematic({ project, projectName, gridConnected, includeBattery
 }
 
 function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, systemName, onChange, onRedesign, wattsonHref, onOpenWattson }: { draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>; design: DesignCalculatorState; project: Project; gridConnected: boolean; systemName: string; onChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string; onOpenWattson: () => void }) {
+  const router = useRouter();
   const [zoom, setZoom] = useState(1);
   const [showConnectionLabels, setShowConnectionLabels] = useState(true);
   const [connectionView, setConnectionView] = useState<SchematicConnectionView>("all");
@@ -1729,6 +1772,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const [configurationOpen, setConfigurationOpen] = useState(false);
   const [configurationParts, setConfigurationParts] = useState("2");
   const [configurationMessage, setConfigurationMessage] = useState("");
+  const [openingEditor, setOpeningEditor] = useState(false);
   const [addingItem, setAddingItem] = useState(false);
   const [assetSearch, setAssetSearch] = useState("");
   const [assetGroup, setAssetGroup] = useState<ProposedAssetGroup>("all");
@@ -1806,6 +1850,15 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const selectedNode = nodes.find((node) => node.id === selectedNodeId);
   const selectedConnection = connections.find((connection) => `${connection.from}:${connection.to}` === selectedConnectionKey);
   const selectedNodeIsSolar = selectedNode?.id === "solar" || selectedNode?.id.startsWith("solar-pv-");
+  const selectedRecordId = selectedNode?.recordRef?.split(":")[1] ?? selectedNode?.installedRecordId;
+  const selectedExistingPvArray = selectedNodeIsSolar
+    ? project.pvArrays.find((array) => array.id === selectedRecordId)
+      ?? project.pvArrays.find((array) => array.name.trim().toLowerCase() === selectedNode?.label.trim().toLowerCase())
+    : undefined;
+  const selectedExistingComponent = selectedNode && !selectedNodeIsSolar
+    ? project.components.find((component) => component.id === selectedRecordId)
+      ?? project.components.find((component) => component.kind === proposedComponentEquipmentType(selectedNode.id) && component.name.trim().toLowerCase() === selectedNode.label.trim().toLowerCase())
+    : undefined;
   const selectedStringNumber = selectedNode?.id.startsWith("solar-pv-") ? Number(selectedNode.id.split("-").at(-1)) : undefined;
   const selectedCardPanelCount = selectedStringNumber ? n(design.panelsPerString) : n(design.panelCount);
   const selectedSupplementaryArray = selectedNode?.id === "solar-pv-2" ? supplementaryArray(design) : undefined;
@@ -1815,7 +1868,18 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const configurationPreview = Number.isInteger(requestedArrayParts) && requestedArrayParts >= 2 && requestedArrayParts <= selectedArrayPanelCount
     ? balancedPanelAllocation(selectedArrayPanelCount, requestedArrayParts)
     : [];
-  const selectedNodeSpecs = selectedSupplementaryArray ? [
+  const selectedRecordSpecs: Array<[string, string]> = selectedExistingPvArray ? [
+    ["Panel allocation", selectedExistingPvArray.panelCount ? `${selectedExistingPvArray.panelCount} panels` : "Not confirmed"],
+    ["Panel wattage", selectedExistingPvArray.panelWatts ? `${selectedExistingPvArray.panelWatts} W` : "Not confirmed"],
+    ["Panel type", selectedExistingPvArray.panelType?.replaceAll("-", " ") ?? "Not confirmed"],
+    ["Panel", [selectedExistingPvArray.manufacturer, selectedExistingPvArray.panelModel].filter(Boolean).join(" ") || "Exact model not confirmed"],
+    ["String arrangement", selectedExistingPvArray.strings && selectedExistingPvArray.panelsPerString ? `${selectedExistingPvArray.strings} × ${selectedExistingPvArray.panelsPerString}` : "Not confirmed"],
+  ] : selectedExistingComponent ? [
+    ["Equipment", [selectedExistingComponent.manufacturer, selectedExistingComponent.model].filter(Boolean).join(" ") || selectedExistingComponent.name],
+    ["Quantity", String(selectedExistingComponent.quantity)],
+    ...Object.entries(selectedExistingComponent.specs).slice(0, 6).map(([label, value]) => [label, String(value)] as [string, string]),
+  ] : [];
+  const selectedNodeSpecs = selectedRecordSpecs.length ? selectedRecordSpecs : selectedSupplementaryArray ? [
     ["Mounting", "Suitable mounting area to confirm"], ["Array", `At least ${round(selectedSupplementaryArray.targetPvKw, 2)} kW`], ["Connection", "Separate compatible string / MPPT input"], ["Planning azimuth", azimuthText(design.azimuthDegrees)], ["Planning tilt", design.tiltDegrees === undefined ? "not established" : `${round(design.tiltDegrees, 0)}°; actual surface to confirm`], ["Panel type / quantity", "Select a compatible option"], ["Electrical limits", "Confirm from selected module and inverter datasheets"],
   ] : selectedPlannedArray ? [
     ["Mounting array", selectedPlannedArray.name],
@@ -1851,6 +1915,48 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   }, [design.panelCount, design.panelsPerString, selectedNodeId, selectedPlannedArray?.allocatedPanelCount, selectedStringNumber]);
   const overviewHref = `${wattsonHref.split("?")[0]}/design`;
   const pvNames = Array.from({ length: Math.max(1, n(design.pvStrings, 1)) }, (_, index) => `PV${index + 1}`);
+  const schematicHref = `${wattsonHref.split("?")[0]}/schematic`;
+  const proposalNodeQuery = selectedNode ? `&proposalNode=${encodeURIComponent(selectedNode.id)}` : "";
+  const selectedRecordEditHref = selectedNode?.recordRef?.startsWith("pv:")
+    ? `${wattsonHref.split("?")[0]}/equipment/${selectedNode.recordRef.slice(3)}`
+    : selectedNode?.recordRef?.startsWith("component:")
+      ? `${wattsonHref.split("?")[0]}/equipment/${selectedNode.recordRef.slice(10)}`
+      : undefined;
+  const selectedNodeEditHref = selectedNode
+    ? selectedRecordEditHref
+      ? `${selectedRecordEditHref}?returnTo=${encodeURIComponent(schematicHref)}${proposalNodeQuery}`
+      : selectedExistingPvArray
+      ? `${wattsonHref.split("?")[0]}/equipment/${selectedExistingPvArray.id}?returnTo=${encodeURIComponent(schematicHref)}${proposalNodeQuery}`
+      : selectedExistingComponent
+        ? `${wattsonHref.split("?")[0]}/equipment/${selectedExistingComponent.id}?returnTo=${encodeURIComponent(schematicHref)}${proposalNodeQuery}`
+        : `${wattsonHref.split("?")[0]}/equipment/new?type=${proposedComponentEquipmentType(selectedNode.id)}&name=${encodeURIComponent(selectedNode.label)}&image=${encodeURIComponent(selectedNode.image)}&returnTo=${encodeURIComponent(schematicHref)}${proposalNodeQuery}`
+    : overviewHref;
+  const openSelectedNodeEditor = async () => {
+    if (!selectedNode) return;
+    if (selectedNode.recordRef) {
+      router.push(selectedNodeEditHref);
+      return;
+    }
+    setOpeningEditor(true);
+    setQuickEditMessage("");
+    try {
+      const response = await fetch("/api/design-calculator", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ projectId: project.id, design: { ...design, proposedAsBuiltDraft: draft } }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not prepare this component record");
+      const savedNode = body.design?.proposedAsBuiltDraft?.nodes?.find((node: { id?: string }) => node.id === selectedNode.id);
+      const recordRef = typeof savedNode?.recordRef === "string" ? savedNode.recordRef : undefined;
+      const recordId = recordRef?.split(":")[1];
+      if (!recordId) throw new Error("Could not link this component to its proposal record");
+      router.push(`${wattsonHref.split("?")[0]}/equipment/${recordId}?returnTo=${encodeURIComponent(schematicHref)}${proposalNodeQuery}`);
+    } catch (problem) {
+      setQuickEditMessage(problem instanceof Error ? problem.message : "Could not open this component record");
+      setOpeningEditor(false);
+    }
+  };
   const connectionDisplayLabel = (connection: (typeof connections)[number]) => connection.authorityCheck && connection.from === "grid-supply" ? "Public grid AC supply to isolation" : connection.authorityCheck && connection.to === "switchboard" ? "Grid AC feed to power board" : !design.pvArrayPlan && connection.kind === "solar-dc" && connection.from === "solar" ? `${pvNames.join(" / ")} · ${n(design.panelsPerString, 1)} panels per string` : !design.pvArrayPlan && connection.kind === "solar-dc" && connection.from === "solar-safety" ? `${pvNames.join(" / ")} to inverter/MPPT inputs` : connection.label;
   const pvCircuitId = (connection: (typeof connections)[number]) => connection.kind === "solar-dc" ? connection.label.match(/\bPV\d+\b/i)?.[0].toUpperCase() : undefined;
   const standardCable = (minimum: number) => [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120].find((size) => size >= minimum) ?? Math.ceil(minimum);
@@ -1937,7 +2043,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     onChange({ ...draft, nodes: nodes.map((node) => node.id === selectedNode.id ? { ...node, reviewed: true } : node) });
     setSelectedNodeId(undefined);
   };
-  const saveQuickPanelQuantity = () => {
+  const saveQuickPanelQuantity = async () => {
     const enteredPanelCount = Number(quickPanelCount);
     if (!Number.isInteger(enteredPanelCount) || enteredPanelCount < 1 || enteredPanelCount > 10000) {
       setQuickEditMessage("Enter a whole number of panels greater than zero.");
@@ -1962,11 +2068,11 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     }
     const panelWatts = n(design.panelWatts, defaultProposalPanel.watts);
     const sizing = deterministicSizing(project, panelWatts, panelCount);
-    const usableBatteryPercent = n(design.usableBatteryPercent, 80);
-    const batteryVoltage = n(design.batteryVoltage, 51.2);
+    const usableBatteryPercent = n(design.usableBatteryPercent);
+    const batteryVoltage = n(design.batteryVoltage);
     const includePlannedBattery = proposalIncludesBattery(project);
-    const batteryAh = includePlannedBattery && sizing.batteryUsableKwh
-      ? Math.ceil(sizing.batteryUsableKwh * 1000 / Math.max(batteryVoltage * (usableBatteryPercent / 100), 1))
+    const batteryAh = includePlannedBattery && sizing.batteryUsableKwh && confirmedBatteryChemistry(design.batteryChemistry) && batteryVoltage && usableBatteryPercent
+      ? Math.ceil(sizing.batteryUsableKwh * 1000 / (batteryVoltage * (usableBatteryPercent / 100)))
       : undefined;
     const nextDesign: DesignCalculatorState = {
       ...design,
@@ -2017,6 +2123,51 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
       updatedBy: "user",
     };
     const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected);
+    if (selectedExistingPvArray) {
+      const arrayPanelCount = editingPlannedArray || editingUniformString ? enteredPanelCount : panelCount;
+      const response = await fetch(`/api/pv-arrays/${selectedExistingPvArray.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id,
+          name: selectedExistingPvArray.name,
+          manufacturer: selectedExistingPvArray.manufacturer,
+          panelModel: selectedExistingPvArray.panelModel,
+          panelType: selectedExistingPvArray.panelType,
+          supplier: selectedExistingPvArray.supplier,
+          purchasedOn: selectedExistingPvArray.purchasedOn,
+          installedOn: selectedExistingPvArray.installedOn,
+          maximumPowerVoltageV: selectedExistingPvArray.maximumPowerVoltageV,
+          maximumPowerCurrentA: selectedExistingPvArray.maximumPowerCurrentA,
+          openCircuitVoltageV: selectedExistingPvArray.openCircuitVoltageV,
+          shortCircuitCurrentA: selectedExistingPvArray.shortCircuitCurrentA,
+          maximumSystemVoltageV: selectedExistingPvArray.maximumSystemVoltageV,
+          nominalOperatingCellTempC: selectedExistingPvArray.nominalOperatingCellTempC,
+          maximumSeriesFuseA: selectedExistingPvArray.maximumSeriesFuseA,
+          labelPhotoPath: selectedExistingPvArray.labelPhotoPath,
+          panelWatts,
+          panelCount: arrayPanelCount,
+          strings: selectedExistingPvArray.strings,
+          panelsPerString: selectedExistingPvArray.strings === 1 ? arrayPanelCount : selectedExistingPvArray.panelsPerString,
+          orientationDegrees: selectedExistingPvArray.orientationDegrees,
+          tiltDegrees: selectedExistingPvArray.tiltDegrees,
+          cableSizeMm2: selectedExistingPvArray.cableSizeMm2,
+          cableLengthM: selectedExistingPvArray.cableLengthM,
+          connectorType: selectedExistingPvArray.connectorType,
+          breakerDetails: selectedExistingPvArray.breakerDetails,
+          isolatorDetails: selectedExistingPvArray.isolatorDetails,
+          combinerDetails: selectedExistingPvArray.combinerDetails,
+          installationNotes: selectedExistingPvArray.installationNotes,
+          specifications: selectedExistingPvArray.specifications,
+          confidence: "estimated",
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json();
+        setQuickEditMessage(body.error ?? "Could not save this array quantity.");
+        return;
+      }
+    }
     onRedesign(nextDesign, nextDraft);
     setQuickEditMessage(editingPlannedArray
       ? `Saved ${enteredPanelCount} panels in this array. The system total is now ${panelCount} panels; all other arrays were retained.`
@@ -2174,11 +2325,11 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   const earthConnections = visibleConnections.filter((connection) => connection.kind === "earth");
   const earthLaneOffset = (connection: (typeof connections)[number]) => connection.kind === "earth" ? Math.max(0, earthConnections.indexOf(connection)) * 10 : 0;
 
-  return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><div className="flex items-center gap-3"><button type="button" onClick={onOpenWattson} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-brand px-3 text-[10px] font-bold text-white"><Zap size={13}/>Work on this with Wattson</button><span className="text-xs font-extrabold text-brand">{systemName}</span></div><div className="flex shrink-0 flex-wrap gap-1"><label className="sr-only" htmlFor="schematic-connection-view">Show schematic connections</label><select id="schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as SchematicConnectionView)} className="h-9 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC connections</option><option value="dc">DC connections</option><option value="earth">Earth connections</option></select><button type="button" onClick={tidyLayout} className="h-9 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={() => setAddingItem(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/>Add item</button><button type="button" onClick={() => { setConnectionMode((value) => !value); setConnectingFromId(undefined); }} aria-pressed={connectionMode} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold ${connectionMode ? "border-brand bg-brand text-white" : "border-line bg-white text-brand"}`}><Link2 size={13}/>{connectionMode ? "Cancel connect" : "Connect items"}</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div>{connectionMode ? <div className="border-b border-[#e3c65a] bg-[#fff4bd] px-4 py-3 text-xs font-bold text-brand" role="status">{connectingFromId ? `Selected ${byId.get(connectingFromId)?.label ?? "item"}. Tap the destination card.` : "Tap the first item you want to connect."}</div> : null}<div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto overscroll-contain">
+  return <div className="proposed-schematic-canvas mt-5 overflow-hidden rounded-2xl border border-[#bad0e4] bg-white"><div className="schematic-canvas-toolbar flex flex-wrap items-center justify-between gap-3 border-b border-line bg-[#edf5fc] px-3 py-2"><div className="flex items-center gap-3"><button type="button" onClick={onOpenWattson} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-brand px-3 text-[10px] font-bold text-white"><Zap size={13}/>Work on this with Wattson</button><span className="text-xs font-extrabold text-brand">{systemName}</span></div><div className="flex shrink-0 flex-wrap gap-1"><label className="sr-only" htmlFor="schematic-connection-view">Show schematic connections</label><select id="schematic-connection-view" value={connectionView} onChange={(event) => setConnectionView(event.target.value as SchematicConnectionView)} className="h-9 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand" aria-label="Show schematic connections"><option value="all">All connections</option><option value="ac">AC connections</option><option value="dc">DC connections</option><option value="earth">Earth connections</option></select><button type="button" onClick={tidyLayout} className="h-9 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand">Tidy layout</button><button type="button" onClick={() => setShowConnectionLabels((value) => !value)} aria-pressed={showConnectionLabels} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-[10px] font-bold text-brand">{showConnectionLabels ? <EyeOff size={13}/> : <Eye size={13}/>} {showConnectionLabels ? "Hide labels" : "Show labels"}</button><button type="button" onClick={() => setAddingItem(true)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-[10px] font-bold text-brand"><Plus size={13}/>Add item</button><button type="button" onClick={() => { setConnectionMode((value) => !value); setConnectingFromId(undefined); }} aria-pressed={connectionMode} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[10px] font-bold ${connectionMode ? "border-brand bg-brand text-white" : "border-line bg-white text-brand"}`}><Link2 size={13}/>{connectionMode ? "Cancel connect" : "Connect items"}</button><button type="button" onClick={() => setZoom((value) => Math.max(.25, Number((value - .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom out"><Minus size={14}/></button><button type="button" onClick={() => setZoom(1)} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Reset zoom"><RotateCcw size={13}/></button><button type="button" onClick={() => setZoom((value) => Math.min(1.3, Number((value + .1).toFixed(2))))} className="grid size-9 place-items-center rounded-lg border border-line bg-white" aria-label="Zoom in"><Plus size={14}/></button></div></div>{connectionMode ? <div className="border-b border-[#e3c65a] bg-[#fff4bd] px-4 py-3 text-xs font-bold text-brand" role="status">{connectingFromId ? `Selected ${byId.get(connectingFromId)?.label ?? "item"}. Tap the destination card.` : "Tap the first item you want to connect."}</div> : null}<div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the working diagram a clear postcard-sized canvas.</span></div></div><div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto touch-pan-x touch-pan-y">
     {selectedNode && componentModalTarget ? createPortal(<div className="mt-5 border-t border-line pt-5">
       {selectedNodeIsSolar && !supplementaryArray(design) ? <div className="rounded-2xl border border-[#9fc6e7] bg-[#eef6fd] p-4">
         <div className="eyebrow">Quick edit</div>
-        <label className="mt-3 block text-xs font-bold">{selectedStringNumber ? "Panels in this array" : "Total panel quantity"}<div className="mt-1.5 flex gap-2"><input type="number" min="1" max="10000" step="1" inputMode="numeric" value={quickPanelCount} onChange={(event) => { setQuickPanelCount(event.target.value); setQuickEditMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={saveQuickPanelQuantity} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">{selectedPlannedArray ? "Save this array" : "Save quantity"}</button></div></label>
+        <label className="mt-3 block text-xs font-bold">{selectedStringNumber ? "Panels in this array" : "Total panel quantity"}<div className="mt-1.5 flex gap-2"><input type="number" min="1" max="10000" step="1" inputMode="numeric" value={quickPanelCount} onChange={(event) => { setQuickPanelCount(event.target.value); setQuickEditMessage(""); }} className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-white px-3 text-sm font-extrabold"/><button type="button" onClick={() => void saveQuickPanelQuantity()} className="h-11 rounded-xl bg-brand px-4 text-xs font-bold text-white">{selectedPlannedArray ? "Save this array" : "Save quantity"}</button></div></label>
         <p className="mt-2 text-[10px] leading-4 text-muted">{selectedPlannedArray ? "This changes only this selected mounting array. Every other roof and ground array stays in the proposal; the system total and dependent planning figures are then refreshed." : selectedStringNumber && !design.pvArrayPlan && n(design.pvStrings) > 1 ? `This proposal uses ${n(design.pvStrings)} equal arrays. Saving changes each array to this quantity and refreshes the total and dependent planning figures.` : "This refreshes array capacity, string layout and the dependent inverter and storage planning figures. A user-selected array grouping is retained."}</p>
         {quickEditMessage ? <p className="mt-2 text-[10px] font-semibold text-brand" role="status">{quickEditMessage}</p> : null}
       </div> : null}
@@ -2240,7 +2391,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
     {(selectedNode || selectedConnection) ? <div className="fixed inset-0 z-[80] grid place-items-center bg-[#102d4d]/45 p-4" onMouseDown={(event) => { if (event.currentTarget === event.target) { setSelectedNodeId(undefined); setSelectedConnectionKey(undefined); setPendingSizing(undefined); } }}>
       <section id={selectedNode ? "schematic-component-record-modal" : undefined} className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-white p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-3"><div><div className="eyebrow">{selectedNode ? "Proposed component" : "Planning connection"}</div><h3 className="mt-2 text-xl font-extrabold">{selectedNode?.label ?? selectedConnection?.label}</h3></div><button type="button" onClick={() => { setSelectedNodeId(undefined); setSelectedConnectionKey(undefined); setPendingSizing(undefined); }} className="grid size-9 place-items-center rounded-xl border border-line"><X size={16}/></button></div>
-        {selectedNode ? <div className="mt-5 space-y-4"><p className="text-xs leading-5 text-muted">{selectedNode.detail}</p><Link href={`${overviewHref}#tech-${selectedNode.id}`} className="flex h-11 w-full items-center justify-center rounded-xl bg-brand px-4 text-center text-xs font-bold text-white">{selectedNodeIsSolar ? "Edit panel quantity or specifications" : "Edit this component"}</Link>{selectedPlannedArray && selectedArrayPanelCount > 1 ? <button type="button" onClick={() => { setConfigurationOpen((current) => !current); setConfigurationMessage(""); }} aria-expanded={configurationOpen} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Change array configuration</button> : null}<button type="button" onClick={() => openContextChat("ask")} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Ask Wattson about this component</button><button type="button" onClick={acceptComponent} className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-xs font-bold transition ${selectedNode.reviewed ? "border border-[#86c79a] bg-[#dff3e8] text-[#17603b]" : "bg-[#238653] text-white hover:bg-[#1b7045]"}`}><CheckCircle2 size={16}/>{selectedNode.reviewed ? "Specification accepted" : "Accept specification"}</button><p className="rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 text-[10px] leading-4 text-muted">Acceptance adds this proposed item to the Build It shopping list. It does not mark it purchased, installed or certified.</p></div> : null}
+        {selectedNode ? <div className="mt-5 space-y-4"><p className="text-xs leading-5 text-muted">{selectedNode.detail}</p><button type="button" disabled={openingEditor} onClick={() => void openSelectedNodeEditor()} className="flex h-11 w-full items-center justify-center rounded-xl bg-brand px-4 text-center text-xs font-bold text-white disabled:opacity-50">{openingEditor ? "Opening…" : selectedNodeIsSolar ? "Edit panel quantity or specifications" : "Edit this component"}</button>{selectedPlannedArray && selectedArrayPanelCount > 1 ? <button type="button" onClick={() => { setConfigurationOpen((current) => !current); setConfigurationMessage(""); }} aria-expanded={configurationOpen} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Change array configuration</button> : null}<button type="button" onClick={() => openContextChat("ask")} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Ask Wattson about this component</button><button type="button" onClick={acceptComponent} className={`flex h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-xs font-bold transition ${selectedNode.reviewed ? "border border-[#86c79a] bg-[#dff3e8] text-[#17603b]" : "bg-[#238653] text-white hover:bg-[#1b7045]"}`}><CheckCircle2 size={16}/>{selectedNode.reviewed ? "Specification accepted" : "Accept specification"}</button><p className="rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 text-[10px] leading-4 text-muted">Acceptance adds this proposed item to the Build It shopping list. It does not mark it purchased, installed or certified.</p></div> : null}
         {selectedConnection ? <div className="mt-5 space-y-4"><p className="text-xs leading-5 text-muted">Record the measured or estimated one-way route so Wattson can suggest planning values for this connection. You will review the complete schematic before Build It opens.</p><NumberField label="One-way route length" value={routeLength} unit="m" onChange={setRouteLength}/><label className="block text-xs font-bold">Distance quality<select value={routeBasis} onChange={(event) => setRouteBasis(event.target.value as "estimated" | "measured")} className="mt-1.5 h-11 w-full rounded-xl border border-line bg-white px-3"><option value="estimated">Estimated</option><option value="measured">Measured</option></select></label><button type="button" disabled={routeLength <= 0} onClick={saveRoute} className="h-11 w-full rounded-xl bg-brand px-4 text-xs font-bold text-white disabled:opacity-40">Calculate and review planning values</button><button type="button" onClick={() => openContextChat("ask")} className="h-11 w-full rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand">Ask Wattson about this connection</button><p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-3 text-[10px] leading-4 text-[#765918]">Final conductor and protection selection still depends on equipment limits, installation method, temperature, grouping, fault level and local electrical rules.</p></div> : null}
       </section>
     </div> : null}
@@ -2274,7 +2425,18 @@ function proposalDraftForCurrentDesign(design: DesignCalculatorState, gridConnec
     || n(draft.evChargingKw) !== n(design.evChargingKw)
     || draft.evChargingPhase !== design.evChargingPhase
     || nodes.some((node) => node.id === "grid-supply") !== gridConnected;
-  return structureChanged ? createProposedAsBuiltDraft(design, gridConnected) : draft;
+  if (!structureChanged) return draft;
+  const rebuilt = createProposedAsBuiltDraft(design, gridConnected);
+  const previousById = new Map(nodes.map((node) => [node.id, node]));
+  return {
+    ...rebuilt,
+    nodes: rebuilt.nodes?.map((node) => {
+      const previous = previousById.get(node.id);
+      return previous?.recordRef || previous?.installedRecordId
+        ? { ...node, recordRef: previous.recordRef, installedRecordId: previous.installedRecordId }
+        : node;
+    }),
+  };
 }
 
 function expandSelectedInverterUnits(nodes: ProposedNode[], connections: NonNullable<ProposedDraft["connections"]>, design: DesignCalculatorState) {
@@ -2362,6 +2524,22 @@ function expandSelectedInverterUnits(nodes: ProposedNode[], connections: NonNull
 
 export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridConnected = false): NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]> {
   type Draft = NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>;
+  const batteryExplicitlyExcluded = design.batteryIncluded === false;
+  const batteryChemistry = confirmedBatteryChemistry(design.batteryChemistry);
+  const batteryImage = !batteryChemistry
+    ? "/guides/battery/battery-cabinet.png"
+    : /lead|agm|gel/i.test(batteryChemistry)
+      ? "/schematic-components/lead-acid-battery.jpg"
+      : /lifepo/i.test(batteryChemistry)
+        ? "/schematic-components/lifepo4-battery-bank.jpg"
+        : "/guides/battery/battery-cabinet.png";
+  const batteryDetail = !batteryChemistry
+    ? `${design.batteryUsableKwh ? `${round(design.batteryUsableKwh, 1)} kWh usable-storage target; ` : ""}battery type must be selected before voltage, quantity and hardware are proposed`
+    : design.batteryUsableKwh
+      ? `${round(design.batteryUsableKwh, 1)} kWh usable ${batteryChemistry} storage from discovery`
+      : design.batteryVoltage
+        ? `${design.batteryVoltage} V ${batteryChemistry} storage proposed`
+        : `${batteryChemistry} storage capacity requires a confirmed daily-energy value`;
   const baseFlow = design.architecture === "separate_solar_controller_and_inverter"
     ? ["Solar panels", "Solar charge controller", "Battery storage", "Inverter", "Your lights, outlets and tools"]
     : design.architecture === "combined_hybrid_inverter"
@@ -2429,7 +2607,7 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
     : [{ from: "solar", to: "solar-safety", label: pvFeedLabel, kind: "solar-dc" as const }, { from: "solar-safety", to: target, label: "PV string to inverter/MPPT input", kind: "solar-dc" as const }];
   const nodes: NonNullable<Draft["nodes"]> = [
     ...solarNodes,
-    { id: "battery", label: "Battery storage", detail: design.batteryUsableKwh ? `${round(design.batteryUsableKwh, 1)} kWh usable storage from discovery` : design.batteryVoltage ? `${design.batteryVoltage} V storage proposed` : "Storage capacity requires a confirmed daily-energy value", image: "/schematic-components/lifepo4-battery-bank.jpg", x: 35, y: 345 },
+    { id: "battery", label: "Battery storage", detail: batteryDetail, image: batteryImage, x: 35, y: 345 },
     { id: "switchboard", label: "Building power board", detail: "Sends power to lights, outlets and tools", image: "/schematic-components/ac-distribution-board.jpg", x: 940, y: 180 },
     { id: "earth", label: "Safety earth", detail: "Provides a safety path into the ground", image: EARTH_ELECTRODE_IMAGE, x: 940, y: 415 },
   ];
@@ -2561,6 +2739,28 @@ export function createProposedAsBuiltDraft(design: DesignCalculatorState, gridCo
     for (let i = nodes.length - 1; i >= 0; i--) if (excluded.has(nodes[i].id)) nodes.splice(i, 1);
     for (let i = connections.length - 1; i >= 0; i--) if (excluded.has(connections[i].from) || excluded.has(connections[i].to)) connections.splice(i, 1);
     for (let i = flow.length - 1; i >= 0; i--) if (/solar panel|solar charge/i.test(flow[i])) flow.splice(i, 1);
+  }
+  if (batteryExplicitlyExcluded) {
+    const batteryNodeIds = new Set(["battery", "battery-safety", "battery-inverter", "controller"]);
+    for (const connection of connections) {
+      if (connection.to === "controller") {
+        connection.to = nodes.some((node) => node.id === "inverter") ? "inverter" : "pv-inverter";
+        connection.label = "PV input for daylight-only operation";
+      }
+    }
+    for (let index = nodes.length - 1; index >= 0; index--) {
+      if (batteryNodeIds.has(nodes[index].id)) nodes.splice(index, 1);
+    }
+    for (let index = connections.length - 1; index >= 0; index--) {
+      if (batteryNodeIds.has(connections[index].from) || batteryNodeIds.has(connections[index].to)) connections.splice(index, 1);
+    }
+    for (let index = flow.length - 1; index >= 0; index--) {
+      if (/battery|stored power|charge controller/i.test(flow[index])) flow.splice(index, 1);
+    }
+    const inverter = nodes.find((node) => node.id === "inverter");
+    if (inverter) {
+      inverter.detail = `Battery-free operation must be documented for the exact selected equipment. ${inverter.detail}`;
+    }
   }
   const expanded = expandSelectedInverterUnits(nodes, connections, design);
   return {

@@ -13,11 +13,6 @@ export type ProposalIntakeInitial = { systemId: string; siteId: string; systemNa
 const blankArray = (position: number): ProposedArray => ({ id: crypto.randomUUID(), name: `PV array ${position}`, manufacturer: "", model: "", panelType: "unknown", panelCount: 1, panelWatts: 0, mount: "", location: "" });
 const blankComponent = (type: ProposedComponent["type"]): ProposedComponent => ({ id: crypto.randomUUID(), type, name: type === "inverter" ? "Inverter" : type === "battery" ? "Battery storage" : "Generator", manufacturer: "", model: "", quantity: 1, notes: "" });
 const numberValue = (value: string) => value === "" ? undefined : Number(value);
-const componentHasEnteredDetails = (component: ProposedComponent) => component.quantity !== 1
-  || Boolean(component.manufacturer.trim() || component.model.trim() || component.notes.trim())
-  || [component.rating, component.batteryKwh, component.batteryAh, component.voltage, component.batteryVoltageMin, component.batteryVoltageMax, component.mpptMin, component.mpptMax, component.maxPvVoltage, component.maxInputCurrent].some((value) => value !== undefined)
-  || Boolean(component.batteryType || component.bmsCompatibility);
-
 export function ProposalIntake({ sites, initialSiteId, initialProposal, discoveryContext }: { sites: Array<{ id: string; name: string; location: string | null }>; initialSiteId?: string; initialProposal?: ProposalIntakeInitial; discoveryContext?: { draftId?: string } }) {
   const router = useRouter();
   const [siteId, setSiteId] = useState(initialProposal?.siteId ?? (initialSiteId && sites.some((site) => site.id === initialSiteId) ? initialSiteId : sites[0]?.id ?? "__new__"));
@@ -32,9 +27,8 @@ export function ProposalIntake({ sites, initialSiteId, initialProposal, discover
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const enteredComponents = useMemo(() => components.filter(componentHasEnteredDetails), [components]);
-  const issues = useMemo(() => localIssues(arrays, enteredComponents).filter((issue) => !discoveryContext || issue.severity === "blocker" || issue.text.includes("incomplete")), [arrays, discoveryContext, enteredComponents]);
-  const hasEnteredEquipment = arrays.length + enteredComponents.length > 0;
+  const issues = useMemo(() => localIssues(arrays, components).filter((issue) => !discoveryContext || issue.severity === "blocker" || issue.text.includes("incomplete")), [arrays, components, discoveryContext]);
+  const hasEnteredEquipment = arrays.length + components.length > 0;
   const updateArray = (id: string, change: Partial<ProposedArray>) => setArrays((current) => current.map((item) => item.id === id ? { ...item, ...change } : item));
   const updateComponent = (id: string, change: Partial<ProposedComponent>) => setComponents((current) => current.map((item) => item.id === id ? { ...item, ...change } : item));
   const addArray = () => { const item = blankArray(arrays.length + 1); setArrays((current) => [...current, item]); setOpenId(item.id); setWarnings([]); setBlockers([]); };
@@ -48,7 +42,7 @@ export function ProposalIntake({ sites, initialSiteId, initialProposal, discover
     if (localWarnings.length) setWarnings(localWarnings);
     setSaving(true);
     try {
-      const response = await fetch("/api/systems/proposed", { method: initialProposal ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ systemId: initialProposal?.systemId, siteId, siteName: siteId === "__new__" ? siteName : undefined, systemName, projectType, arrays: arrays.map(({ id: _id, ...array }) => array), components: enteredComponents.map(({ id: _id, ...component }) => component), discoveryContext: discoveryContext ? { draftId: discoveryContext.draftId, continueDiscovery: destination === "discovery" } : undefined }) });
+      const response = await fetch("/api/systems/proposed", { method: initialProposal ? "PATCH" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ systemId: initialProposal?.systemId, siteId, siteName: siteId === "__new__" ? siteName : undefined, systemName, projectType, arrays, components, removedArrayIds: initialProposal?.arrays.map((item) => item.id).filter((id) => !arrays.some((item) => item.id === id)) ?? [], removedComponentIds: initialProposal?.components.map((item) => item.id).filter((id) => !components.some((item) => item.id === id)) ?? [], discoveryContext: discoveryContext ? { draftId: discoveryContext.draftId, continueDiscovery: destination === "discovery" } : undefined }) });
       const body = await response.json();
       if (Array.isArray(body.blockers)) setBlockers(body.blockers);
       if (Array.isArray(body.warnings)) setWarnings(body.warnings);

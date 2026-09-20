@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { PVIntellWorkspace } from "@/components/pvintell-workspace";
 import { SystemSchematic } from "@/components/system-schematic";
+import { initialConversation } from "@/data/demo-project";
 import { loadSiteWorkspace } from "@/data/cloud-project";
 import { createClient } from "@/lib/supabase/server";
 import type { ComponentSpec } from "@/domain/models";
@@ -109,5 +111,22 @@ export default async function SchematicPage({
   const schematicAssets = [...new Map(
     [...fileAssets, ...guideAssets, ...meterAssets].map((asset) => [asset.url, asset]),
   ).values()].sort((a, b) => a.label.localeCompare(b.label));
+  const planningPhase = ["discover", "design"].includes(workspace.project.phase);
+  if (planningPhase) {
+    return <PVIntellWorkspace
+      key={`${workspace.project.id}:${workspace.project.updatedAt ?? ""}:schematic`}
+      initialProject={workspace.project}
+      initialMessages={workspace.messages.length ? workspace.messages : initialConversation}
+      initialConversationId={workspace.conversationId}
+      initialSite={workspace.site}
+      sites={workspace.sites}
+      systems={workspace.systems}
+      initialQuestionnaires={workspace.questionnaireDrafts}
+      initialSiteEquipment={workspace.siteEquipment}
+      cloud
+      systemPage
+      initialView="proposed-schematic"
+    />;
+  }
   return <SystemSchematic project={workspace.project} site={workspace.site} sites={workspace.sites} schematicAssets={schematicAssets} initiallyAdding={query.add === "1"} initialConversationId={workspace.conversationId} initialMessages={workspace.messages} />;
 }

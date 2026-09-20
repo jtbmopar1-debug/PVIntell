@@ -202,7 +202,7 @@ function RecordList({ project, components, arrays, connections }: { project: Pro
   const base = `/sites/${project.siteId}/systems/${project.id}`;
   const records = [
     ...components.map((item) => ({ id: item.id, label: item.name, detail: [item.manufacturer, item.model].filter(Boolean).join(" · ") || item.kind, href: `${base}/equipment/${item.id}` })),
-    ...arrays.map((item) => ({ id: item.id, label: item.name, detail: `${item.panelCount ?? "?"} × ${item.panelWatts ?? "?"} W panels`, href: `${base}/pv-strings/${item.id}` })),
+    ...arrays.map((item) => ({ id: item.id, label: item.name, detail: `${item.panelCount ?? "?"} × ${item.panelWatts ?? "?"} W panels`, href: `${base}/equipment/${item.id}` })),
     ...connections.map((item) => ({ id: item.id, label: item.name, detail: `${item.connectionType.toUpperCase()} connection`, href: `${base}/schematic` })),
   ];
   if (!records.length) return <p className="mt-4 rounded-2xl border border-dashed border-line p-4 text-xs text-muted">No matching equipment or connection records yet. Add the actual items in As-built overview or As-built schematic first.</p>;

@@ -151,7 +151,7 @@ export interface DesignCalculatorState {
     createdAt: string;
     architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
     flow: string[];
-    nodes?: Array<{ id: string; label: string; detail: string; image: string; x: number; y: number; installed?: boolean; installedRecordId?: string; reviewed?: boolean; notes?: string; authorityCheck?: boolean }>;
+    nodes?: Array<{ id: string; label: string; detail: string; image: string; x: number; y: number; recordRef?: string; installed?: boolean; installedRecordId?: string; reviewed?: boolean; notes?: string; authorityCheck?: boolean }>;
     connections?: Array<{ from: string; to: string; label: string; kind: "solar-dc" | "battery-dc" | "ac" | "earth"; lengthM?: number; lengthBasis?: "estimated" | "measured"; cableSizeMm2?: number; protectionAmps?: number; notes?: string; authorityCheck?: boolean; configured?: boolean }>;
     panelCount?: number;
     panelWatts?: number;
@@ -272,6 +272,7 @@ export interface DesignCalculatorState {
   };
   batteryChemistry?: string;
   batteryVoltage?: number;
+  batteryIncluded?: boolean;
   batteryAh?: number;
   batteryQuantity?: number;
   usableBatteryPercent?: number;

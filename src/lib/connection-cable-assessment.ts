@@ -51,6 +51,36 @@ export function assessCableAgainstEndpoints(
 }
 
 export function withCompatibilityWarning(notes: string | undefined, warning: string | undefined) {
-  const cleaned = (notes ?? "").replace(/(?:^|\n)Cable compatibility (?:warning|needs verification):[^\n]*/g, "").trim();
+  const cleaned = (notes ?? "").replace(/(?:^|\n)(?:Cable compatibility (?:warning|needs verification):|AC application warning:|AC cable size needs verification:|AC cable size is not recorded;|AC cable length is not recorded;|AC breaker\/protection is not recorded;|AC isolation details are not recorded;|AC cable route is not recorded;)[^\n]*/g, "").trim();
   return [cleaned, warning].filter(Boolean).join("\n") || null;
+}
+
+type AcEndpoint = { display_name: string; type?: string; specifications: Record<string, unknown> | null };
+
+/** Advisory checks for an Orange/System Capture AC connection record. */
+export function assessAcConnectionRecord(input: {
+  cableSize?: string;
+  cableLength?: string;
+  breakerSize?: string;
+  isolator?: string;
+  route?: string;
+  endpoints: AcEndpoint[];
+}) {
+  const warnings: string[] = [];
+  const dcEndpoint = input.endpoints.some((endpoint) => {
+    const type = endpoint.type ?? "";
+    const name = endpoint.display_name;
+    return /^(?:panel|pv_string|battery|charger|combiner)$/i.test(type) ||
+      (/\b(?:dc|pv|solar|battery|busbar|mppt)\b/i.test(name) && !/\bac\b/i.test(name));
+  });
+  if (dcEndpoint)
+    warnings.push("AC application warning: one endpoint appears to be DC/PV equipment; verify that this is the intended AC port or connection path.");
+  if (input.cableSize && !cableAreaMm2(input.cableSize))
+    warnings.push("AC cable size needs verification: record the conductor area or manufacturer cable designation.");
+  if (!input.cableSize) warnings.push("AC cable size is not recorded; cable ampacity and voltage drop cannot be checked.");
+  if (!input.cableLength) warnings.push("AC cable length is not recorded; voltage drop cannot be checked.");
+  if (!input.breakerSize) warnings.push("AC breaker/protection is not recorded; cable and protection coordination cannot be checked.");
+  if (!input.isolator) warnings.push("AC isolation details are not recorded; the required isolation arrangement needs verification.");
+  if (!input.route) warnings.push("AC cable route is not recorded; installation method and derating cannot be checked.");
+  return warnings.length ? warnings.join("\n") : undefined;
 }

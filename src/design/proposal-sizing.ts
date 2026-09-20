@@ -70,9 +70,15 @@ type LoadRating = {
   runningKw?: unknown;
   peakRunningKw?: unknown;
   startingKw?: unknown;
+  resistiveHeaterKw?: unknown;
+  motorRunningKw?: unknown;
+  motorStartingKw?: unknown;
   inputKva?: unknown;
   simultaneous?: unknown;
   runtimeMinutesPerDay?: unknown;
+  cycleRunMinutes?: unknown;
+  cycleIntervalHours?: unknown;
+  availableHoursPerDay?: unknown;
   longestRunMinutes?: unknown;
   startingBasis?: unknown;
   operatingWindow?: unknown;
@@ -163,8 +169,8 @@ function parsedRatings(discovery: Record<string, unknown>) {
   }
   const poolHeaterKw = finitePositive(discoveryValue(discovery, "pool_heater_electrical_kw"));
   const heatingSelection = discoveryValue(discovery, "pool_heating_method");
-  const hasElectricPoolHeat = heatingSelection === undefined || answerList(heatingSelection).some((value) => ["heat_pump", "pool_heat_pump", "resistive_electric", "spa_inline_heater", "hybrid"].includes(value));
-  if (poolHeaterKw && hasElectricPoolHeat && !ratings.some((rating) => rating.source === "pool" && ["heat_pump", "pool_heat_pump", "resistive_electric", "spa_inline_heater"].includes(String(rating.baseType))))
+  const hasElectricPoolHeat = heatingSelection === undefined || answerList(heatingSelection).some((value) => ["heat_pump", "pool_heat_pump", "resistive_electric", "spa_inline_heater", "self_contained_spa", "hybrid"].includes(value));
+  if (poolHeaterKw && hasElectricPoolHeat && !ratings.some((rating) => rating.source === "pool" && ["heat_pump", "pool_heat_pump", "resistive_electric", "spa_inline_heater", "self_contained_spa"].includes(String(rating.baseType))))
     ratings.push({ quantity: 1, runningKw: poolHeaterKw, simultaneous: true });
   return ratings;
 }
@@ -186,22 +192,45 @@ function loadEnvelope(discovery: Record<string, unknown>) {
   for (const rating of ratings) {
     if (rating.quantity !== undefined && Number(rating.quantity) <= 0) continue;
     const quantity = Math.max(1, finitePositive(rating.quantity) ?? 1);
-    const realRunningKw = finitePositive(rating.runningKw);
+    const motorType = String(rating.baseType);
+    const compositeSpa = ["self_contained_spa", "spa_pump_inline_heater", "spa_pump_heater", "packaged_spa"].includes(motorType);
+    const resistiveHeaterKw = finitePositive(rating.resistiveHeaterKw);
+    const motorRunningKw = finitePositive(rating.motorRunningKw);
+    const motorStartingKw = finitePositive(rating.motorStartingKw);
+    const compositeRunningKw = compositeSpa && resistiveHeaterKw && motorRunningKw ? resistiveHeaterKw + motorRunningKw : undefined;
+    const realRunningKw = compositeRunningKw ?? finitePositive(rating.runningKw);
     const apparentInputKva = finitePositive(rating.inputKva);
     const runningKw = finitePositive(rating.peakRunningKw) ?? realRunningKw ?? apparentInputKva ?? 0;
-    const motorType = String(rating.baseType);
-    const multiplier = rating.loadType === "motor" ? 3 : rating.loadType === "heat_pump" ? 2.5 : rating.loadType === "non_motor" ? 1
+    const resistiveHeatingTypes = new Set(["resistive_electric", "electric_resistive", "spa_inline_heater", "electric_water", "water_heater", "hot_water_cylinder"]);
+    const multiplier = resistiveHeatingTypes.has(motorType) ? 1
+      : rating.loadType === "motor" ? 3 : rating.loadType === "heat_pump" ? 2.5 : rating.loadType === "non_motor" ? 1
       : ["compressor", "saw_tools", "filtration_pump", "booster_cleaner_pump", "spa_jet_air_pump", "water_feature", "water_pump", "septic_pump", "septic_aerator", "sump_drainage_pump", "refrigeration", "chest_freezer"].includes(motorType) ? 3
       : ["heat_pump", "pool_heat_pump"].includes(motorType) ? 2.5 : 1;
-    const startingKw = finitePositive(rating.startingKw) ?? runningKw * multiplier;
-    const runtimeMinutesPerDay = finitePositive(rating.runtimeMinutesPerDay) ?? 0;
+    // A packaged spa is sequenced: the pump starts first, then the resistive
+    // element is enabled after flow is established. The heater therefore
+    // belongs in the post-start running load, not in the motor-start event.
+    const startingKw = compositeSpa && resistiveHeaterKw && motorRunningKw
+      ? motorStartingKw ?? motorRunningKw * 3
+      : compositeSpa
+        ? runningKw
+      : resistiveHeatingTypes.has(motorType)
+      ? runningKw
+      : finitePositive(rating.startingKw) ?? runningKw * multiplier;
+    const cycleRunMinutes = finitePositive(rating.cycleRunMinutes);
+    const cycleIntervalHours = finitePositive(rating.cycleIntervalHours);
+    const availableHoursPerDay = finitePositive(rating.availableHoursPerDay);
+    const calculatedCycleRuntime = cycleRunMinutes && cycleIntervalHours && availableHoursPerDay
+      ? cycleRunMinutes * availableHoursPerDay / cycleIntervalHours
+      : undefined;
+    const runtimeMinutesPerDay = finitePositive(rating.runtimeMinutesPerDay) ?? calculatedCycleRuntime ?? 0;
     if (realRunningKw) {
       const scheduledEnergyKwh = realRunningKw * quantity * runtimeMinutesPerDay / 60;
       scheduledDailyEnergyKwh += scheduledEnergyKwh;
       if (rating.source === "pool") scheduledPoolEnergyKwh += scheduledEnergyKwh;
     }
     if (apparentInputKva && !realRunningKw) warnings.push(`${String(rating.name ?? rating.baseType ?? "Load")}: kVA is used only as a conservative power-screening envelope. Real kW/power factor is needed for its workday kWh; it is not included in that subtotal.`);
-    if (rating.source === "pool" && realRunningKw && !runtimeMinutesPerDay) warnings.push(`${String(rating.name ?? rating.baseType ?? "Pool equipment").replaceAll("_", " ")}: daily runtime is not recorded. Its running and startup demand are included in power checks, but its energy is excluded from PV and storage sizing until a typical runtime or monitored history is available.`);
+    if (compositeSpa && realRunningKw && !(resistiveHeaterKw && motorRunningKw)) warnings.push(`${String(rating.name ?? "Packaged spa")}: the recorded combined running input includes a resistive heater and one or more pump motors. It is included in continuous-power sizing, but motor-start demand remains unconfirmed until the heater input and pump running/starting inputs are recorded separately.`);
+    if (rating.source === "pool" && realRunningKw && !runtimeMinutesPerDay) warnings.push(`${String(rating.name ?? rating.baseType ?? "Pool equipment").replaceAll("_", " ")}: daily runtime or automatic duty cycle is not recorded. Its running and startup demand are included in power checks, but its energy is excluded from PV and storage sizing until a typical runtime, cycle pattern or monitored history is available.`);
     if (runtimeMinutesPerDay > 1440 || Number(rating.longestRunMinutes) > runtimeMinutesPerDay && runtimeMinutesPerDay > 0) warnings.push(`${String(rating.name ?? rating.baseType ?? "Load")}: reconcile the total daily runtime and longest run before relying on its energy estimate.`);
     const entryContinuousKw = runningKw * quantity;
     const entryStartupKw = startingKw + runningKw * Math.max(0, quantity - 1);
@@ -282,23 +311,12 @@ export function solarFirstPowerAlternative(input: {
   panelWatts?: number;
   inverterKw?: number;
   startupPeakKw?: number;
-}) {
-  const panelCount = finitePositive(input.panelCount);
-  const panelWatts = finitePositive(input.panelWatts);
-  const inverterKw = finitePositive(input.inverterKw);
-  const startupPeakKw = finitePositive(input.startupPeakKw);
-  if (!panelCount || !panelWatts || !inverterKw || !startupPeakKw || startupPeakKw <= inverterKw) return undefined;
-  const proposedInverterKw = nextCommonInverterRatingKw(startupPeakKw);
-  // Reuse the 1.2 DC-to-AC planning ratio instead of presenting an array
-  // whose nameplate capacity only just equals the intended AC output.
-  const targetPvKw = proposedInverterKw * 1.2;
-  const totalPanelCount = Math.ceil(targetPvKw * 1000 / panelWatts);
-  return {
-    inverterKw: proposedInverterKw,
-    targetPvKw: rounded(totalPanelCount * panelWatts / 1000),
-    totalPanelCount,
-    additionalPanelCount: Math.max(0, totalPanelCount - panelCount),
-  };
+}): { inverterKw: number; targetPvKw: number; totalPanelCount: number; additionalPanelCount: number } | undefined {
+  void input;
+  // A brief motor-start envelope is not continuous power. Keep PV and the
+  // continuous inverter rating based on energy and overlapping running loads;
+  // verify surge and motor-start capability separately on the exact product.
+  return undefined;
 }
 
 /**

@@ -236,6 +236,16 @@ describe("new-system discovery", () => {
     expect(generatorRole?.options?.map((option) => option.value)).toEqual(["high_power_loads", "backup_circuits"]);
   });
 
+  it("offers battery storage for a pool, spa or jacuzzi-only system", () => {
+    const questions = visibleDiscoveryQuestions({
+      utility_relationship: "off_grid",
+      building_type: ["pool_spa"],
+      panel_location: ["roof"],
+      pool_or_spa: ["outdoor_pool_spa"],
+    });
+    expect(questions.map((question) => question.id)).toContain("battery_requirement");
+  });
+
   it("raises battery-free standalone compatibility in the inverter question", () => {
     const architecture = visibleDiscoveryQuestions({
       utility_relationship: "off_grid",
@@ -246,7 +256,7 @@ describe("new-system discovery", () => {
 
     expect(architecture?.noviceHelp).toContain("Note: some hybrid and off-grid inverters require a battery");
     expect(architecture?.technicalHelp).toContain("battery-free operating support");
-    expect(architecture?.options?.find((option) => option.value === "combined")?.description).toBe("A central solar inverter with battery-ready or integrated battery-control capability; it can still be assessed when no battery is included now.");
+    expect(architecture?.options?.find((option) => option.value === "combined")?.description).toContain("exact hybrid inverter explicitly supports it");
   });
 
   it("establishes off-grid battery intent before asking what the generator should do", () => {

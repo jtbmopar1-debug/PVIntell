@@ -37,6 +37,7 @@ export function routeWattsonTurn(message: string, state: WattsonConversationStat
     const intent = state.pendingAction.kind === "create_schematic" ? "schematic"
       : state.pendingAction.kind === "create_system" ? "new_system"
       : state.pendingAction.kind === "attach_record" ? "record_attachment"
+      : state.pendingAction.kind === "save_evidence" ? "discovery_help"
       : "equipment_record";
     return { intent, mode: "execute", mutationConsent: true, pendingAction: state.pendingAction };
   }

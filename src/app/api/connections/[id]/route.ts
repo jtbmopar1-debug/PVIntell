@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { assessCableAgainstEndpoints, withCompatibilityWarning } from "@/lib/connection-cable-assessment";
+import { assessAcConnectionRecord, assessCableAgainstEndpoints, withCompatibilityWarning } from "@/lib/connection-cable-assessment";
 
 const schema = z.object({
   projectId: z.uuid(),
@@ -39,9 +39,13 @@ export async function PATCH(
   if (sourceRef === targetRef)
     return Response.json({ error: "Connect two different items." }, { status: 400 });
   const endpointIds = [sourceRef, targetRef].filter((ref) => ref.startsWith("component:")).map((ref) => ref.slice("component:".length));
-  const endpointResult = endpointIds.length ? await supabase.from("system_components").select("display_name,specifications").eq("project_id", input.projectId).in("id", endpointIds) : { data: [], error: null };
+  const endpointResult = endpointIds.length ? await supabase.from("system_components").select("display_name,type,specifications").eq("project_id", input.projectId).in("id", endpointIds) : { data: [], error: null };
   if (endpointResult.error) return Response.json({ error: endpointResult.error.message }, { status: 400 });
-  const compatibilityWarning = input.cableSize ? assessCableAgainstEndpoints(input.cableSize, endpointResult.data ?? [], input.circuitRole) : undefined;
+  const compatibilityWarning = input.connectionType === "ac"
+    ? assessAcConnectionRecord({ cableSize: input.cableSize, cableLength: input.cableLength, breakerSize: input.breakerSize, isolator: input.isolator, route: input.route, endpoints: endpointResult.data ?? [] })
+    : input.connectionType === "dc" && input.cableSize
+      ? assessCableAgainstEndpoints(input.cableSize, endpointResult.data ?? [], input.circuitRole)
+      : undefined;
   const updated = await supabase
     .from("system_connections")
     .update({

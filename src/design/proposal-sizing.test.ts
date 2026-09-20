@@ -123,19 +123,31 @@ describe("deterministic proposal sizing", () => {
     expect(result.warnings).toContainEqual(expect.stringContaining("energy is excluded from PV and storage sizing"));
   });
 
+  it("starts a packaged spa pump before adding its resistive heater", () => {
+    const result = deriveProposalSizing({ mode: "grid-tied", discovery: {
+      pool_heating_method: "self_contained_spa",
+      pool_equipment_ratings: JSON.stringify({ self_contained_spa: {
+        quantity: 1,
+        resistiveHeaterKw: 2,
+        motorRunningKw: 1.2,
+        motorStartingKw: 3.6,
+        runtimeMinutesPerDay: 60,
+        simultaneous: true,
+      } }),
+    } });
+    expect(result.simultaneousLoadKw).toBe(3.2);
+    expect(result.startupPeakKw).toBe(3.6);
+    expect(result.scheduledPoolEnergyKwh).toBe(3.2);
+  });
+
   it("does not let an excluded generator's stale recharge role reduce storage", () => {
     const result = deriveProposalSizing({ mode: "hybrid", discovery: { ...wholeHomeDiscovery, generator_requirement: "none" } });
     expect(result.batteryUsableKwh).toBeUndefined();
     expect(result.warnings).toContainEqual(expect.stringContaining("chronological PV, load and generator dispatch"));
   });
 
-  it("calculates a solar-first expansion path for an existing array that cannot cover a motor start", () => {
-    expect(solarFirstPowerAlternative({ panelCount: 8, panelWatts: 580, inverterKw: 4, startupPeakKw: 5.4 })).toEqual({
-      inverterKw: 6,
-      targetPvKw: 7.54,
-      totalPanelCount: 13,
-      additionalPanelCount: 5,
-    });
+  it("does not turn a brief motor start into continuous inverter and PV capacity", () => {
+    expect(solarFirstPowerAlternative({ panelCount: 8, panelWatts: 580, inverterKw: 4, startupPeakKw: 5.4 })).toBeUndefined();
   });
 
   it("calculates missing capacity independently of the planning module used for the second array", () => {

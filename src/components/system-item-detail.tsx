@@ -22,7 +22,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { EquipmentLabelExtraction } from "@/ai/equipment-label";
 import { ComponentRegulatoryPanel } from "@/components/component-regulatory-panel";
-import type { ComponentSpec, PVArray } from "@/domain/models";
+import type { ComponentSpec, DesignCalculatorState, PVArray } from "@/domain/models";
 import { inverterPowerInputKw } from "@/lib/power-units";
 import type { ComponentRegulatoryBundle } from "@/regulations/component-regulatory-library";
 
@@ -207,6 +207,16 @@ const inverterAssignmentFields = {
   operatingMode: "Operating mode",
   prioritySettings: "Charging / source priority settings",
 } as const;
+const batteryFields = {
+  nominalVoltage: "Nominal voltage",
+  capacity: "Capacity",
+  chemistry: "Chemistry / battery type",
+  usableCapacity: "Planning usable capacity",
+  bmsCompatibility: "BMS / inverter compatibility",
+  maximumChargeCurrent: "Maximum charge current",
+  maximumDischargeCurrent: "Maximum discharge current",
+  arrangement: "Series / parallel arrangement",
+} as const;
 const earthingFields = {
   earthingArrangement: "Earthing arrangement / system",
   mainEarthPoint: "Main earth bar / electrode location",
@@ -257,6 +267,19 @@ const protectionFields = {
   cableTerminalCapacity: "Cable / terminal capacity",
   standard: "Standard / certification",
 } as const;
+const componentSpecificFields: Partial<Record<ComponentSpec["kind"], { eyebrow: string; title: string; help: string; fields: Record<string, string> }>> = {
+  panel: { eyebrow: "Solar module", title: "Panel specifications", help: "Record the module ratings and physical details from the exact panel label or datasheet.", fields: { cellTechnology: "Cell technology", voc: "Open-circuit voltage (Voc)", vmp: "Maximum-power voltage (Vmp)", isc: "Short-circuit current (Isc)", imp: "Maximum-power current (Imp)", dimensions: "Module dimensions", weight: "Module weight" } },
+  pv_string: { eyebrow: "PV string", title: "String specifications", help: "Record how this string is arranged and the ratings presented to the inverter or controller.", fields: { panelsPerString: "Panels per string", stringCount: "Number of parallel strings", arrangement: "Series / parallel arrangement", voc: "String open-circuit voltage", vmp: "String maximum-power voltage", isc: "String short-circuit current", imp: "String maximum-power current", mpptInput: "MPPT input / destination" } },
+  generator: { eyebrow: "Generator", title: "Generator specifications", help: "Record the generator output, starting capability and connection arrangement.", fields: { fuel: "Fuel / energy source", continuousOutput: "Continuous output", surgeOutput: "Starting / surge output", voltagePhase: "Voltage / phase", frequency: "Frequency", startControl: "Start / control method", connection: "Transfer / inverter input arrangement" } },
+  charger: { eyebrow: "Charge controller", title: "Controller specifications", help: "Record the controller input, battery-side limits and communications details.", fields: { controllerType: "Controller type", pvVoltage: "Maximum PV input voltage", pvCurrent: "Maximum PV input current", batteryVoltage: "Battery voltage range", chargeCurrent: "Maximum charge current", output: "Load / output arrangement", communications: "Communications / BMS interface" } },
+  cable: { eyebrow: "Cable run", title: "Cable specifications", help: "Record the conductor construction, rating and physical route for this cable.", fields: { cableType: "Cable type", conductorSize: "Conductor size", cores: "Cores / conductors", voltageRating: "Voltage rating", currentRating: "Current / thermal rating", insulation: "Insulation / temperature rating", route: "Cable route" } },
+  connector: { eyebrow: "Connector", title: "Connector specifications", help: "Record the connector family, polarity, environmental rating and compatible cable.", fields: { connectorType: "Connector type", polarity: "Polarity / keying", voltageRating: "Voltage rating", currentRating: "Current rating", cableCompatibility: "Cable compatibility", ingress: "Ingress / IP rating" } },
+  combiner: { eyebrow: "Combiner", title: "Combiner specifications", help: "Record the string inputs, output and protection contained in this combiner.", fields: { inputs: "String inputs", output: "Output arrangement", fuses: "String fuses / protection", isolator: "DC isolator", enclosure: "Enclosure / IP rating", monitoring: "String monitoring", route: "Cable route" } },
+  meter: { eyebrow: "Metering", title: "Meter specifications", help: "Record what the meter measures, its sensing arrangement and communications.", fields: { meterType: "Meter type", voltagePhase: "Voltage / phase", currentSensing: "CT / shunt sensing", accuracy: "Accuracy class", communications: "Communications", direction: "Import / export direction" } },
+  monitoring: { eyebrow: "Monitoring", title: "Monitoring specifications", help: "Record the device role, protocol, power supply and connected equipment.", fields: { deviceRole: "Device role", protocol: "Protocol / interface", communications: "Network / communications", powerSupply: "Power supply", connectedEquipment: "Connected equipment", firmware: "Firmware / software" } },
+  load: { eyebrow: "Electrical load", title: "Load specifications", help: "Record the load rating, starting behaviour and operating schedule.", fields: { loadType: "Load type", ratedPower: "Running / rated power", startingPower: "Starting / inrush power", voltagePhase: "Voltage / phase", schedule: "Operating schedule", control: "Control method", simultaneous: "Runs with other selected loads" } },
+  other: { eyebrow: "Equipment", title: "Equipment specifications", help: "Record the purpose, ratings and interfaces for equipment that does not fit another category.", fields: { purpose: "Equipment purpose", ratings: "Key ratings", interfaces: "Interfaces / connections", environment: "Installation environment", identification: "Identification details" } },
+};
 
 function protectionFieldKeys(identity: string): Array<keyof typeof protectionFields> {
   const base: Array<keyof typeof protectionFields> = ["currentType", "ratedCurrent", "ratedVoltage", "poles"];
@@ -314,7 +337,7 @@ function AcConnectionDetails({
                 return (
                   <Field key={key} label={label}>
                     <input
-                      data-ac-field={key}
+                      form="component-technical-record" name={`ac_${key}`} data-ac-field={key}
                       defaultValue={specs[label]}
                       className="field"
                       placeholder={
@@ -357,7 +380,7 @@ function InverterAssignmentDetails({
         {Object.entries(inverterAssignmentFields).map(([key, label]) => (
           <Field key={key} label={label}>
             <input
-              data-inverter-field={key}
+              form="component-technical-record" name={`inverter_${key}`} data-inverter-field={key}
               defaultValue={specs[label]}
               className="field"
               placeholder={
@@ -392,7 +415,7 @@ function EarthingDetails({
         {Object.entries(earthingFields).map(([key, label]) => (
           <Field key={key} label={label}>
             <input
-              data-earthing-field={key}
+              form="component-technical-record" name={`earthing_${key}`} data-earthing-field={key}
               defaultValue={specs[label]}
               className="field"
             />
@@ -421,7 +444,7 @@ function IsolatorDetails({
           <Field key={key} label={label}>
             {key === "currentType" ? (
               <select
-                data-isolator-field={key}
+                form="component-technical-record" name={`isolator_${key}`} data-isolator-field={key}
                 defaultValue={String(specs[label] ?? "DC")}
                 className="field"
               >
@@ -430,7 +453,7 @@ function IsolatorDetails({
               </select>
             ) : key === "lockable" ? (
               <select
-                data-isolator-field={key}
+                form="component-technical-record" name={`isolator_${key}`} data-isolator-field={key}
                 defaultValue={String(specs[label] ?? "Not confirmed")}
                 className="field"
               >
@@ -440,7 +463,7 @@ function IsolatorDetails({
               </select>
             ) : (
               <input
-                data-isolator-field={key}
+                form="component-technical-record" name={`isolator_${key}`} data-isolator-field={key}
                 defaultValue={specs[label]}
                 className="field"
                 placeholder={
@@ -479,9 +502,88 @@ function ProtectionDetails({
         {protectionFieldKeys(identity).map((key) => {
           const label = protectionFields[key];
           return <Field key={key} label={label}>
-            {key === "currentType" ? <select data-protection-field={key} defaultValue={String(specs[label] ?? "Not confirmed")} className="field"><option>Not confirmed</option><option value="AC">AC</option><option value="DC">DC</option></select> : <input data-protection-field={key} defaultValue={specs[label]} className="field" placeholder={key === "ratedCurrent" ? "e.g. 32 A" : key === "ratedVoltage" ? "e.g. 230 V AC or 500 V DC" : key === "breakingCapacity" ? "e.g. 6 kA" : key === "tripCurve" ? "e.g. C curve" : key === "residualCurrent" ? "e.g. 30 mA" : undefined}/>}
+            {key === "currentType" ? <select form="component-technical-record" name={`protection_${key}`} data-protection-field={key} defaultValue={String(specs[label] ?? "Not confirmed")} className="field"><option>Not confirmed</option><option value="AC">AC</option><option value="DC">DC</option></select> : <input form="component-technical-record" name={`protection_${key}`} data-protection-field={key} defaultValue={specs[label]} className="field" placeholder={key === "ratedCurrent" ? "e.g. 32 A" : key === "ratedVoltage" ? "e.g. 230 V AC or 500 V DC" : key === "breakingCapacity" ? "e.g. 6 kA" : key === "tripCurve" ? "e.g. C curve" : key === "residualCurrent" ? "e.g. 30 mA" : undefined}/>}
           </Field>;
         })}
+      </div>
+    </section>
+  );
+}
+
+function BatteryDetails({ specs }: { specs: Record<string, string | number> }) {
+  return (
+    <section className="card mb-4 p-6">
+      <div className="eyebrow">Battery bank</div>
+      <h2 className="mt-2 text-lg font-extrabold">Battery specifications</h2>
+      <p className="mt-1 text-[10px] leading-5 text-muted">
+        Record the exact battery type and ratings. PVIntell will not assume a chemistry or treat an unknown battery as lithium.
+      </p>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        {Object.entries(batteryFields).map(([key, label]) => (
+          <Field key={key} label={label}>
+            {key === "chemistry" ? (
+              <select form="component-technical-record" name={`battery_${key}`} data-battery-field={key} defaultValue={String(specs[label] ?? "")} className="field">
+                <option value="">Not confirmed</option>
+                <option value="LiFePO4 / LFP">Lithium iron phosphate (LFP / LiFePO4)</option>
+                <option value="Other lithium-ion">Other lithium-ion</option>
+                <option value="LTO">Lithium titanate (LTO)</option>
+                <option value="Flooded lead-acid">Flooded lead-acid</option>
+                <option value="AGM">AGM lead-acid</option>
+                <option value="Gel">Gel lead-acid</option>
+                <option value="Sodium-ion">Sodium-ion</option>
+                <option value="Other / custom">Other / custom</option>
+              </select>
+            ) : key === "bmsCompatibility" ? (
+              <select form="component-technical-record" name={`battery_${key}`} data-battery-field={key} defaultValue={String(specs[label] ?? "")} className="field">
+                <option value="">Not confirmed</option>
+                <option value="Confirmed compatible">Confirmed compatible with inverter</option>
+                <option value="Integrated">Integrated manufacturer system</option>
+                <option value="Standalone">Standalone BMS / no communications required</option>
+                <option value="Not checked">Not checked yet</option>
+              </select>
+            ) : (
+              <input form="component-technical-record" name={`battery_${key}`} data-battery-field={key} defaultValue={specs[label]} className="field" placeholder={key === "nominalVoltage" ? "e.g. 48 V DC" : key === "capacity" ? "e.g. 200 Ah or 10 kWh" : key === "usableCapacity" ? "e.g. 80% or 8 kWh usable" : undefined} />
+            )}
+          </Field>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ComponentSpecificDetails({ kind, specs }: { kind: ComponentSpec["kind"]; specs: Record<string, string | number> }) {
+  const definition = componentSpecificFields[kind];
+  if (!definition || kind === "battery") return null;
+  return (
+    <section className="card mb-4 p-6">
+      <div className="eyebrow">{definition.eyebrow}</div>
+      <h2 className="mt-2 text-lg font-extrabold">{definition.title}</h2>
+      <p className="mt-1 text-[10px] leading-5 text-muted">{definition.help}</p>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        {kind === "panel" && (
+          <Field label="Panel wattage">
+            <div className="relative"><input form="component-technical-record" name="panelWattage" data-component-field="panelWattage" type="number" min="0" step="any" defaultValue={String(specs["Panel wattage"] ?? "").replace(/[^0-9.]/g, "")} className="field pr-12" placeholder="e.g. 450"/><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">W</span></div>
+          </Field>
+        )}
+        {Object.entries(definition.fields).map(([key, label]) => (
+          <Field key={key} label={label}>
+            {kind === "panel" && key === "cellTechnology" ? (
+              <select form="component-technical-record" name={`component_${key}`} data-component-field={key} defaultValue={String(specs[label] ?? "")} className="field">
+                <option value="">Not confirmed</option>
+                <option value="Monocrystalline silicon">Mono (monocrystalline)</option>
+                <option value="Monocrystalline silicon (bifacial)">Mono bifacial</option>
+                <option value="Polycrystalline silicon">Poly (polycrystalline)</option>
+                <option value="Thin-film">Thin-film</option>
+                <option value="TOPCon">TOPCon (N-type mono)</option>
+                <option value="HJT">HJT (heterojunction)</option>
+                <option value="PERC">PERC</option>
+                <option value="Other / custom">Other / custom</option>
+              </select>
+            ) : (
+              <input form="component-technical-record" name={`component_${key}`} data-component-field={key} defaultValue={specs[label]} className="field" />
+            )}
+          </Field>
+        ))}
       </div>
     </section>
   );
@@ -494,12 +596,20 @@ export function ComponentDetail({
   systemId,
   systemName,
   component,
+  pvArray,
   defaults,
   returnTo,
+  proposal = false,
+  proposalNodeId,
+  proposalDesign,
   regulatoryBundle,
 }: BaseProps & {
   component?: ComponentSpec;
+  pvArray?: PVArray;
   defaults?: { kind: ComponentSpec["kind"]; name: string; schematicImage?: string };
+  proposal?: boolean;
+  proposalNodeId?: string;
+  proposalDesign?: DesignCalculatorState;
   regulatoryBundle?: ComponentRegulatoryBundle;
 }) {
   const router = useRouter();
@@ -507,7 +617,7 @@ export function ComponentDetail({
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState("");
   const [extraction, setExtraction] = useState<EquipmentLabelExtraction>();
-  const [photoPath, setPhotoPath] = useState(component?.photoUrl ?? "");
+  const [photoPath, setPhotoPath] = useState(component?.photoUrl ?? pvArray?.labelPhotoPath ?? "");
   const icon = itemIcon(component?.kind ?? defaults?.kind ?? "other");
   const back = returnTo ?? `/sites/${siteId}/systems/${systemId}`;
   const isAcConnection =
@@ -517,6 +627,9 @@ export function ComponentDetail({
     component?.specs["Connection type"] === "Inverter to switchboard AC";
   const isInverter =
     (component?.kind ?? defaults?.kind ?? "other") === "inverter";
+  const isBattery =
+    (component?.kind ?? defaults?.kind ?? "other") === "battery";
+  const componentKind = component?.kind ?? defaults?.kind ?? "other";
   const isPanel =
     (component?.kind ?? defaults?.kind ?? "other") === "panel";
   const isIsolator =
@@ -541,6 +654,10 @@ export function ComponentDetail({
       if (isAcConnection && Object.values(acConnectionFields).includes(name as never))
         return false;
       if (isInverter && Object.values(inverterAssignmentFields).includes(name as never))
+        return false;
+      if (isBattery && Object.values(batteryFields).includes(name as never))
+        return false;
+      if (componentSpecificFields[componentKind]?.fields && Object.values(componentSpecificFields[componentKind]!.fields).includes(name))
         return false;
       if ((isInverter && name === "Rated power") || (isPanel && (name === "Panel wattage" || name === "Panel arrangement")))
         return false;
@@ -648,6 +765,44 @@ export function ComponentDetail({
       setAnalyzing(false);
     }
   }
+  async function linkProposalRecord(recordRef: string, panelUpdate?: { panelCount: number; panelWatts?: number }, designUpdate: Partial<DesignCalculatorState> = {}) {
+    if (!proposal || !proposalNodeId || !proposalDesign?.proposedAsBuiltDraft) return;
+    const draft = proposalDesign.proposedAsBuiltDraft;
+    let panelCount = proposalDesign.panelCount;
+    let panelsPerString = proposalDesign.panelsPerString;
+    let pvArrayPlan = proposalDesign.pvArrayPlan;
+    if (panelUpdate) {
+      const selectedIndex = Number(proposalNodeId.match(/^solar-pv-(\d+)$/)?.[1]) - 1;
+      if (pvArrayPlan && Number.isInteger(selectedIndex) && selectedIndex >= 0 && pvArrayPlan.arrays[selectedIndex]) {
+        pvArrayPlan = {
+          ...pvArrayPlan,
+          arrays: pvArrayPlan.arrays.map((array, index) => index === selectedIndex ? { ...array, allocatedPanelCount: panelUpdate.panelCount } : array),
+        };
+        panelCount = pvArrayPlan.arrays.reduce((total, array) => total + Number(array.allocatedPanelCount ?? 0), 0);
+      } else if (Number.isInteger(selectedIndex) && selectedIndex >= 0 && Number(proposalDesign.pvStrings) > 1) {
+        panelsPerString = panelUpdate.panelCount;
+        panelCount = panelUpdate.panelCount * Number(proposalDesign.pvStrings);
+      } else {
+        panelCount = panelUpdate.panelCount;
+      }
+    }
+    const nextDesign: DesignCalculatorState = {
+      ...proposalDesign,
+      ...designUpdate,
+      ...(panelUpdate ? { panelWatts: panelUpdate.panelWatts, panelCount, panelsPerString, pvArrayPlan } : {}),
+      proposedAsBuiltDraft: {
+        ...draft,
+        nodes: draft.nodes?.map((node) => node.id === proposalNodeId ? { ...node, recordRef } : node),
+      },
+    };
+    const response = await fetch("/api/design-calculator", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: systemId, design: nextDesign }),
+    });
+    const body = await responseBody(response);
+    if (!response.ok) throw new Error(body.error ?? "The equipment saved, but could not be linked back to the proposal schematic");
+  }
   async function save(form: FormData) {
     setSaving(true);
     setError("");
@@ -658,7 +813,7 @@ export function ComponentDetail({
         ? savedSchematicImage
         : defaults?.schematicImage;
     if (schematicImage) specifications["Schematic image"] = schematicImage;
-    const ratedPower = String(form.get("ratedPower") ?? "").trim();
+    const ratedPower = String(isPanel ? form.get("panelWattage") ?? "" : form.get("ratedPower") ?? "").trim();
     if (ratedPower) {
       specifications[isPanel ? "Panel wattage" : "Rated power"] = `${ratedPower} ${isInverter ? "kW" : "W"}`;
     }
@@ -669,10 +824,7 @@ export function ComponentDetail({
     if (isAcConnection) {
       specifications["Connection type"] = "Inverter to switchboard AC";
       for (const [key, label] of Object.entries(acConnectionFields)) {
-        const field = document.querySelector(
-          `[data-ac-field="${key}"]`,
-        ) as HTMLInputElement | null;
-        const value = field?.value.trim();
+        const value = String(form.get(`ac_${key}`) ?? "").trim();
         if (value) specifications[label] = value;
         else delete specifications[label];
       }
@@ -680,10 +832,22 @@ export function ComponentDetail({
     if (isInverter) {
       specifications["Equipment record"] = "Individual inverter";
       for (const [key, label] of Object.entries(inverterAssignmentFields)) {
-        const field = document.querySelector(
-          `[data-inverter-field="${key}"]`,
-        ) as HTMLInputElement | null;
-        const value = field?.value.trim();
+        const value = String(form.get(`inverter_${key}`) ?? "").trim();
+        if (value) specifications[label] = value;
+        else delete specifications[label];
+      }
+    }
+    if (isBattery) {
+      for (const [key, label] of Object.entries(batteryFields)) {
+        const value = String(form.get(`battery_${key}`) ?? "").trim();
+        if (value) specifications[label] = value;
+        else delete specifications[label];
+      }
+    }
+    const specificFields = componentSpecificFields[componentKind]?.fields;
+    if (specificFields) {
+      for (const [key, label] of Object.entries(specificFields)) {
+        const value = String(form.get(`component_${key}`) ?? "").trim();
         if (value) specifications[label] = value;
         else delete specifications[label];
       }
@@ -691,10 +855,7 @@ export function ComponentDetail({
     if (isEarthing) {
       specifications["Equipment record"] = "System earthing and bonding";
       for (const [key, label] of Object.entries(earthingFields)) {
-        const field = document.querySelector(
-          `[data-earthing-field="${key}"]`,
-        ) as HTMLInputElement | null;
-        const value = field?.value.trim();
+        const value = String(form.get(`earthing_${key}`) ?? "").trim();
         if (value) specifications[label] = value;
         else delete specifications[label];
       }
@@ -702,10 +863,7 @@ export function ComponentDetail({
     if (isIsolator) {
       specifications["Equipment record"] = "Isolation device";
       for (const [key, label] of Object.entries(isolatorFields)) {
-        const field = document.querySelector(
-          `[data-isolator-field="${key}"]`,
-        ) as HTMLInputElement | HTMLSelectElement | null;
-        const value = field?.value.trim();
+        const value = String(form.get(`isolator_${key}`) ?? "").trim();
         if (value && value !== "Not confirmed") specifications[label] = value;
         else delete specifications[label];
       }
@@ -713,8 +871,7 @@ export function ComponentDetail({
     if (isProtection) {
       for (const key of protectionFieldKeys(protectionIdentity)) {
         const label = protectionFields[key];
-        const field = document.querySelector(`[data-protection-field="${key}"]`) as HTMLInputElement | HTMLSelectElement | null;
-        const value = field?.value.trim();
+        const value = String(form.get(`protection_${key}`) ?? "").trim();
         if (value && value !== "Not confirmed") specifications[label] = value;
         else delete specifications[label];
       }
@@ -733,30 +890,61 @@ export function ComponentDetail({
       manualUrl: form.get("manualUrl") || undefined,
       photoUrl: photoPath || undefined,
       specifications,
+      confidence: proposal ? "estimated" : component?.status ?? "confirmed",
     };
     try {
-      if (!component && isPanel) {
-        const panelsPerArray = Number(form.get("panelsPerArray") || 1);
+      if (isPanel && (!component || pvArray)) {
+        const panelsPerArray = Number(form.get("panelsPerArray") || pvArray?.panelCount || 1);
         const panelConnection = String(form.get("panelConnection") || "series");
-        const response = await fetch("/api/pv-arrays", {
-          method: "POST",
+        const cellTechnology = String(specifications["Cell technology"] ?? "").toLowerCase();
+        const panelType: PVArray["panelType"] = cellTechnology.includes("bifacial") ? "bifacial"
+          : cellTechnology.includes("thin") ? "thin-film"
+          : cellTechnology.includes("flex") ? "flexible"
+          : cellTechnology ? "monofacial"
+          : pvArray?.panelType ?? "unknown";
+        const specificationNumber = (label: string) => {
+          const value = String(specifications[label] ?? "").match(/-?\d+(?:\.\d+)?/)?.[0];
+          return value ? Number(value) : undefined;
+        };
+        const response = await fetch(pvArray ? `/api/pv-arrays/${pvArray.id}` : "/api/pv-arrays", {
+          method: pvArray ? "PATCH" : "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             projectId: systemId,
             name: form.get("name") || "PV Array",
-            arrayCount: payload.quantity,
+            arrayCount: proposal ? 1 : payload.quantity,
             manufacturer: payload.manufacturer,
             panelModel: payload.model,
+            panelType,
             panelWatts: ratedPower ? Number(ratedPower) : undefined,
             panelCount: panelsPerArray,
-            strings: panelConnection === "parallel" ? panelsPerArray : 1,
+            strings: panelConnection === "parallel" ? panelsPerArray : pvArray?.strings ?? 1,
             panelsPerString: panelConnection === "parallel" ? 1 : panelsPerArray,
+            maximumPowerVoltageV: specificationNumber("Maximum-power voltage (Vmp)"),
+            maximumPowerCurrentA: specificationNumber("Maximum-power current (Imp)"),
+            openCircuitVoltageV: specificationNumber("Open-circuit voltage (Voc)"),
+            shortCircuitCurrentA: specificationNumber("Short-circuit current (Isc)"),
+            maximumSystemVoltageV: pvArray?.maximumSystemVoltageV,
+            nominalOperatingCellTempC: pvArray?.nominalOperatingCellTempC,
+            maximumSeriesFuseA: pvArray?.maximumSeriesFuseA,
+            labelPhotoPath: photoPath || undefined,
+            orientationDegrees: pvArray?.orientationDegrees,
+            tiltDegrees: pvArray?.tiltDegrees,
+            cableSizeMm2: pvArray?.cableSizeMm2,
+            cableLengthM: pvArray?.cableLengthM,
+            connectorType: pvArray?.connectorType,
+            breakerDetails: pvArray?.breakerDetails,
+            isolatorDetails: pvArray?.isolatorDetails,
+            combinerDetails: pvArray?.combinerDetails,
             installationNotes: payload.installationLocation ? `Installed location: ${payload.installationLocation}` : undefined,
             specifications: { ...specifications, "Wiring arrangement": panelConnection },
+            confidence: proposal ? "estimated" : pvArray?.confidence ?? "confirmed",
           }),
         });
         const body = await responseBody(response);
         if (!response.ok) throw new Error(body.error ?? "Could not save PV arrays");
+        const savedArrayId = typeof body.array?.id === "string" ? body.array.id : undefined;
+        if (savedArrayId) await linkProposalRecord(`pv:${savedArrayId}`, { panelCount: panelsPerArray, panelWatts: ratedPower ? Number(ratedPower) : undefined });
         router.push(back);
         router.refresh();
         return;
@@ -772,6 +960,26 @@ export function ComponentDetail({
       const body = await responseBody(response);
       if (!response.ok)
         throw new Error(body.error ?? "Could not save equipment");
+      if (typeof body.component?.id === "string") {
+        const numberIn = (value: unknown) => {
+          const match = String(value ?? "").match(/-?\d+(?:\.\d+)?/);
+          return match ? Number(match[0]) : undefined;
+        };
+        const designUpdate: Partial<DesignCalculatorState> = isInverter
+          ? { inverterKw: ratedPower ? Number(ratedPower) : proposalDesign?.inverterKw }
+          : isBattery
+            ? {
+                batteryChemistry: String(specifications["Chemistry / battery type"] ?? "") || undefined,
+                batteryVoltage: numberIn(specifications["Nominal voltage"]),
+                batteryAh: /\bah\b/i.test(String(specifications.Capacity ?? "")) ? numberIn(specifications.Capacity) : proposalDesign?.batteryAh,
+                batteryUsableKwh: /\bkwh\b/i.test(String(specifications["Planning usable capacity"] ?? specifications.Capacity ?? "")) ? numberIn(specifications["Planning usable capacity"] ?? specifications.Capacity) : proposalDesign?.batteryUsableKwh,
+                batteryQuantity: payload.quantity,
+              }
+            : componentKind === "generator"
+              ? { generatorContinuousKw: numberIn(specifications["Continuous output"]) }
+              : {};
+        await linkProposalRecord(`component:${body.component.id}`, undefined, designUpdate);
+      }
       if (!component && returnTo && typeof body.component?.id === "string") {
         const quantity = Math.max(1, Number(payload.quantity) || 1);
         const columns = Math.min(3, quantity);
@@ -808,7 +1016,7 @@ export function ComponentDetail({
       )
     )
       return;
-    const response = await fetch(`/api/components/${component.id}`, {
+    const response = await fetch(pvArray ? `/api/pv-arrays/${pvArray.id}` : `/api/components/${component.id}`, {
       method: "DELETE",
     });
     const body = await response.json();
@@ -892,6 +1100,8 @@ export function ComponentDetail({
       {isInverter && (
         <InverterAssignmentDetails specs={component?.specs ?? {}} />
       )}
+      {isBattery && <BatteryDetails specs={component?.specs ?? {}} />}
+      <ComponentSpecificDetails kind={componentKind} specs={component?.specs ?? {}} />
       {isEarthing && <EarthingDetails specs={component?.specs ?? {}} />}
       {isIsolator && <IsolatorDetails specs={component?.specs ?? {}} />}
       {isProtection && <ProtectionDetails specs={component?.specs ?? {}} identity={protectionIdentity} />}
@@ -914,7 +1124,7 @@ export function ComponentDetail({
           </button>
         </div>
       )}
-      {component && component.status !== "confirmed" ? <div className="mb-4 rounded-2xl border border-[#8bc7a0] bg-[#effaf3] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong className="text-sm text-[#17603b]">Proposed record awaiting your confirmation</strong><p className="mt-1 text-[10px] leading-4 text-muted">Review the values below first. Confirming accepts this record as currently shown; any TBC or unverified values remain clearly marked.</p></div><button type="submit" form="component-technical-record" disabled={saving} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#238653] px-5 text-xs font-bold text-white disabled:opacity-50"><ShieldCheck size={16}/>{saving ? "Confirming…" : "Confirm this record"}</button></div></div> : null}
+      {component && !proposal && component.status !== "confirmed" ? <div className="mb-4 rounded-2xl border border-[#8bc7a0] bg-[#effaf3] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><strong className="text-sm text-[#17603b]">Proposed record awaiting your confirmation</strong><p className="mt-1 text-[10px] leading-4 text-muted">Review the values below first. Confirming accepts this record as currently shown; any TBC or unverified values remain clearly marked.</p></div><button type="submit" form="component-technical-record" disabled={saving} className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#238653] px-5 text-xs font-bold text-white disabled:opacity-50"><ShieldCheck size={16}/>{saving ? "Confirming…" : "Confirm this record"}</button></div></div> : null}
       <form id="component-technical-record" action={save} className="card p-6">
         {isAcConnection && <><input type="hidden" name="type" value={component?.kind ?? defaults?.kind ?? "other"}/><input type="hidden" name="name" value={component?.name ?? defaults?.name ?? "Grid connection"}/><input type="hidden" name="quantity" value={component?.quantity ?? 1}/></>}
         <div className="grid gap-4 sm:grid-cols-2">
@@ -961,18 +1171,18 @@ export function ComponentDetail({
                   name="quantity"
                   type="number"
                   min="1"
-                  defaultValue={component?.quantity ?? 1}
+                  defaultValue={isPanel && pvArray ? 1 : component?.quantity ?? 1}
                   className="field"
                 />
               </Field>
-              {(isPanel || isInverter) && <Field label={isPanel ? "Panel wattage" : "Continuous rating"}>
+              {isInverter && <Field label="Continuous rating">
                 <div className="relative"><input name="ratedPower" type="number" min="0" step="any" defaultValue={isInverter ? inverterPowerInputKw(component?.specs["Rated power"]) : String(component?.specs["Panel wattage"] ?? "").replace(/[^0-9.]/g, "")} className="field pr-12" placeholder={isPanel ? "e.g. 450" : "e.g. 20"}/><span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-muted">{isInverter ? "kW" : "W"}</span></div>
               </Field>}
               {isPanel && <Field label="Panels per array">
-                <input name="panelsPerArray" type="number" min="1" defaultValue="1" className="field" placeholder="e.g. 6"/>
+                <input name="panelsPerArray" type="number" min="1" defaultValue={pvArray?.panelCount ?? 1} className="field" placeholder="e.g. 6"/>
               </Field>}
               {isPanel && <Field label="Connection within each array">
-                <select name="panelConnection" defaultValue="series" className="field"><option value="series">Series</option><option value="parallel">Parallel</option></select>
+                <select name="panelConnection" defaultValue={String(component?.specs["Wiring arrangement"] ?? "series").toLowerCase()} className="field"><option value="series">Series</option><option value="parallel">Parallel</option></select>
               </Field>}
             </>
           )}
@@ -1038,7 +1248,7 @@ export function ComponentDetail({
                 .map(([key, value]) => `${key}: ${value}`)
                 .join("\n")}
               className="field py-3 font-mono"
-              placeholder="Rated voltage: from equipment label&#10;Breaker rating: from design&#10;Cable size: from design"
+              placeholder="Rated voltage, current, power, capacity, chemistry, cable size, breaker rating or other model-specific details"
             />
           </Field>}
           <Field label="Installation and identification notes" wide>

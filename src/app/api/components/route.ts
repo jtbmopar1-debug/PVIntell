@@ -30,6 +30,7 @@ const schema = z.object({
   firmwareVersion: z.string().trim().max(120).optional(),
   manualUrl: z.url().max(1000).optional(),
   photoUrl: z.string().trim().max(1000).optional(),
+  confidence: z.enum(["estimated", "confirmed"]).optional(),
   specifications: z.record(
     z.string(),
     z.union([z.string().max(500), z.number()]),
@@ -69,7 +70,7 @@ export async function POST(request: Request) {
       manual_url: input.manualUrl || null,
       photo_url: input.photoUrl || null,
       specifications: input.specifications,
-      confidence: "confirmed",
+      confidence: input.confidence ?? "confirmed",
     })
     .select("*")
     .single();

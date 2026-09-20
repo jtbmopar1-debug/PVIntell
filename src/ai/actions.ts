@@ -12,7 +12,7 @@ import type { DesignCalculatorState } from "@/domain/models";
 // Bump whenever persisted proposal semantics or downstream rendering contracts
 // change. Version 3 forces records already stamped by the incomplete v2 repair
 // back through canonical array/inverter reconciliation.
-export const PROPOSAL_ENGINE_VERSION = 6;
+export const PROPOSAL_ENGINE_VERSION = 8;
 
 export function planReplacementConnectionMerge(
   connections: Array<{ id: string; source_ref: string; target_ref: string }>,
@@ -227,6 +227,7 @@ function sizingFields(settings: Record<string, unknown>, mode: string, panelWatt
       ? settings.solarResource as ProposalSizingInput["solarResource"]
       : undefined,
   });
+  const batteryRequirement = String((discovery.battery_requirement as { value?: unknown } | undefined)?.value ?? "").trim().toLowerCase();
   return {
     targetPvKw: sizing.pvKw,
     panelCount: sizing.panelCount,
@@ -239,6 +240,7 @@ function sizingFields(settings: Record<string, unknown>, mode: string, panelWatt
     evChargingKw: evChargingKwFromDiscovery(discovery),
     evChargingPhase: evChargingPhaseFromDiscovery(discovery),
     batteryUsableKwh: sizing.batteryUsableKwh,
+    batteryIncluded: /^(?:none|no battery storage)$/.test(batteryRequirement) ? false : undefined,
     calculatedBatteryUsableKwh: sizing.calculatedBatteryUsableKwh,
     sizingMethod: sizing.method,
     sizingInputs: {
@@ -261,13 +263,98 @@ function sizingFields(settings: Record<string, unknown>, mode: string, panelWatt
   };
 }
 
+const BATTERYLESS_HYBRID_WARNING = "Battery-free hybrid compatibility is not confirmed. Some hybrid inverters, inverter-chargers and charge-controller arrangements require a connected compatible battery to start or operate. Confirm that the exact selected equipment explicitly supports battery-free operation, or include a battery or choose a solar-only inverter.";
+const BATTERY_CHEMISTRY_REQUIRED_WARNING = "Battery storage is included, but its chemistry or battery family has not been selected. The usable-storage target is retained; voltage, amp-hour capacity, quantity and exact battery hardware remain unproposed until that choice is recorded.";
+
+function batteryChemistryFromDiscovery(discovery: Record<string, { value?: unknown }>) {
+  const recorded = String(discovery.battery_chemistry?.value ?? "").trim().toLowerCase();
+  if (!recorded || ["unknown", "not_decided", "not_sure"].includes(recorded)) return undefined;
+  const labels: Record<string, string> = {
+    lifepo4: "LiFePO₄",
+    other_lithium_ion: "Other lithium-ion chemistry",
+    lto: "Lithium titanate (LTO)",
+    flooded_lead_acid: "Flooded lead-acid",
+    agm: "AGM lead-acid",
+    gel: "Gel lead-acid",
+    sodium_ion: "Sodium-ion",
+    manufacturer_system: "Manufacturer battery system",
+    custom_home_built: "Custom or home-built battery",
+  };
+  return labels[recorded] ?? recorded.replaceAll("_", " ");
+}
+
+function batteryUsablePercentForChemistry(chemistry: string | undefined) {
+  if (!chemistry) return undefined;
+  if (/lead|agm|gel/i.test(chemistry)) return 50;
+  if (/lifepo/i.test(chemistry)) return 80;
+  return undefined;
+}
+
+function applyBatteryChemistryState(calculator: Record<string, unknown>, discovery: Record<string, { value?: unknown }>, batteryUsableKwh: number | undefined) {
+  const warnings = Array.isArray(calculator.sizingWarnings)
+    ? (calculator.sizingWarnings as unknown[]).filter((warning): warning is string => typeof warning === "string" && warning !== BATTERY_CHEMISTRY_REQUIRED_WARNING)
+    : [];
+  if (!batteryUsableKwh) {
+    for (const key of ["batteryVoltage", "usableBatteryPercent", "batteryQuantity", "batteryChemistry", "batteryAh"]) delete calculator[key];
+    calculator.sizingWarnings = warnings;
+    return;
+  }
+  const chemistry = batteryChemistryFromDiscovery(discovery);
+  if (!chemistry) {
+    for (const key of ["batteryVoltage", "usableBatteryPercent", "batteryQuantity", "batteryChemistry", "batteryAh"]) delete calculator[key];
+    calculator.sizingWarnings = [BATTERY_CHEMISTRY_REQUIRED_WARNING, ...warnings];
+    return;
+  }
+  const nominalDcVoltage = Number(String(discovery.dc_system_voltage?.value ?? "").match(/\d+(?:\.\d+)?/)?.[0]);
+  const storedVoltage = Number(calculator.batteryVoltage);
+  const voltage = storedVoltage > 0 ? storedVoltage : nominalDcVoltage > 0
+    ? (nominalDcVoltage === 48 && /lifepo/i.test(chemistry) ? 51.2 : nominalDcVoltage)
+    : undefined;
+  const storedUsablePercent = Number(calculator.usableBatteryPercent);
+  const usablePercent = storedUsablePercent > 0 ? storedUsablePercent : batteryUsablePercentForChemistry(chemistry);
+  calculator.batteryChemistry = chemistry;
+  calculator.batteryQuantity = Number(calculator.batteryQuantity) || 1;
+  if (voltage) calculator.batteryVoltage = voltage;
+  else delete calculator.batteryVoltage;
+  if (usablePercent) calculator.usableBatteryPercent = usablePercent;
+  else delete calculator.usableBatteryPercent;
+  if (voltage && usablePercent) calculator.batteryAh = Math.ceil(batteryUsableKwh * 1000 / (voltage * usablePercent / 100));
+  else delete calculator.batteryAh;
+  calculator.sizingWarnings = warnings;
+}
+
+function applyBatterylessHybridWarning(calculator: Record<string, unknown>) {
+  const warnings = Array.isArray(calculator.sizingWarnings)
+    ? (calculator.sizingWarnings as unknown[]).filter((warning): warning is string => typeof warning === "string" && warning !== BATTERYLESS_HYBRID_WARNING)
+    : [];
+  const hybridSelected = ["combined_hybrid_inverter", "separate_solar_controller_and_inverter"].includes(String(calculator.architecture))
+    || ["combined", "modular"].includes(String(calculator.inverterArrangement));
+  if (calculator.batteryIncluded === false && hybridSelected) warnings.unshift(BATTERYLESS_HYBRID_WARNING);
+  calculator.sizingWarnings = warnings;
+}
+
 export function refreshProposalAfterSizingInput(settings: Record<string, unknown>, mode: string) {
   if (!settings.designCalculator || typeof settings.designCalculator !== "object") return;
   const calculator = settings.designCalculator as Record<string, unknown>;
+  const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
+    ? settings.designDiscovery as Record<string, { value?: unknown }>
+    : {};
   if (calculator.updatedBy === "user") {
+    const batteryRequirement = String(discovery.battery_requirement?.value ?? "").trim().toLowerCase();
+    if (batteryRequirement === "none") {
+      calculator.batteryIncluded = false;
+      for (const key of ["batteryUsableKwh", "calculatedBatteryUsableKwh", "batteryVoltage", "usableBatteryPercent", "batteryQuantity", "batteryChemistry", "batteryAh"]) delete calculator[key];
+    } else if (batteryRequirement === "include") calculator.batteryIncluded = true;
+    if (calculator.batteryUsableKwh && /planning (?:assumption|selection)/i.test(String(calculator.batteryChemistry ?? "")) && !batteryChemistryFromDiscovery(discovery)) {
+      for (const key of ["batteryVoltage", "usableBatteryPercent", "batteryQuantity", "batteryChemistry", "batteryAh"]) delete calculator[key];
+      delete calculator.proposedAsBuiltDraft;
+      delete calculator.proposedChecklist;
+    }
     calculator.sizingWarnings = [
       "Discovery changed after this user-adjusted proposal. Review and save the sizing again before relying on it.",
+      ...(calculator.batteryUsableKwh && !batteryChemistryFromDiscovery(discovery) ? [BATTERY_CHEMISTRY_REQUIRED_WARNING] : []),
     ];
+    applyBatterylessHybridWarning(calculator);
     calculator.sizingMethod = "user-adjusted";
     delete calculator.proposedAsBuiltDraft;
     delete calculator.proposedChecklist;
@@ -281,16 +368,11 @@ export function refreshProposalAfterSizingInput(settings: Record<string, unknown
   }
   const nextSignature = [fields.targetPvKw, fields.panelCount, fields.inverterKw, fields.batteryUsableKwh].join("|");
   const refreshed: Record<string, unknown> = { ...calculator, ...fields, updatedAt: new Date().toISOString(), updatedBy: "wattson" };
-  if (fields.batteryUsableKwh) {
-    const batteryVoltage = Number(refreshed.batteryVoltage) || 51.2;
-    const usablePercent = Number(refreshed.usableBatteryPercent) || 80;
-    refreshed.batteryVoltage = batteryVoltage;
-    refreshed.usableBatteryPercent = usablePercent;
-    refreshed.batteryQuantity = Number(refreshed.batteryQuantity) || 1;
-    refreshed.batteryChemistry = refreshed.batteryChemistry || "LiFePO₄ (planning selection)";
-    refreshed.batteryAh = Math.ceil(fields.batteryUsableKwh * 1000 / (batteryVoltage * usablePercent / 100));
-  } else {
-    for (const key of ["batteryVoltage", "usableBatteryPercent", "batteryQuantity", "batteryChemistry", "batteryAh"]) delete refreshed[key];
+  applyBatterylessHybridWarning(refreshed);
+  applyBatteryChemistryState(refreshed, discovery, fields.batteryUsableKwh);
+  if (fields.batteryUsableKwh && !batteryChemistryFromDiscovery(discovery)) {
+    delete refreshed.proposedAsBuiltDraft;
+    delete refreshed.proposedChecklist;
   }
   if (previousSignature !== nextSignature) {
     delete refreshed.proposedAsBuiltDraft;
@@ -373,9 +455,18 @@ export function reconcileStoredProposal(
       delete current.proposedAsBuiltDraft;
       delete current.proposedChecklist;
     }
+    const unconfirmedAutomaticBattery = current.batteryUsableKwh
+      && /planning (?:assumption|selection)/i.test(String(current.batteryChemistry ?? ""))
+      && !batteryChemistryFromDiscovery(discovery);
+    if (unconfirmedAutomaticBattery) {
+      for (const key of ["batteryVoltage", "usableBatteryPercent", "batteryQuantity", "batteryChemistry", "batteryAh"]) delete current[key];
+      delete current.proposedAsBuiltDraft;
+      delete current.proposedChecklist;
+    }
     current.proposalEngineVersion = PROPOSAL_ENGINE_VERSION;
     current.sizingWarnings = [...new Set([
       ...(Array.isArray(current.sizingWarnings) ? current.sizingWarnings.map(String) : []),
+      ...(unconfirmedAutomaticBattery ? [BATTERY_CHEMISTRY_REQUIRED_WARNING] : []),
       preservableFlatTopology
         ? "The proposal engine changed after this user-adjusted design. Its internally consistent string topology has been preserved but still requires equipment and local-rule review."
         : hasFlatTopology
@@ -1253,11 +1344,7 @@ export async function applyWattsonActions(
       let proposedPvKw = solarFirstUpgrade?.targetPvKw ?? sizing.pvKw;
       const proposedInverterKw = solarFirstUpgrade?.inverterKw ?? sizing.inverterKw;
       const retainUserModule = previous.updatedBy === "user" && Number(previous.panelWatts) === representativePanelWatts;
-      const recordedChemistry = String(discovery.battery_chemistry?.value ?? "").toLowerCase();
-      const isLeadAcid = /lead|agm|gel/.test(recordedChemistry);
-      const batteryChemistry = recordedChemistry === "lifepo4"
-        ? "LiFePO₄"
-        : recordedChemistry ? recordedChemistry.replaceAll("_", " ") : "LiFePO₄ (planning selection)";
+      const batteryChemistry = batteryChemistryFromDiscovery(discovery);
       const nominalDcVoltage = Number(String(discovery.dc_system_voltage?.value ?? "").match(/\d+(?:\.\d+)?/)?.[0]);
       const generatorRoles = String(discovery.generator_outage_role?.value ?? "").toLowerCase();
       const generatorDetails = generatorFromDiscovery(discovery);
@@ -1283,11 +1370,11 @@ export async function applyWattsonActions(
         connectionType,
         projectType: String(current.data.mode) as "off-grid" | "grid-tied" | "hybrid",
       });
-      const batteryVoltage = sizing.batteryUsableKwh
-        ? (Number(previous.batteryVoltage) || (nominalDcVoltage === 48 && !isLeadAcid ? 51.2 : nominalDcVoltage || 51.2))
+      const batteryVoltage = sizing.batteryUsableKwh && batteryChemistry
+        ? (Number(previous.batteryVoltage) || (nominalDcVoltage === 48 && /lifepo/i.test(batteryChemistry) ? 51.2 : nominalDcVoltage || undefined))
         : undefined;
-      const usableBatteryPercent = sizing.batteryUsableKwh
-        ? (Number(previous.usableBatteryPercent) || (isLeadAcid ? 50 : 80))
+      const usableBatteryPercent = sizing.batteryUsableKwh && batteryChemistry
+        ? (Number(previous.usableBatteryPercent) || batteryUsablePercentForChemistry(batteryChemistry))
         : undefined;
       const batteryAh = sizing.batteryUsableKwh && batteryVoltage && usableBatteryPercent
         ? Math.ceil(sizing.batteryUsableKwh * 1000 / (batteryVoltage * usableBatteryPercent / 100))
@@ -1399,11 +1486,12 @@ export async function applyWattsonActions(
         generatorType: generatorDetails.generatorType,
         generatorFuel: generatorDetails.fuel,
         batteryUsableKwh: sizing.batteryUsableKwh,
+        batteryIncluded: batteryExplicitlyExcluded ? false : sizing.batteryUsableKwh ? true : undefined,
         calculatedBatteryUsableKwh: sizing.sizing.calculatedBatteryUsableKwh,
         batteryChemistry: sizing.batteryUsableKwh ? batteryChemistry : undefined,
         batteryVoltage,
         batteryAh,
-        batteryQuantity: sizing.batteryUsableKwh ? 1 : undefined,
+        batteryQuantity: sizing.batteryUsableKwh && batteryChemistry ? 1 : undefined,
         usableBatteryPercent,
         sizingMethod: sizing.sizing.method,
         sizingInputs: {
@@ -1422,7 +1510,7 @@ export async function applyWattsonActions(
           assumedNonSolarLoadKwh: sizing.sizing.assumedNonSolarLoadKwh,
         },
         sizingAssumptions: [...sizing.sizing.assumptions, ...(solarFirstUpgrade ? [`Solar-first proposal adds the panel and inverter capacity needed to assess the recorded ${sizing.sizing.startupPeakKw} kW motor-start demand before relying on generator or grid support.`] : [])],
-        sizingWarnings: [...sizing.sizing.warnings, "PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.", ...(inverterPlan ? [inverterPlan.message] : []), ...solarFirstWarnings, ...generatorSizingWarnings, ...generatorDetails.warnings, ...existingPanelWarnings, ...(candidate ? defaultProposalPanelWarnings : [])],
+        sizingWarnings: [...sizing.sizing.warnings, ...(sizing.batteryUsableKwh && !batteryChemistry ? [BATTERY_CHEMISTRY_REQUIRED_WARNING] : []), "PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.", ...(inverterPlan ? [inverterPlan.message] : []), ...solarFirstWarnings, ...generatorSizingWarnings, ...generatorDetails.warnings, ...existingPanelWarnings, ...(candidate ? defaultProposalPanelWarnings : [])],
         updatedAt: new Date().toISOString(),
         updatedBy: "wattson",
         proposalEngineVersion: PROPOSAL_ENGINE_VERSION,
@@ -1450,6 +1538,7 @@ export async function applyWattsonActions(
       delete nextDesign.panelsPerString;
       delete nextDesign.stringDesign;
       nextDesign.sizingWarnings = [...new Set([...(nextDesign.sizingWarnings as string[]), ...finalSurfaceAssessment.warnings])];
+      applyBatterylessHybridWarning(nextDesign);
       if (finalSurfaceAssessment.status === "exceeds_space") {
         nextDesign.fitLimited = true;
         nextDesign.fitStatus = "does_not_fit";
@@ -1523,13 +1612,9 @@ export async function applyWattsonActions(
         existingPanelGroup: calculator.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
       });
       if (dependentSizing.batteryUsableKwh) {
-        const batteryVoltage = Number(calculator.batteryVoltage) || 51.2;
-        const usableBatteryPercent = Number(calculator.usableBatteryPercent) || 80;
         calculator.batteryUsableKwh = dependentSizing.batteryUsableKwh;
         calculator.calculatedBatteryUsableKwh = dependentSizing.calculatedBatteryUsableKwh;
-        calculator.batteryVoltage = batteryVoltage;
-        calculator.usableBatteryPercent = usableBatteryPercent;
-        calculator.batteryAh = Math.ceil(dependentSizing.batteryUsableKwh * 1000 / (batteryVoltage * usableBatteryPercent / 100));
+        applyBatteryChemistryState(calculator, discovery, dependentSizing.batteryUsableKwh);
       }
       calculator.sizingMethod = "user-adjusted";
       calculator.updatedBy = "user";
@@ -1538,6 +1623,7 @@ export async function applyWattsonActions(
       calculator.sizingWarnings = [
         ...dependentSizing.sizingWarnings
           .filter((warning) => !warning.startsWith("Panel count adjusted to ")),
+        ...(dependentSizing.batteryUsableKwh && !batteryChemistryFromDiscovery(discovery) ? [BATTERY_CHEMISTRY_REQUIRED_WARNING] : []),
         `Panel count adjusted to ${panelCount} at the user's request; verify the final string layout against the selected inverter MPPT limits and cold-weather module voltage.`,
         ...(hasRecordedInverter && dependentSizing.inverterKw && dependentSizing.inverterKw !== recordedInverterKw
           ? [`The recorded ${recordedInverterKw} kW inverter was retained. Current planning indicates a ${dependentSizing.inverterKw} kW inverter class should be assessed before changing equipment.`]
@@ -1576,6 +1662,13 @@ export async function applyWattsonActions(
         updatedAt: new Date().toISOString(),
         updatedBy: calculator.updatedBy === "user" ? "user" : "wattson",
       };
+      const updatedCalculator = settings.designCalculator as Record<string, unknown>;
+      const batteryRequirement = String((settings.designDiscovery as Record<string, { value?: unknown }> | undefined)?.battery_requirement?.value ?? "").trim().toLowerCase();
+      if (batteryRequirement === "none") updatedCalculator.batteryIncluded = false;
+      else if (batteryRequirement === "include") updatedCalculator.batteryIncluded = true;
+      applyBatterylessHybridWarning(updatedCalculator);
+      delete updatedCalculator.proposedAsBuiltDraft;
+      delete updatedCalculator.proposedChecklist;
       const changed = await supabase.from("projects").update({ settings }).eq("id", projectId);
       if (changed.error) throw changed.error;
       const architectureMarker = "Proposed by Wattson: architecture preference";

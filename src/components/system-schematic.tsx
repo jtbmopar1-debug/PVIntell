@@ -307,7 +307,7 @@ function NodeCard({
           event.stopPropagation();
           onConnectionDrop(node);
         }}
-        className={`relative flex h-full w-full touch-none flex-col items-center rounded-2xl border bg-transparent px-2 py-1 text-center transition hover:-translate-y-0.5 hover:bg-white/55 ${node.proposed ? "border-dashed border-[#8db4d8]" : "border-transparent"} ${connectingFrom === node.id ? "border-[#f6c945] bg-[#fff9df] ring-2 ring-[#f6c945]/35" : ""} ${node.href ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
+        className={`relative flex h-full w-full touch-pan-x touch-pan-y flex-col items-center rounded-2xl border bg-transparent px-2 py-1 text-center transition hover:-translate-y-0.5 hover:bg-white/55 ${node.proposed ? "border-dashed border-[#8db4d8]" : "border-transparent"} ${connectingFrom === node.id ? "border-[#f6c945] bg-[#fff9df] ring-2 ring-[#f6c945]/35" : ""} ${node.href ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
       >
         {node.proposed && <span className="absolute left-1 top-1 z-10 rounded-full bg-[#fff6cf] px-2 py-1 text-[8px] font-extrabold uppercase tracking-wide text-[#8b6512]">Proposed</span>}
         {node.incompatible && <span className="absolute left-1/2 top-[58px] z-20 grid size-8 -translate-x-1/2 place-items-center rounded-full border-2 border-white bg-[#c9362b] text-white shadow-md" title="Suitability has not passed — open this technical card for details" aria-label="Suitability has not passed"><Ban size={18}/></span>}
@@ -780,7 +780,7 @@ export function SystemSchematic({
         label: array.name,
         subtitle: `${array.panelCount ?? "?"} × ${array.panelWatts ?? "?"} W · ${pvArrangement(array)}`,
         kind: "pv" as const,
-        href: `${base}/pv-strings/${array.id}`,
+        href: `${base}/equipment/${array.id}`,
         imageSrc: `${imageBase}/solar-panel-pv-module.jpg`,
         proposed: array.confidence !== "confirmed",
         incompatible: arraySuitabilityUnresolved(array),
@@ -1025,7 +1025,7 @@ export function SystemSchematic({
           sourceId: `pv:${array.id}`,
           targetId: target.id,
           values: pvDetails(array),
-          editHref: `${base}/pv-strings/${array.id}`,
+          editHref: `${base}/equipment/${array.id}`,
           connectionType: "dc",
           unconfirmed: true,
         });
@@ -1704,7 +1704,7 @@ export function SystemSchematic({
           </div>
           {connectionMode ? <div className="border-b border-[#e3c65a] bg-[#fff4bd] px-4 py-3 text-xs font-bold text-brand" role="status">{reconnecting ? `Loose ${reconnecting.label} selected. Drag it or tap the item it should connect to.` : connectingFrom ? `Selected ${connectingFrom.label}. Tap the destination card.` : "Tap the first item you want to connect."}</div> : null}
           <div className="schematic-rotate-hint"><Smartphone size={30} aria-hidden/><div><strong>Rotate your phone to view the schematic</strong><span>Landscape gives the system map a clear postcard-sized canvas.</span></div></div>
-          <div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto touch-auto bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
+          <div ref={canvasViewportRef} className="schematic-mobile-canvas-content thin-scrollbar overflow-auto touch-pan-x touch-pan-y bg-[radial-gradient(circle_at_50%_35%,rgba(246,201,69,.16),transparent_19rem),linear-gradient(#f8fbfe,#f3f7fb)]">
             <svg
               viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
               style={{ width: canvasWidth * canvasZoom, height: canvasHeight * canvasZoom }}

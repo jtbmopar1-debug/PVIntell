@@ -31,7 +31,7 @@ function projectStore(mode = "off_grid") {
         return { data: table === "projects" ? structuredClone(project) : [], error: null };
       };
       const query = {
-        select: () => query, eq: () => query, delete: () => query, insert: () => query,
+        select: () => query, eq: () => query, order: () => query, limit: () => query, delete: () => query, insert: () => query,
         update: (value: Record<string, unknown>) => { update = value; return query; },
         single: async () => execute(), maybeSingle: async () => execute(),
         then: (resolve: (result: ReturnType<typeof execute>) => unknown) => Promise.resolve(execute()).then(resolve),
@@ -157,10 +157,10 @@ describe("discovery → stored proposal → calculator save", () => {
     for (const key of ["panelCount", "targetPvKw", "inverterKw", "batteryUsableKwh", "generatorContinuousKw"]) expect(future[key]).toEqual(baseline[key]);
   });
 
-  it("persists the solar-first array, inverter, generator and Site angles together", async () => {
+  it("persists energy-based PV and inverter sizing, generator and Site angles together", async () => {
     const { design } = await build(workshop);
-    expect(design).toMatchObject({ panelCount: 8, panelWatts: 580, targetPvKw: 7.2, inverterKw: 6, generatorContinuousKw: 5, generatorSurgeKw: 5.4, azimuthDegrees: 0, tiltDegrees: 36.9 });
-    expect(design.existingPanelGroup).toMatchObject({ proposedUseCount: 8, supplementaryTargetPvKw: 2.56 });
+    expect(design).toMatchObject({ panelCount: 8, panelWatts: 580, targetPvKw: 5.8, inverterKw: 5, generatorContinuousKw: 5, generatorSurgeKw: 5.4, azimuthDegrees: 0, tiltDegrees: 36.9 });
+    expect(design.existingPanelGroup).toMatchObject({ proposedUseCount: 8, supplementaryTargetPvKw: 1.16 });
     expect(design.pvArrayPlan).toMatchObject({ status: "topology_unresolved", arrays: [{ id: "existing-array" }, { id: "supplementary-array" }] });
     expect(design).not.toHaveProperty("pvStrings");
     expect(design).not.toHaveProperty("panelsPerString");
@@ -497,6 +497,24 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(tidy[12]).toMatchObject({ x: 35, y: 600 });
     expect(size.height).toBeGreaterThanOrEqual(tidy[12].y + 128 + 80);
     expect(size.width).toBeGreaterThanOrEqual(1120);
+  });
+
+  it("omits the complete battery branch from a battery-free daylight proposal", () => {
+    const draft = createProposedAsBuiltDraft({
+      architecture: "combined_hybrid_inverter",
+      inverterArrangement: "string_inverter",
+      inverterKw: 4,
+      panelCount: 10,
+      panelWatts: 450,
+      batteryIncluded: false,
+    } as DesignCalculatorState);
+    const nodeIds = new Set(draft.nodes?.map((node) => node.id));
+    expect([...nodeIds]).not.toEqual(expect.arrayContaining(["battery", "battery-safety", "battery-inverter", "controller"]));
+    expect(draft.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "inverter", label: "Hybrid inverter", detail: expect.stringContaining("Battery-free operation must be documented") }),
+    ]));
+    expect(draft.connections?.some((connection) => /battery/i.test(`${connection.from} ${connection.to} ${connection.label}`))).toBe(false);
+    expect(draft.connections?.every((connection) => nodeIds.has(connection.from) && nodeIds.has(connection.to))).toBe(true);
   });
 
   it("lays generated equipment out in electrical-flow lanes", () => {

@@ -42,10 +42,11 @@ export function SystemTechnicalOverview({ project, onAskWattson, onOpenMonitor }
   const router = useRouter();
   const installed = installedPhases.has(project.phase);
   const base = `/sites/${project.siteId}/systems/${project.id}`;
-  const arrays = project.pvArrays ?? [];
-  const inverters = project.components.filter((component) => component.kind === "inverter");
-  const batteries = project.components.filter((component) => component.kind === "battery");
-  const otherComponents = project.components.filter((component) => !["inverter", "battery", "panel", "pv_string"].includes(component.kind));
+  const arrays = (project.pvArrays ?? []).filter((array) => array.confidence === "confirmed");
+  const confirmedComponents = project.components.filter((component) => component.status === "confirmed");
+  const inverters = confirmedComponents.filter((component) => component.kind === "inverter");
+  const batteries = confirmedComponents.filter((component) => component.kind === "battery");
+  const otherComponents = confirmedComponents.filter((component) => !["inverter", "battery", "panel", "pv_string"].includes(component.kind));
   const totalPvWatts = arrays.reduce((total, array) => total + (array.panelWatts ?? 0) * (array.panelCount ?? 0), 0);
   const totalPanels = arrays.reduce((total, array) => total + (array.panelCount ?? 0), 0);
   const totalStrings = arrays.reduce((total, array) => total + (array.strings ?? 0), 0);
@@ -74,9 +75,9 @@ export function SystemTechnicalOverview({ project, onAskWattson, onOpenMonitor }
     </div>
 
     <section>
-      <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="eyebrow">System specification</div><h2 className="mt-2 text-lg font-extrabold">Installed system at a glance</h2></div><div className="flex gap-2"><button onClick={() => router.push(`${base}/pv-strings/new`)} className="flex h-9 items-center gap-2 rounded-lg bg-brand px-3 text-[11px] font-bold text-white"><Plus size={14}/>Add PV string</button><button onClick={() => router.push(`${base}/equipment/new`)} className="flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[11px] font-bold"><Plus size={14}/>Add equipment</button></div></div>
+      <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="eyebrow">System specification</div><h2 className="mt-2 text-lg font-extrabold">Installed system at a glance</h2></div><div className="flex gap-2"><button onClick={() => router.push(`${base}/equipment/new?type=panel&name=PV%20array`)} className="flex h-9 items-center gap-2 rounded-lg bg-brand px-3 text-[11px] font-bold text-white"><Plus size={14}/>Add PV array</button><button onClick={() => router.push(`${base}/equipment/new`)} className="flex h-9 items-center gap-2 rounded-lg border border-line bg-white px-3 text-[11px] font-bold"><Plus size={14}/>Add equipment</button></div></div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard icon={Cable} eyebrow="System" value={systemVoltageLabel(project)} description={`${project.projectType} · ${installed ? "Installed" : project.phase}`} facts={[{ label: "Installed records", value: String(project.components.length + arrays.length) }, { label: "Connections", value: String(project.connections.length) }, { label: "Other equipment", value: String(otherComponents.length) }]}/>
+        <SummaryCard icon={Cable} eyebrow="System" value={systemVoltageLabel(project)} description={`${project.projectType} · ${installed ? "Installed" : project.phase}`} facts={[{ label: "Installed records", value: String(confirmedComponents.length + arrays.length) }, { label: "Connections", value: String(project.connections.filter((connection) => connection.confidence === "confirmed").length) }, { label: "Other equipment", value: String(otherComponents.length) }]}/>
         <SummaryCard icon={Sun} eyebrow="PV array" value={totalPvWatts > 0 ? `${(totalPvWatts / 1000).toFixed(2)} kW` : "Not recorded"} description={arrays.length ? arrays.map((array) => array.name).join(" · ") : "Add the installed array specification."} facts={pvFacts}/>
         <SummaryCard icon={PlugZap} eyebrow="Inverter" value={inverterQuantity ? `${inverterQuantity} installed` : "Not recorded"} description={inverters.length ? inverters.map(componentTitle).join(" · ") : "Add the installed inverter specification."} facts={inverterFacts}/>
         <SummaryCard icon={BatteryCharging} eyebrow="Battery" value={batteryQuantity ? `${batteryQuantity} installed` : "Not recorded"} description={batteries.length ? batteries.map(componentTitle).join(" · ") : "Add the installed battery-bank specification."} facts={batteryFacts}/>

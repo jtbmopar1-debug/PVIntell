@@ -82,14 +82,27 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const questions = useMemo(() => questionsFor(answers), [answers, questionsFor]);
   const reviewing = index >= questions.length;
   const question = reviewing ? undefined : questions[Math.min(index, questions.length - 1)];
+  const questionTopRef = useRef<HTMLElement>(null);
   const stageIndex = question ? discoveryStages.findIndex((stage) => stage.id === question.stage) : discoveryStages.length;
   const completionContext = { combinedInitialSetup, hasSavedSites: sites.length > 0 };
   const incompleteQuestions = questions.filter((item) => !guidedQuestionComplete(item, answers, completionContext));
   const incompleteQuestionIds = new Set(incompleteQuestions.map((item) => item.id));
   const answered = questions.length - incompleteQuestions.length;
   const currentAnswerComplete = question ? !incompleteQuestionIds.has(question.id) : true;
+  // Returning to the review is a safe save-and-navigate action. It must not
+  // share the strict completion gate used to advance the guided flow: the
+  // review page is where an incomplete answer is visibly flagged for return.
+  const canLeaveCurrentQuestion = returningToReview || currentAnswerComplete;
   const completedQuestionIds = new Set(questions.filter((item) => !incompleteQuestionIds.has(item.id)).map((item) => item.id));
   const stageProgress = sequentialDiscoveryStageProgress(questions, completedQuestionIds);
+
+  useEffect(() => {
+    if (!window.matchMedia("(max-width: 1023px)").matches) return;
+    const frame = window.requestAnimationFrame(() => {
+      questionTopRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [question?.id, reviewing]);
 
   function returnToQuestion(questionId: string) {
     const targetIndex = questions.findIndex((item) => item.id === questionId);
@@ -265,7 +278,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
           {siteDiscoveryId && <button type="button" onClick={() => void deleteSite()} disabled={saving} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl border border-[#efb6a7] px-3 py-2.5 text-xs font-bold text-[#b9412b] hover:bg-[#fff1ed] disabled:opacity-40"><Trash2 size={15}/>Delete Site and discovery</button>}
         </aside>
 
-        <main>
+        <main ref={questionTopRef} className="scroll-mt-3">
           {!reviewing && question ? <QuestionCard
             question={question}
             value={answers[question.id]}
@@ -285,7 +298,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
           /> : <Review answers={answers} questions={questions} proposedEquipment={proposedEquipment} proposedEquipmentEditHref={existingSystemId && proposedEquipment.length ? `/proposals/new?from=discovery&system=${existingSystemId}` : undefined} onSelectQuestion={returnToQuestion}/>}
           {siteDiscoveryId && <div className="mt-4 rounded-xl border border-[#f1ce71] bg-[#fff9df] p-3 text-xs leading-5 text-[#725800]">This is the complete brief for this Site, including its proposed system. Saving changes flags every proposed design at this Site for review; nothing is silently overwritten.</div>}
           {error && <div className="mt-4 rounded-xl border border-[#efb6a7] bg-[#fff1ed] p-3 text-xs text-[#9b3f2c]">{error}</div>}
-          <div className="mt-5 flex items-center justify-between gap-3"><button type="button" onClick={() => returningToReview ? (setReturningToReview(false), setIndex(questions.length)) : void back()} disabled={(!returningToReview && index===0) || saving} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold disabled:opacity-40"><ArrowLeft size={15}/>{returningToReview ? "Back to review" : "Back"}</button>{reviewing?<button type="button" onClick={() => incompleteQuestions.length ? returnToQuestion(incompleteQuestions[0].id) : void complete()} disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{incompleteQuestions.length ? <CircleHelp size={16}/> : null}{incompleteQuestions.length ? `Complete ${incompleteQuestions.length} missing answer${incompleteQuestions.length === 1 ? "" : "s"}` : "Save and build proposal"}</button>:question?<button type="button" onClick={() => void next()} disabled={!currentAnswerComplete || (question.id==="site_name" && sites.length>0 && !answers.site_id) || (question.id==="system_name" && combinedInitialSetup && (!answers.site_name || (sites.length>0 && !answers.site_id))) || saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{returningToReview ? "Save answer and return to review" : "Continue"}<ArrowRight size={15}/></button>:null}</div>
+          <div className="mt-5 flex items-center justify-between gap-3"><button type="button" onClick={() => returningToReview ? (setReturningToReview(false), setIndex(questions.length)) : void back()} disabled={(!returningToReview && index===0) || saving} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold disabled:opacity-40"><ArrowLeft size={15}/>{returningToReview ? "Back to review" : "Back"}</button>{reviewing?<button type="button" onClick={() => incompleteQuestions.length ? returnToQuestion(incompleteQuestions[0].id) : void complete()} disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{incompleteQuestions.length ? <CircleHelp size={16}/> : null}{incompleteQuestions.length ? `Complete ${incompleteQuestions.length} missing answer${incompleteQuestions.length === 1 ? "" : "s"}` : "Save and build proposal"}</button>:question?<button type="button" onClick={() => void next()} disabled={!canLeaveCurrentQuestion || (question.id==="site_name" && sites.length>0 && !answers.site_id) || (question.id==="system_name" && combinedInitialSetup && (!answers.site_name || (sites.length>0 && !answers.site_id))) || saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{returningToReview ? "Save answer and return to review" : "Continue"}<ArrowRight size={15}/></button>:null}</div>
         </main>
       </div>
     </div>
@@ -561,7 +574,7 @@ function PoolHeaterCapacityCard({ question, profile, value, locationLabel, setAn
   </section>;
 }
 
-const poolLoadLabels: Record<string, string> = { filtration_pump: "Filtration or circulation pump", booster_cleaner_pump: "Booster or cleaner pump", sanitation: "Sanitation equipment", spa_jet_air_pump: "Spa jet or air pump", water_feature: "Water feature or auxiliary pump", controls: "Controls and automation", heat_pump: "Heat pump or air conditioning", resistive_electric: "Electric resistance heater", spa_inline_heater: "Built-in spa-bath heater", self_contained_spa: "Self-contained spa heater", gas: "Gas heater controls and ignition", domestic_hot_water: "Domestic hot-water supply", water_pump: "Water, bore or pressure pump", septic_pump: "Sewage or septic pump", septic_aerator: "Septic aerator or treatment blower", sump_drainage_pump: "Sump or drainage pump", compressor: "Air compressor", welder: "Welder", saw_tools: "Large saws or workshop tools", refrigeration: "Refrigerator or upright freezer", chest_freezer: "Chest freezer", electric_water: "Electric water heating", pool_heat_pump: "Pool or spa electrical heating", ev: "EV charging", electric_oven: "Electric oven", electric_cooktop: "Electric cooktop", induction: "Induction cooktop", air_fryer: "Air fryer", microwave: "Microwave" };
+const poolLoadLabels: Record<string, string> = { filtration_pump: "Filtration or circulation pump", booster_cleaner_pump: "Booster or cleaner pump", sanitation: "Sanitation equipment", spa_jet_air_pump: "Spa jet or air pump", spa_pump_inline_heater: "Spa pump + inline heater", water_feature: "Water feature or auxiliary pump", controls: "Controls and automation", heat_pump: "Heat pump or air conditioning", resistive_electric: "Electric resistance heater", spa_inline_heater: "Built-in spa-bath heater", self_contained_spa: "Self-contained spa: pump + heater", gas: "Gas heater controls and ignition", domestic_hot_water: "Domestic hot-water supply", water_pump: "Water, bore or pressure pump", septic_pump: "Sewage or septic pump", septic_aerator: "Septic aerator or treatment blower", sump_drainage_pump: "Sump or drainage pump", compressor: "Air compressor", welder: "Welder", saw_tools: "Large saws or workshop tools", refrigeration: "Refrigerator or upright freezer", chest_freezer: "Chest freezer", electric_water: "Electric water heating", pool_heat_pump: "Pool or spa electrical heating", ev: "EV charging", electric_oven: "Electric oven", electric_cooktop: "Electric cooktop", induction: "Induction cooktop", air_fryer: "Air fryer", microwave: "Microwave" };
 const ratedPoolHeatingMethods = new Set(["heat_pump", "resistive_electric", "spa_inline_heater", "self_contained_spa", "gas", "hybrid"]);
 type HeatPumpUnit = {
   name?: string;
@@ -577,7 +590,7 @@ type HeatPumpUnit = {
   thermalCapacityKw?: number;
   startingKw?: number;
 };
-type PoolLoadEntry = { name?: string; baseType?: string; customPoolEquipment?: boolean; loadType?: "motor" | "heat_pump" | "non_motor"; quantity?: number; runningKw?: number; peakRunningKw?: number; startingKw?: number; simultaneous?: boolean; startingBasis?: "automatic" | "manufacturer"; runtimeMinutesPerDay?: number; longestRunMinutes?: number; scheduleMode?: "timer" | "automatic" | "manual" | "continuous"; timerStart?: string; timerEnd?: string; operatingWindow?: "daylight" | "overnight" | "mixed" | "demand"; inputAmps?: number; voltageV?: number; phase?: "single" | "three"; welderTechnology?: "inverter" | "transformer"; dutyCyclePercent?: number; inputKva?: number; units?: HeatPumpUnit[] };
+type PoolLoadEntry = { name?: string; baseType?: string; customPoolEquipment?: boolean; loadType?: "motor" | "heat_pump" | "non_motor"; quantity?: number; runningKw?: number; peakRunningKw?: number; startingKw?: number; resistiveHeaterKw?: number; motorRunningKw?: number; motorStartingKw?: number; simultaneous?: boolean; startingBasis?: "automatic" | "manufacturer"; runtimeMinutesPerDay?: number; longestRunMinutes?: number; cycleRunMinutes?: number; cycleIntervalHours?: number; availableHoursPerDay?: number; scheduleMode?: "timer" | "automatic" | "manual" | "continuous"; timerStart?: string; timerEnd?: string; operatingWindow?: "daylight" | "overnight" | "mixed" | "demand"; inputAmps?: number; voltageV?: number; phase?: "single" | "three"; welderTechnology?: "inverter" | "transformer"; dutyCyclePercent?: number; inputKva?: number; units?: HeatPumpUnit[] };
 
 function PoolEquipmentLoadsCard({ question, profile, value, equipment, heating, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
   let saved: Record<string, PoolLoadEntry> = {};
@@ -599,6 +612,7 @@ function StructuredPoolEquipmentLoadsCard({ question, profile, value, equipment,
 }
 
 function poolStartingMultiplier(key: string, loadType?: PoolLoadEntry["loadType"]) {
+  if (["resistive_electric", "electric_resistive", "spa_inline_heater", "electric_water", "water_heater", "hot_water_cylinder"].includes(key)) return 1;
   if (loadType === "motor") return 3;
   if (loadType === "heat_pump") return 2.5;
   if (loadType === "non_motor") return 1;
@@ -607,10 +621,19 @@ function poolStartingMultiplier(key: string, loadType?: PoolLoadEntry["loadType"
   return 1;
 }
 
+function poolRatingKeys(equipment: string[], heating: string[]) {
+  const spaPumpInlineHeater = equipment.includes("spa_pump_inline_heater") && heating.includes("spa_inline_heater");
+  return Array.from(new Set([
+    ...equipment.filter((item) => item !== "none" && item !== "spa_pump_inline_heater"),
+    ...heating.filter((item) => item !== "spa_inline_heater" || !spaPumpInlineHeater),
+    ...(spaPumpInlineHeater ? ["spa_pump_inline_heater"] : []),
+  ]));
+}
+
 function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, heating, poolThermalKw, poolElectricalKw, poolHeaterCop, setAnswer, onAskWattson }: { question: DiscoveryQuestion; profile: OnboardingAnswers; value: string | number | string[] | undefined; equipment: string[]; heating: string[]; poolThermalKw?: number; poolElectricalKw?: number; poolHeaterCop?: number; setAnswer: (value: string | number | string[]) => void; onAskWattson: () => void }) {
   let saved: Record<string, PoolLoadEntry> = {};
   if (typeof value === "string") { try { saved = JSON.parse(value) as Record<string, PoolLoadEntry>; } catch { saved = {}; } }
-  const selected = Array.from(new Set([...equipment, ...heating].filter((item) => item && item !== "none")));
+  const selected = poolRatingKeys(equipment, heating);
   const additionalToolKeys = Object.keys(saved).filter((key) => key.startsWith("saw_tools__") && selected.includes("saw_tools"));
   const additionalPoolEquipmentKeys = question.id === "pool_equipment_ratings" ? Object.keys(saved).filter((key) => saved[key]?.customPoolEquipment === true || key.startsWith("pool_equipment__")) : [];
   const displayedEntries = [...selected, ...additionalToolKeys, ...additionalPoolEquipmentKeys];
@@ -668,8 +691,12 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
         const showRuntime = workshopRuntime || poolSchedule;
         const runtimeOptional = poolSchedule && ["automatic", "manual"].includes(row.scheduleMode ?? "");
         const multiplier = poolStartingMultiplier(baseType, row.loadType);
-        const estimatedStart = row.startingKw ?? (row.runningKw ? Number((row.runningKw * multiplier).toFixed(2)) : undefined);
-        const energyInputKw = row.peakRunningKw ?? row.runningKw ?? row.inputKva;
+        const compositeSpa = ["self_contained_spa", "spa_pump_inline_heater", "spa_pump_heater", "packaged_spa"].includes(baseType);
+        const splitSpaRunningKw = compositeSpa && row.resistiveHeaterKw && row.motorRunningKw ? row.resistiveHeaterKw + row.motorRunningKw : undefined;
+        const estimatedStart = compositeSpa && row.motorRunningKw
+          ? row.motorStartingKw ?? Number((row.motorRunningKw * 3).toFixed(2))
+          : row.startingKw ?? (row.runningKw ? Number((row.runningKw * multiplier).toFixed(2)) : undefined);
+        const energyInputKw = row.peakRunningKw ?? splitSpaRunningKw ?? row.runningKw ?? row.inputKva;
         const dailyEnergyKwh = energyInputKw && row.runtimeMinutesPerDay ? Number((energyInputKw * (row.quantity ?? 1) * row.runtimeMinutesPerDay / 60).toFixed(2)) : undefined;
         const invalidRunDuration = Boolean(row.runtimeMinutesPerDay && row.longestRunMinutes && row.longestRunMinutes > row.runtimeMinutesPerDay);
         const saveTimerTime = (field: "timerStart" | "timerEnd", nextValue: string) => {
@@ -684,18 +711,46 @@ function AutoSizedPoolEquipmentLoadsCard({ question, profile, value, equipment, 
         return <article key={key} style={{ order: orderedEntries.indexOf(key) }} className="rounded-2xl border border-line bg-[#f8fbfe] p-4">
           <div className="flex items-start justify-between gap-3">{baseType === "saw_tools" || additionalPoolEquipment ? <label className="min-w-0 flex-1 text-[10px] font-bold">{additionalPoolEquipment ? "Equipment name" : "Tool name"}<input value={row.name ?? (additionalPoolEquipment ? "" : poolLoadLabels.saw_tools)} onChange={(event) => saveEntry(key, { name: event.target.value, ...(additionalTool ? { baseType: "saw_tools" } : {}), ...(additionalPoolEquipment ? { baseType: "custom_pool_equipment", customPoolEquipment: true } : {}) })} className="field mt-1.5" placeholder={additionalPoolEquipment ? "e.g. Second circulation pump or UV unit" : "e.g. Drop saw, lathe or dust extractor"}/></label> : <strong className="text-sm">{poolSchedule && baseType === "heat_pump" ? "Pool heat pump" : poolLoadLabels[baseType] ?? baseType.replaceAll("_", " ")}</strong>}{additionalTool || additionalPoolEquipment ? <button type="button" onClick={() => removeAdditionalTool(key)} className="grid size-9 shrink-0 place-items-center rounded-xl border border-[#e7b7af] text-[#a7442d]" aria-label={`Remove ${row.name || (additionalPoolEquipment ? "additional pool equipment" : "additional tool")}`}><Trash2 size={15}/></button> : null}</div>
           {additionalPoolEquipment ? <label className="mt-3 block text-[10px] font-bold">Equipment type<select value={row.loadType ?? "motor"} onChange={(event) => { const loadType = event.target.value as PoolLoadEntry["loadType"]; const startingKw = row.runningKw === undefined ? undefined : Number((row.runningKw * poolStartingMultiplier(baseType, loadType)).toFixed(2)); saveEntry(key, { loadType, startingKw, startingBasis: "automatic" }); }} className="field mt-1.5"><option value="motor">Pump, blower or other motor</option><option value="heat_pump">Heat pump or compressor</option><option value="non_motor">Controls, UV, dosing or non-motor load</option></select></label> : null}
-          {baseType === "welder" ? <WelderRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" && poolSchedule ? <PoolHeatPumpElectricalFields row={row} thermalKw={poolThermalKw} cop={poolHeaterCop ?? 5} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" ? <HeatPumpRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : <><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">{baseType === "pool_heat_pump" ? "Rated electrical input" : "Running electrical input"}<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW{baseType === "pool_heat_pump" ? " input — not heating output capacity" : ""}</span></label></div>
+          {compositeSpa ? <PackagedSpaElectricalFields row={row} save={(changes) => saveEntry(key, changes)}/> : baseType === "welder" ? <WelderRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" && poolSchedule ? <PoolHeatPumpElectricalFields row={row} thermalKw={poolThermalKw} cop={poolHeaterCop ?? 5} save={(changes) => saveEntry(key, changes)}/> : baseType === "heat_pump" ? <HeatPumpRatingFields row={row} save={(changes) => saveEntry(key, changes)}/> : <><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[11px] font-bold">Quantity<input type="number" min="0" step="1" value={row.quantity ?? 0} onChange={(event) => saveEntry(key, { quantity: numberValue(event.target.value) })} className="field mt-1.5"/></label><label className="text-[11px] font-bold">{baseType === "pool_heat_pump" ? "Rated electrical input" : "Running electrical input"}<input type="number" min="0" step="0.01" value={row.runningKw ?? ""} onChange={(event) => updateRunning(key, event.target.value)} placeholder="From equipment label" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW{baseType === "pool_heat_pump" ? " input — not heating output capacity" : ""}</span></label></div>
           <div className="mt-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">{multiplier > 1 ? "Wattson startup estimate" : "Planning input"}</span><strong className="mt-1 block text-sm">{estimatedStart === undefined ? "Enter running kW" : `${estimatedStart} kW`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">{multiplier > 1 ? <>Uses a {multiplier}× planning factor for this motor or compressor load. A variable-speed drive or soft starter may reduce it.</> : "No generic motor-start multiplier is applied; confirm the manufacturer's maximum electrical input when available."}</span></div></>}
           {poolSchedule ? <div className="mt-3 grid gap-3 rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3 sm:grid-cols-2"><label className="text-[10px] font-bold">How it normally runs<select value={row.scheduleMode ?? "timer"} onChange={(event) => { const scheduleMode = event.target.value as PoolLoadEntry["scheduleMode"]; saveEntry(key, { scheduleMode, ...(scheduleMode === "continuous" ? { runtimeMinutesPerDay: 1440, longestRunMinutes: 1440 } : {}), ...(scheduleMode === "timer" ? {} : { timerStart: undefined, timerEnd: undefined }) }); }} className="field mt-1.5"><option value="timer">On a timer</option><option value="automatic">Automatic / demand controlled</option><option value="manual">Started manually</option><option value="continuous">Runs continuously</option></select></label><label className="text-[10px] font-bold">When it mostly runs<select value={row.operatingWindow ?? ""} onChange={(event) => saveEntry(key, { operatingWindow: event.target.value as PoolLoadEntry["operatingWindow"] || undefined })} className="field mt-1.5"><option value="">Choose period</option><option value="daylight">During daylight</option><option value="overnight">Mostly overnight</option><option value="mixed">Across day and night</option><option value="demand">Only when needed</option></select></label>{(row.scheduleMode ?? "timer") === "timer" ? <><label className="text-[10px] font-bold">Timer starts<input type="time" value={row.timerStart ?? ""} onChange={(event) => saveTimerTime("timerStart", event.target.value)} className="field mt-1.5"/></label><label className="text-[10px] font-bold">Timer stops<input type="time" value={row.timerEnd ?? ""} onChange={(event) => saveTimerTime("timerEnd", event.target.value)} className="field mt-1.5"/></label><p className="text-[9px] leading-4 text-muted sm:col-span-2">The timer window fills the daily runtime below, including schedules that cross midnight. Equal start and stop times are treated as unresolved; choose continuous for a 24-hour load.</p></> : null}</div> : null}
           {showRuntime ? <div className="mt-3 grid gap-3 rounded-xl border border-line bg-white p-3 sm:grid-cols-2"><label className="text-[10px] font-bold">{workshopRuntime ? "Total use per workday" : `${runtimeOptional ? "Optional: " : ""}Typical total use per day`}<input type="number" min="0" max="24" step="0.5" value={row.runtimeMinutesPerDay === undefined ? "" : row.runtimeMinutesPerDay / 60} onChange={(event) => { const hours = numberValue(event.target.value); saveEntry(key, { runtimeMinutesPerDay: hours === undefined ? undefined : hours * 60 }); }} className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">{runtimeOptional ? "Leave blank when automatic demand varies" : "hours across the whole day · 0.5 = 30 minutes"}</span></label><label className="text-[10px] font-bold">{runtimeOptional ? "Optional: " : ""}Longest continuous run<input type="number" min="0" max={row.runtimeMinutesPerDay || undefined} step="0.5" value={row.longestRunMinutes ?? ""} onChange={(event) => saveEntry(key, { longestRunMinutes: numberValue(event.target.value) })} className={`field mt-1.5 ${invalidRunDuration ? "border-[#c94c38]" : ""}`}/><span className="mt-1 block text-[9px] font-normal text-muted">minutes in one run</span></label>{invalidRunDuration ? <p className="rounded-lg border border-[#edc7bc] bg-[#fff0eb] p-3 text-[10px] font-semibold leading-4 text-[#913e31] sm:col-span-2">The longest single run cannot be longer than the total use for the whole day.</p> : null}<div className="rounded-lg bg-[#eef6fd] p-3 sm:col-span-2"><span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">Runtime-based energy estimate</span><strong className="mt-1 block text-sm">{dailyEnergyKwh === undefined ? runtimeOptional ? "Optional — automatic demand varies" : "Enter rating and daily hours" : `${dailyEnergyKwh} kWh/day`}</strong><span className="mt-1 block text-[9px] leading-4 text-muted">{poolSchedule ? dailyEnergyKwh === undefined && runtimeOptional ? "Wattson will still use the running and startup ratings for inverter checks. This load will remain outside daily-energy and solar sizing until a typical runtime or monitored history is available." : "This daily energy feeds solar and storage sizing. A daylight timer improves the chance of using solar directly, but the design does not assume sunshine will always be available." : "This estimates the tool’s consumption, not the energy required from batteries or a generator. Direct solar may supply some or all of it when production and operation coincide. Running and startup ratings still apply whenever the tool operates."}</span></div></div> : null}
           <label className="mt-3 flex items-center gap-2 text-[11px] font-semibold"><input type="checkbox" checked={row.simultaneous ?? true} onChange={(event) => saveEntry(key, { simultaneous: event.target.checked })} className="size-4 accent-[#23679e]"/> May run with the other selected loads</label>
-          {!["welder", "heat_pump"].includes(baseType) ? <details className="mt-3 rounded-xl border border-line bg-white p-3"><summary className="cursor-pointer text-[10px] font-bold text-brand">I have the manufacturer’s maximum or starting value</summary><label className="mt-3 block text-[10px] font-bold">Starting or maximum input (kW)<input type="number" min="0" step="0.01" value={row.startingBasis === "manufacturer" ? row.startingKw ?? "" : ""} onChange={(event) => saveEntry(key, { startingKw: numberValue(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} className="field mt-1.5"/></label></details> : null}
+          {!["welder", "heat_pump"].includes(baseType) && !compositeSpa ? <details className="mt-3 rounded-xl border border-line bg-white p-3"><summary className="cursor-pointer text-[10px] font-bold text-brand">I have the manufacturer’s maximum or starting value</summary><label className="mt-3 block text-[10px] font-bold">Starting or maximum input (kW)<input type="number" min="0" step="0.01" value={row.startingBasis === "manufacturer" ? row.startingKw ?? "" : ""} onChange={(event) => saveEntry(key, { startingKw: numberValue(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} className="field mt-1.5"/></label></details> : null}
         </article>;
       })}</div>) : <p className="rounded-xl border border-[#efd98e] bg-[#fff9e3] p-4 text-xs leading-5 text-[#765918] md:col-span-2">Select the pool equipment first. Wattson will then show one rating card for each selected item.</p>}
       {selected.includes("saw_tools") ? <button type="button" onClick={addAnotherTool} className="order-[999] flex h-11 items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand md:col-span-2"><Plus size={15}/>Add another tool or appliance</button> : null}
       {question.id === "pool_equipment_ratings" ? <button type="button" onClick={addAnotherPoolEquipment} className="order-[999] flex h-11 items-center justify-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand md:col-span-2"><Plus size={15}/>Add another pump or piece of equipment</button> : null}
     </div>
   </section>;
+}
+
+function PackagedSpaElectricalFields({ row, save }: { row: PoolLoadEntry; save: (changes: Partial<PoolLoadEntry>) => void }) {
+  const inputNumber = (value: string) => value === "" ? undefined : Number(value);
+  const heaterKw = row.resistiveHeaterKw;
+  const pumpKw = row.motorRunningKw;
+  const pumpStartKw = row.motorStartingKw ?? (pumpKw ? Number((pumpKw * 3).toFixed(2)) : undefined);
+  const combinedRunningKw = heaterKw && pumpKw ? Number((heaterKw + pumpKw).toFixed(2)) : undefined;
+  const update = (changes: Partial<PoolLoadEntry>) => {
+    const next = { ...row, ...changes };
+    const runningKw = next.resistiveHeaterKw && next.motorRunningKw
+      ? Number((next.resistiveHeaterKw + next.motorRunningKw).toFixed(2))
+      : undefined;
+    save({ ...changes, runningKw, quantity: next.quantity && next.quantity > 0 ? next.quantity : 1 });
+  };
+  return <div className="mt-4 space-y-3">
+    <div className="grid gap-3 sm:grid-cols-2">
+      <label className="text-[11px] font-bold">Quantity<input type="number" min="1" step="1" value={row.quantity ?? 1} onChange={(event) => update({ quantity: inputNumber(event.target.value) })} className="field mt-1.5"/></label>
+      <label className="text-[11px] font-bold">Resistive heater input<input type="number" min="0" step="0.01" value={heaterKw ?? ""} onChange={(event) => update({ resistiveHeaterKw: inputNumber(event.target.value) })} placeholder="e.g. 2" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW — no motor-start multiplier</span></label>
+      <label className="text-[11px] font-bold">Pump running input<input type="number" min="0" step="0.01" value={pumpKw ?? ""} onChange={(event) => update({ motorRunningKw: inputNumber(event.target.value) })} placeholder="e.g. 1.2" className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW motor input</span></label>
+      <label className="text-[11px] font-bold">Pump starting input <span className="font-normal text-muted">(if known)</span><input type="number" min="0" step="0.01" value={row.motorStartingKw ?? ""} onChange={(event) => update({ motorStartingKw: inputNumber(event.target.value), startingBasis: event.target.value === "" ? "automatic" : "manufacturer" })} placeholder={pumpKw ? String(Number((pumpKw * 3).toFixed(2))) + " estimated" : "From pump data"} className="field mt-1.5"/><span className="mt-1 block text-[9px] font-normal text-muted">kW — otherwise Wattson uses 3× pump running input</span></label>
+    </div>
+    <div className="rounded-xl border border-[#b8d7f1] bg-[#eef6fd] p-3">
+      <span className="text-[9px] font-bold uppercase tracking-[.1em] text-brand">Two separate checks</span>
+      <strong className="mt-1 block text-sm">Pump start: {pumpStartKw === undefined ? "enter pump kW" : pumpStartKw + " kW"} · Running with heater: {combinedRunningKw === undefined ? "enter pump and heater kW" : combinedRunningKw + " kW"}</strong>
+      <span className="mt-1 block text-[9px] leading-4 text-muted">The pump starts before the heater is enabled, so the heater is not added to the motor-start peak. Once flow is established, pump and heater inputs are added for the normal running load.</span>
+    </div>
+  </div>;
 }
 
 function PoolHeatPumpElectricalFields({ row, thermalKw, cop, save }: { row: PoolLoadEntry; thermalKw?: number; cop: number; save: (changes: Partial<PoolLoadEntry>) => void }) {
@@ -916,7 +971,7 @@ function poolLoadRatingsComplete(value: string | number | string[] | undefined, 
     const ratings = JSON.parse(value) as Record<string, PoolLoadEntry>;
     const equipment = (Array.isArray(answers.pool_equipment) ? answers.pool_equipment : [answers.pool_equipment]).filter((item): item is string => typeof item === "string" && item !== "none");
     const heating = (Array.isArray(answers.pool_heating_method) ? answers.pool_heating_method : [answers.pool_heating_method]).filter((item): item is string => typeof item === "string" && ratedPoolHeatingMethods.has(item));
-    const selected = Array.from(new Set([...equipment, ...heating]));
+    const selected = poolRatingKeys(equipment, heating);
     const required = [...selected.map((key) => ratings[key]), ...Object.values(ratings).filter((row) => row.customPoolEquipment === true)];
     return required.length > 0 && required.every((row) => {
       if (!row || Number(row.quantity) <= 0 || Number(row.runningKw) <= 0) return false;
