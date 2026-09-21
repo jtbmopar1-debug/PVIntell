@@ -3,7 +3,7 @@ import { createSystem } from "@/data/cloud-project";
 import { createClient } from "@/lib/supabase/server";
 
 const optionalNumber = z.number().nonnegative().optional();
-const arraySchema = z.object({ id: z.uuid().optional(), name: z.string().trim().min(1).max(80), manufacturer: z.string().trim().max(120).optional(), model: z.string().trim().max(120).optional(), panelType: z.enum(["monofacial", "bifacial", "thin-film", "flexible", "other", "unknown"]), panelCount: z.number().int().positive(), panelWatts: z.number().positive(), strings: z.number().int().positive().optional(), panelsPerString: z.number().int().positive().optional(), vmp: optionalNumber, voc: optionalNumber, imp: optionalNumber, isc: optionalNumber, mount: z.string().trim().max(120), location: z.string().trim().max(200).optional(), tilt: z.number().min(0).max(90).optional(), orientation: z.number().min(0).max(360).optional() });
+const arraySchema = z.object({ id: z.uuid().optional(), name: z.string().trim().min(1).max(80), manufacturer: z.string().trim().max(120).optional(), model: z.string().trim().max(120).optional(), panelType: z.enum(["monofacial", "bifacial", "thin-film", "flexible", "other", "unknown"]), panelCount: z.number().int().positive(), panelWatts: z.number().positive(), strings: z.number().int().positive().optional(), panelsPerString: z.number().int().positive().optional(), vmp: optionalNumber, voc: optionalNumber, imp: optionalNumber, isc: optionalNumber, mount: z.string().trim().min(1).max(120), location: z.string().trim().max(200).optional(), tilt: z.number().min(0).max(90).optional(), orientation: z.number().min(0).max(360).optional() });
 const componentSchema = z.object({ id: z.uuid().optional(), type: z.enum(["inverter", "battery", "generator"]), name: z.string().trim().min(1).max(120), manufacturer: z.string().trim().max(120).optional(), model: z.string().trim().max(120).optional(), quantity: z.number().int().positive().max(100), rating: optionalNumber, batteryKwh: optionalNumber, batteryAh: optionalNumber, capacityInputBasis: z.enum(["kWh", "Ah"]).optional(), batteryType: z.string().trim().max(80).optional(), bmsCompatibility: z.string().trim().max(80).optional(), voltage: optionalNumber, batteryVoltageMin: optionalNumber, batteryVoltageMax: optionalNumber, mpptMin: optionalNumber, mpptMax: optionalNumber, maxPvVoltage: optionalNumber, maxInputCurrent: optionalNumber, notes: z.string().trim().max(2000).optional() });
 const schema = z.object({ systemId: z.string().uuid().optional(), siteId: z.string().min(1), siteName: z.string().trim().max(120).optional(), systemName: z.string().trim().min(1).max(120), projectType: z.enum(["off-grid", "grid-tied", "hybrid"]), arrays: z.array(arraySchema).max(100), components: z.array(componentSchema).max(100), removedArrayIds: z.array(z.uuid()).max(100).default([]), removedComponentIds: z.array(z.uuid()).max(100).default([]), acknowledgeWarnings: z.boolean().default(false), discoveryContext: z.object({ draftId: z.string().uuid().optional(), continueDiscovery: z.boolean().default(false) }).optional() }).refine((value) => value.arrays.length + value.components.length > 0, "Add at least one proposed item.");
 
@@ -84,7 +84,8 @@ export async function POST(request: Request) {
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
   const issues = compatibilityIssues(parsed.data);
-  if (issues.blockers.length) return Response.json({ error: "The proposed equipment has compatibility failures.", blockers: issues.blockers, warnings: issues.warnings }, { status: 422 });
+  if (issues.blockers.length && !parsed.data.discoveryContext?.continueDiscovery) return Response.json({ error: "The proposed equipment has compatibility failures.", blockers: issues.blockers, warnings: issues.warnings }, { status: 422 });
+  if (parsed.data.discoveryContext?.continueDiscovery) issues.warnings = [...new Set([...issues.warnings, ...issues.blockers])];
   let siteId = parsed.data.siteId;
   let createdSiteId: string | undefined;
   let systemId: string | undefined;
@@ -165,7 +166,8 @@ export async function PATCH(request: Request) {
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
   const issues = compatibilityIssues(parsed.data);
-  if (issues.blockers.length) return Response.json({ error: "The proposed equipment has compatibility failures.", blockers: issues.blockers, warnings: issues.warnings }, { status: 422 });
+  if (issues.blockers.length && !parsed.data.discoveryContext?.continueDiscovery) return Response.json({ error: "The proposed equipment has compatibility failures.", blockers: issues.blockers, warnings: issues.warnings }, { status: 422 });
+  if (parsed.data.discoveryContext?.continueDiscovery) issues.warnings = [...new Set([...issues.warnings, ...issues.blockers])];
   const project = await supabase.from("projects").select("id,site_id,settings").eq("id", parsed.data.systemId).eq("owner_id", userId).maybeSingle();
   const settings = (project.data?.settings ?? {}) as Record<string, unknown>;
   if (project.error || !project.data || settings.schematicOrigin !== "structured_proposal_intake") return Response.json({ error: "Proposed plan not found." }, { status: 404 });
