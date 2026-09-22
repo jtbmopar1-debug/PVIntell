@@ -3,7 +3,12 @@ import { Fragment } from "react";
 export function FormattedChatMessage({ content }: { content: string }) {
   const inline = (text: string) => {
     const normalized = text.replace(/^\*\*\*(.+)\*\*$/, "**$1**");
-    return normalized.split(/(\*\*.+?\*\*)/g).filter(Boolean).map((part, index) => part.startsWith("**") && part.endsWith("**") ? <strong key={`${index}:${part}`}>{part.slice(2, -2)}</strong> : <Fragment key={`${index}:${part}`}>{part}</Fragment>);
+    return normalized.split(/(\*\*.+?\*\*|\[[^\]]+\]\([^)]+\))/g).filter(Boolean).map((part, index) => {
+      if (part.startsWith("**") && part.endsWith("**")) return <strong key={`${index}:${part}`}>{part.slice(2, -2)}</strong>;
+      const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      if (link && (link[2].startsWith("/") || /^https:\/\//i.test(link[2]))) return <a key={`${index}:${part}`} href={link[2]} className="font-bold text-brand underline underline-offset-2">{link[1]}</a>;
+      return <Fragment key={`${index}:${part}`}>{part}</Fragment>;
+    });
   };
   return <div className="space-y-2 whitespace-normal">{content.split(/\r?\n/).map((line, index) => {
     const trimmed = line.trim();

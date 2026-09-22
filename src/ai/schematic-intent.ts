@@ -9,11 +9,25 @@ export function requestsSchematicCreation(message: string, priorAssistantMessage
   return directRequest || correction;
 }
 
+export function requestsCreatedSchematicLink(message: string) {
+  return /^(?:can\s+i\s+have\s+the\s+)?(?:link|open(?:\s+it)?|show(?:\s+me)?|take\s+me\s+there)(?:\s+please)?[?.!]*$/i.test(message.trim())
+    || /\b(?:give|send|share|show|post|provide)\b[\s\S]{0,50}\b(?:me\s+)?(?:the\s+)?(?:schematic\s+)?link\b/i.test(message)
+    || /\b(?:open|view|go\s+to|take\s+me\s+to)\b[\s\S]{0,40}\b(?:created|saved|proposed|that|the|my)?\s*schematic\b/i.test(message)
+    || /\b(?:link|page|schematic)\b[\s\S]{0,40}\b(?:does(?:n['’]?t| not) exist|not found|won['’]?t open|is broken|does(?:n['’]?t| not) work)\b/i.test(message);
+}
+
 export function nextNumberedName(prefix: "Site" | "System", names: string[]) {
   const used = new Set(names.map((name) => name.trim().toLocaleLowerCase()));
   let number = 1;
   while (used.has(`${prefix}${number}`.toLocaleLowerCase())) number += 1;
   return `${prefix}${number}`;
+}
+
+export function nextWattsonSchematicName(names: string[]) {
+  const used = new Set(names.map((name) => name.trim().toLocaleLowerCase()));
+  let number = 1;
+  while (used.has(`wattson proposed schematic ${number}`)) number += 1;
+  return `Wattson proposed schematic ${number}`;
 }
 
 export function conceptualPvArrays(text: string) {

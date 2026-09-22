@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conceptualPvArrays, explicitInverterMention, explicitPanelWattage, inverterClassFromEvidence, nextNumberedName, requestedSchematicComponents, requestedSchematicPlan, requestsSchematicCreation } from "./schematic-intent";
+import { conceptualPvArrays, explicitInverterMention, explicitPanelWattage, inverterClassFromEvidence, nextNumberedName, nextWattsonSchematicName, requestedSchematicComponents, requestedSchematicPlan, requestsCreatedSchematicLink, requestsSchematicCreation } from "./schematic-intent";
 
 describe("requestsSchematicCreation", () => {
   it.each([
@@ -17,6 +17,23 @@ describe("requestsSchematicCreation", () => {
 
   it("does not turn an informational mention into a write", () => {
     expect(requestsSchematicCreation("What is a schematic?")).toBe(false);
+  });
+});
+
+describe("requestsCreatedSchematicLink", () => {
+  it.each(["link please", "open it", "show me", "try again and give me the link here please", "can you send me the schematic link?", "open the saved schematic", "that schematic link doesn't exist", "the page is not found"])("recognises a created-schematic navigation request: %s", (message) => {
+    expect(requestsCreatedSchematicLink(message)).toBe(true);
+  });
+
+  it("does not treat an initial build request as link recovery", () => {
+    expect(requestsCreatedSchematicLink("Build a schematic for this system")).toBe(false);
+  });
+});
+
+describe("nextWattsonSchematicName", () => {
+  it("titles Wattson-created schematic projects explicitly and increments them", () => {
+    expect(nextWattsonSchematicName(["System1"])).toBe("Wattson proposed schematic 1");
+    expect(nextWattsonSchematicName(["Wattson proposed schematic 1", "Wattson proposed schematic 3"])).toBe("Wattson proposed schematic 2");
   });
 });
 

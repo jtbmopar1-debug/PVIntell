@@ -12,7 +12,7 @@ import { conversationTitle, userConversationCount, WATTSON_CONVERSATION_LIMIT } 
 import { loadDailyLogContext } from "@/monitoring/daily-log-repository";
 import { createSystem } from "@/data/cloud-project";
 import { registerGalleryImage } from "@/gallery/register";
-import { explicitInverterMention, nextNumberedName, requestedSchematicPlan, requestsSchematicCreation } from "@/ai/schematic-intent";
+import { explicitInverterMention, nextNumberedName, nextWattsonSchematicName, requestedSchematicPlan, requestsCreatedSchematicLink, requestsSchematicCreation } from "@/ai/schematic-intent";
 import {
   conversationStatePromptContext,
   parseWattsonConversationState,
@@ -358,8 +358,33 @@ export async function POST(request: Request) {
   const priorAssistantMessage = priorAssistant?.content;
   const priorStructuredContext = priorAssistant?.structured_context && typeof priorAssistant.structured_context === "object"
     ? priorAssistant.structured_context as Record<string, unknown> : {};
+  const completedSchematic = [...conversationState.completedActions].reverse().find((action) => action.kind === "create_schematic");
+  const linkedSchematicId = completedSchematic?.systemId
+    ?? (typeof priorStructuredContext.schematicId === "string" ? priorStructuredContext.schematicId : undefined)
+    ?? selectedConversation.data?.project_id
+    ?? conversationState.activeSubject?.systemId;
+  if (requestsCreatedSchematicLink(parsed.data.message) && linkedSchematicId) {
+    const linkedProject = await supabase.from("projects").select("id,site_id").eq("id", linkedSchematicId).eq("owner_id", userId).maybeSingle();
+    if (linkedProject.error) return Response.json({ error: linkedProject.error.message, conversationId }, { status: 400 });
+    const actionUrl = linkedProject.data ? `/sites/${linkedProject.data.site_id}/systems/${linkedProject.data.id}/schematic` : undefined;
+    const responseMessage = actionUrl
+      ? `Here it is: [Open schematic](${actionUrl})`
+      : "That schematic is no longer available. The saved system record could not be found, so I have not given you another broken link.";
+    if (linkedProject.data) {
+      const { id: projectId, site_id: projectSiteId } = linkedProject.data;
+      const action = conversationState.completedActions.find((item) => item.kind === "create_schematic" && item.systemId === projectId);
+      if (action) action.result = { ...action.result, actionUrl };
+      else conversationState.completedActions.push({ kind: "create_schematic", revision: conversationState.revision, description: "Existing Wattson-created proposal schematic", siteId: projectSiteId, systemId: projectId, result: { actionUrl } });
+    }
+    conversationState = recordWattsonAssistantTurn(conversationState, responseMessage);
+    const stateSaved = await supabase.from("user_conversations").update({ conversation_state: conversationState }).eq("id", conversationId).eq("owner_id", userId);
+    if (stateSaved.error) return Response.json({ error: stateSaved.error.message, conversationId }, { status: 400 });
+    const structuredContext = { evidenceRevision: conversationState.revision, schematicId: linkedProject.data?.id, actionUrl, actionLabel: actionUrl ? "Open schematic" : undefined };
+    const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: responseMessage, structured_context: structuredContext, response_to_request_id: parsed.data.requestId });
+    if (saved.error) return Response.json({ error: saved.error.message, conversationId }, { status: 400 });
+    return Response.json({ message: responseMessage, actions: [], conversationId, schematicId: linkedProject.data?.id, actionUrl, actionLabel: actionUrl ? "Open schematic" : undefined });
+  }
   if (routeDecision.intent === "schematic" && routeDecision.mode === "execute" && requestsSchematicCreation(parsed.data.message, priorAssistantMessage)) {
-    const completedSchematic = [...conversationState.completedActions].reverse().find((action) => action.kind === "create_schematic");
     const existingSchematicId = completedSchematic?.systemId ?? (typeof priorStructuredContext.schematicId === "string" ? priorStructuredContext.schematicId : undefined);
     const existingSchematicUrl = typeof completedSchematic?.result?.actionUrl === "string"
       ? completedSchematic.result.actionUrl
@@ -396,7 +421,7 @@ export async function POST(request: Request) {
         : undefined;
       createdSystemId = associatedSystemId;
       if (!createdSystemId) {
-        const systemName = nextNumberedName("System", connectedSystems.filter((system) => system.site_id === createdSiteId).map((system) => system.name));
+        const systemName = nextWattsonSchematicName(connectedSystems.filter((system) => system.site_id === createdSiteId).map((system) => system.name));
         createdSystemId = await createSystem(supabase, userId, createdSiteId!, systemName, "off-grid", "Proposed-system schematic created by Wattson; unconfirmed specifications are TBC.");
         createdSystemByRequest = true;
       }

@@ -111,7 +111,7 @@ export default async function SchematicPage({
   const schematicAssets = [...new Map(
     [...fileAssets, ...guideAssets, ...meterAssets].map((asset) => [asset.url, asset]),
   ).values()].sort((a, b) => a.label.localeCompare(b.label));
-  const planningPhase = ["discover", "design"].includes(workspace.project.phase);
+  const planningPhase = ["discover", "design"].includes(workspace.project.phase) && workspace.project.schematicOrigin !== "wattson_proposal";
   if (planningPhase) {
     return <PVIntellWorkspace
       key={`${workspace.project.id}:${workspace.project.updatedAt ?? ""}:schematic`}

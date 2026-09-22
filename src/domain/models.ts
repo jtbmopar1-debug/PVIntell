@@ -371,6 +371,7 @@ export interface CommissioningMeasurement {
 export interface Project {
   id: string;
   siteId?: string;
+  schematicOrigin?: "structured_proposal_intake" | "wattson_proposal" | string;
   updatedAt?: string;
   name: string;
   description: string;

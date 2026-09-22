@@ -396,6 +396,7 @@ export async function loadWorkspace(
   const project: Project = {
     id: row.id,
     siteId: row.site_id,
+    schematicOrigin: typeof settings.schematicOrigin === "string" ? settings.schematicOrigin : undefined,
     updatedAt: row.updated_at,
     name: row.name,
     description: row.description ?? "",
