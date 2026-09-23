@@ -292,7 +292,7 @@ export async function POST(request: Request) {
     return Response.json({ needsReview: true, reviewUrl: `/dashboard?conversation=${conversationId}#wattson` });
   }
 
-  const existingSites = await context.supabase.from("sites").select("id,name").eq("owner_id", context.userId).order("created_at");
+  const existingSites = await context.supabase.from("sites").select("id,name,latitude,longitude,location_confirmed").eq("owner_id", context.userId).order("created_at");
   if (existingSites.error) return Response.json({ error: existingSites.error.message }, { status: 400 });
   const requestedSiteId = typeof answers.site_id === "string" ? answers.site_id : "";
   const requestedSiteName = String(answers.site_name || "").trim();
@@ -307,6 +307,22 @@ export async function POST(request: Request) {
     : undefined);
   let siteId = matchingSite?.id;
   let createdSiteId: string | undefined;
+  if (matchingSite && (!matchingSite.location_confirmed || typeof matchingSite.latitude !== "number" || typeof matchingSite.longitude !== "number")) {
+    const latitude = typeof answers.site_latitude === "number" ? answers.site_latitude : null;
+    const longitude = typeof answers.site_longitude === "number" ? answers.site_longitude : null;
+    if (latitude == null || longitude == null) return Response.json({ error: "Confirm this Site's map pin before building the proposal." }, { status: 400 });
+    let timezone = typeof answers.site_timezone === "string" ? answers.site_timezone : context.profile.timezone || "UTC";
+    try { timezone = tzLookup(latitude, longitude); } catch { /* Retain the geocoder timezone if lookup fails. */ }
+    const updated = await context.supabase.from("sites").update({
+      location: typeof answers.site_location === "string" ? answers.site_location : matchingSite.name,
+      latitude,
+      longitude,
+      timezone,
+      location_source: "search",
+      location_confirmed: true,
+    }).eq("id", matchingSite.id).eq("owner_id", context.userId);
+    if (updated.error) return Response.json({ error: updated.error.message }, { status: 400 });
+  }
   if (!siteId) {
     if (!requestedSiteName) return Response.json({ error: "Enter a name for the new Site." }, { status: 400 });
     const latitude = typeof answers.site_latitude === "number" ? answers.site_latitude : null;

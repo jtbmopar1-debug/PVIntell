@@ -17,6 +17,16 @@ import { useUnitPreferences, type UnitPreferences } from "@/preferences/units";
 const EditableSiteMap = dynamic(() => import("@/components/editable-site-map"), { ssr: false });
 const vehicleBoatCompatibleBuildingTypes = new Set(["vehicle_boat", "cabin_mobile", "pool_spa", "other"]);
 
+type DiscoverySite = {
+  id: string;
+  name: string;
+  location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  timezone: string | null;
+  location_confirmed: boolean | null;
+};
+
 const evTravelLabels: Record<UnitPreferences["distance"], Record<string, string>> = {
   km: {
     short: "Short - about 30 km per day",
@@ -37,7 +47,7 @@ function discoveryQuestionForUnits(question: DiscoveryQuestion, distance: UnitPr
 
 export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestionId, discoveryDraftId, initialDiscoveryConversationId, existingSystemId, proposedEquipment = [], siteDiscoveryId, returnUrl, stageFilter }: {
   profile: OnboardingAnswers;
-  sites: Array<{ id: string; name: string }>;
+  sites: DiscoverySite[];
   initialAnswers: DiscoveryAnswers;
   initialQuestionId?: string;
   discoveryDraftId?: string;
@@ -51,7 +61,11 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
 }) {
   const router = useRouter();
   const { preferences: unitPreferences } = useUnitPreferences();
-  const normalizedInitialAnswers = reconcileDiscoveryDependencies(initialAnswers);
+  const initialSite = sites.find((site) => site.id === initialAnswers.site_id);
+  const hydratedInitialAnswers = initialSite?.location_confirmed && typeof initialSite.latitude === "number" && typeof initialSite.longitude === "number"
+    ? { ...initialAnswers, site_location: initialSite.location ?? initialSite.name, site_latitude: initialSite.latitude, site_longitude: initialSite.longitude, site_timezone: initialSite.timezone ?? "UTC" }
+    : initialAnswers;
+  const normalizedInitialAnswers = reconcileDiscoveryDependencies(hydratedInitialAnswers);
   const [answers, setAnswers] = useState<DiscoveryAnswers>(normalizedInitialAnswers);
   const combinedInitialSetup = !stageFilter && !siteDiscoveryId;
   const questionsFor = useCallback((values: DiscoveryAnswers) => visibleDiscoveryQuestions(values)
@@ -292,7 +306,21 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
             panelAreaDimensions={answers.panel_area_dimensions}
             setAnswer={setAnswer}
             setRelatedAnswer={(key, relatedValue) => setAnswers((current) => ({ ...current, [key]: relatedValue }))}
-            setSite={(siteId, siteName) => setAnswers((current) => ({ ...current, site_id: siteId, site_name: siteName }))}
+            setSite={(siteId, siteName) => setAnswers((current) => {
+              const selected = sites.find((site) => site.id === siteId);
+              const next: DiscoveryAnswers = { ...current, site_id: siteId, site_name: siteName };
+              delete next.site_location;
+              delete next.site_latitude;
+              delete next.site_longitude;
+              delete next.site_timezone;
+              if (selected?.location_confirmed && typeof selected.latitude === "number" && typeof selected.longitude === "number") {
+                next.site_location = selected.location ?? selected.name;
+                next.site_latitude = selected.latitude;
+                next.site_longitude = selected.longitude;
+                next.site_timezone = selected.timezone ?? "UTC";
+              }
+              return next;
+            })}
             setSiteLocation={(location) => setAnswers((current) => ({ ...current, ...location }))}
             onAskWattson={() => openDiscoveryHelp(question)}
           /> : <Review answers={answers} questions={questions} proposedEquipment={proposedEquipment} proposedEquipmentEditHref={existingSystemId && proposedEquipment.length ? `/proposals/new?from=discovery&system=${existingSystemId}` : undefined} onSelectQuestion={returnToQuestion}/>}
@@ -457,7 +485,7 @@ function DailyEnergyUseCard({ question, profile, value, setAnswer, onAskWattson 
   </section>;
 }
 
-function QuestionCard({ question, value, profile, distanceUnit, sites, selectedSiteId, siteName, siteLocationAnswers, panelLocations, panelAreaDimensions, setAnswer, setRelatedAnswer, setSite, setSiteLocation, onAskWattson }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; distanceUnit: UnitPreferences["distance"]; sites: Array<{ id: string; name: string }>; selectedSiteId: string; siteName: string; siteLocationAnswers: DiscoveryAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setRelatedAnswer: (key: string, value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void; setSiteLocation: (location: DiscoveryAnswers) => void; onAskWattson: () => void }) {
+function QuestionCard({ question, value, profile, distanceUnit, sites, selectedSiteId, siteName, siteLocationAnswers, panelLocations, panelAreaDimensions, setAnswer, setRelatedAnswer, setSite, setSiteLocation, onAskWattson }: { question: DiscoveryQuestion; value: string | number | string[] | undefined; profile: OnboardingAnswers; distanceUnit: UnitPreferences["distance"]; sites: DiscoverySite[]; selectedSiteId: string; siteName: string; siteLocationAnswers: DiscoveryAnswers; panelLocations: string[]; panelAreaDimensions: string | number | string[] | undefined; setAnswer: (value: string | number | string[]) => void; setRelatedAnswer: (key: string, value: string | number | string[]) => void; setSite: (siteId: string, siteName: string) => void; setSiteLocation: (location: DiscoveryAnswers) => void; onAskWattson: () => void }) {
   const unknown = value === unknownAnswer;
   const choices = question.type === "choice" || question.type === "multi_choice";
   const needsLocalAuthorityCheck = question.id === "panel_location" && Array.isArray(value) && value.some((item) => ["ground", "fence", "wall_facade", "carport_pergola"].includes(item));
@@ -469,7 +497,7 @@ function QuestionCard({ question, value, profile, distanceUnit, sites, selectedS
     return <SystemSetupQuestionCard sites={sites} selectedSiteId={selectedSiteId} siteName={siteName} defaultRegion={String(profile.location ?? "")} siteLocationAnswers={siteLocationAnswers} value={value} setAnswer={setAnswer} setSite={setSite} setSiteLocation={setSiteLocation} onAskWattson={onAskWattson}/>;
   }
   if (question.id === "site_name" && sites.length > 0) {
-    return <SiteQuestionCard question={question} profile={profile} sites={sites} selectedSiteId={selectedSiteId} value={value} setSite={setSite}/>;
+    return <SiteQuestionCard question={question} profile={profile} sites={sites} selectedSiteId={selectedSiteId} value={value} defaultRegion={String(profile.location ?? "")} siteLocationAnswers={siteLocationAnswers} setSite={setSite} setSiteLocation={setSiteLocation}/>;
   }
   if (question.id === "ev_status") {
     return <EvSetupCard question={question} profile={profile} distanceUnit={distanceUnit} answers={siteLocationAnswers} setAnswer={setAnswer} setRelatedAnswer={setRelatedAnswer} onAskWattson={onAskWattson}/>;
@@ -886,8 +914,7 @@ function guidedQuestionComplete(question: DiscoveryQuestion, answers: DiscoveryA
   if (question.id === "site_name" && context.hasSavedSites && !answers.site_id) return false;
   if (question.id === "system_name" && context.combinedInitialSetup) {
     if (!answers.site_name || (context.hasSavedSites && !answers.site_id)) return false;
-    const createsNewSite = answers.site_id === "__new__" || !context.hasSavedSites;
-    if (createsNewSite && (typeof answers.site_latitude !== "number" || typeof answers.site_longitude !== "number")) return false;
+    if (typeof answers.site_latitude !== "number" || typeof answers.site_longitude !== "number") return false;
   }
   return true;
 }
@@ -1337,7 +1364,7 @@ function NewSiteLocation({ siteName, defaultRegion, initial, onChange }: { siteN
 }
 
 function SystemSetupQuestionCard({ sites, selectedSiteId, siteName, defaultRegion, siteLocationAnswers, value, setAnswer, setSite, setSiteLocation, onAskWattson }: {
-  sites: Array<{ id: string; name: string }>;
+  sites: DiscoverySite[];
   selectedSiteId: string;
   siteName: string;
   defaultRegion: string;
@@ -1366,20 +1393,24 @@ function SystemSetupQuestionCard({ sites, selectedSiteId, siteName, defaultRegio
           {sites.map((site) => { const selected = selectedSiteId === site.id; return <button key={site.id} type="button" onClick={() => setSite(site.id, site.name)} className={`rounded-2xl border p-4 text-left transition ${selected ? "theme-selected-tile border-brand bg-[#edf5fd] ring-2 ring-[#b8d7f1]" : "border-line bg-white hover:border-[#8ab0d2]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">{site.name}</strong>{selected && <Check className="text-brand" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Add this power system to the existing Site.</p></button>; })}
           <button type="button" onClick={() => setSite("__new__", "")} className={`rounded-2xl border p-4 text-left transition ${selectedSiteId === "__new__" ? "theme-new-site-system-tile ring-2 ring-[#9dccad]" : "border-line bg-white hover:border-[#78b58c]"}`}><div className="flex items-start justify-between gap-3"><strong className="text-sm">Create a new Site</strong>{selectedSiteId === "__new__" && <Check className="text-[#236438]" size={16}/>}</div><p className="mt-2 text-[11px] leading-5 text-muted">Use this for a different property or location.</p></button>
         </div> : null}
-        {(!sites.length || selectedSiteId === "__new__") && <><input type="text" value={siteName} onChange={(event) => setSite("__new__", event.target.value)} className="field mt-3" placeholder="Site name, e.g. River Views"/><NewSiteLocation siteName={siteName} defaultRegion={defaultRegion} initial={siteLocationAnswers} onChange={setSiteLocation}/></>}
+        {(!sites.length || selectedSiteId === "__new__") && <input type="text" value={siteName} onChange={(event) => setSite("__new__", event.target.value)} className="field mt-3" placeholder="Site name, e.g. River Views"/>}
+        {selectedSiteId && (selectedSiteId === "__new__" || typeof siteLocationAnswers.site_latitude !== "number" || typeof siteLocationAnswers.site_longitude !== "number") ? <NewSiteLocation siteName={siteName} defaultRegion={defaultRegion} initial={siteLocationAnswers} onChange={setSiteLocation}/> : null}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3"><button type="button" onClick={onAskWattson} className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-white"><Bot size={15}/>Ask Wattson</button><span className="text-[11px] text-muted">Get help choosing clear names or deciding which Site this belongs to.</span></div>
     </div>
   </section>;
 }
 
-function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, setSite }: {
+function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, defaultRegion, siteLocationAnswers, setSite, setSiteLocation }: {
   question: DiscoveryQuestion;
   profile: OnboardingAnswers;
-  sites: Array<{ id: string; name: string }>;
+  sites: DiscoverySite[];
   selectedSiteId: string;
   value: string | number | string[] | undefined;
+  defaultRegion: string;
+  siteLocationAnswers: DiscoveryAnswers;
   setSite: (siteId: string, siteName: string) => void;
+  setSiteLocation: (location: DiscoveryAnswers) => void;
 }) {
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8">
@@ -1405,6 +1436,7 @@ function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, set
         </button>
       </div>
       {selectedSiteId === "__new__" && <input autoFocus type="text" value={String(value ?? "")} onChange={(event) => setSite("__new__", event.target.value)} className="field mt-4" placeholder="Name the new Site, e.g. River Views"/>}
+      {selectedSiteId && (selectedSiteId === "__new__" || typeof siteLocationAnswers.site_latitude !== "number" || typeof siteLocationAnswers.site_longitude !== "number") ? <NewSiteLocation siteName={String(value ?? "")} defaultRegion={defaultRegion} initial={siteLocationAnswers} onChange={setSiteLocation}/> : null}
     </div>
   </section>;
 }

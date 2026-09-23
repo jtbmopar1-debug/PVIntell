@@ -13,7 +13,7 @@ export default async function NewSystemDiscoveryPage({ searchParams }: { searchP
   const profile = await supabase.from("profiles").select("onboarding_status,onboarding_assessment").eq("id", userId).single();
   if (profile.error) throw new Error(profile.error.message);
   if (profile.data.onboarding_status !== "completed") redirect("/onboarding");
-  const sites = await supabase.from("sites").select("id,name").eq("owner_id", userId).order("created_at");
+  const sites = await supabase.from("sites").select("id,name,location,latitude,longitude,timezone,location_confirmed").eq("owner_id", userId).order("created_at");
   if (sites.error) throw new Error(sites.error.message);
   const assessment = (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers & { guidedNewSystem?: { answers?: DiscoveryAnswers; questionId?: string } };
   const { edit, stage, draft, new: startNew } = await searchParams;

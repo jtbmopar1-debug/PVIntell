@@ -20,7 +20,7 @@ export default async function SiteDiscoveryPage({ params, searchParams }: { para
   const [profile, site, sites, discovery] = await Promise.all([
     supabase.from("profiles").select("onboarding_status,onboarding_assessment").eq("id", userId).single(),
     supabase.from("sites").select("id,name").eq("id", id).eq("owner_id", userId).maybeSingle(),
-    supabase.from("sites").select("id,name").eq("owner_id", userId).order("created_at"),
+    supabase.from("sites").select("id,name,location,latitude,longitude,timezone,location_confirmed").eq("owner_id", userId).order("created_at"),
     supabase.from("site_discoveries").select("answers,question_id").eq("site_id", id).eq("owner_id", userId).maybeSingle(),
   ]);
   if (profile.error) throw new Error(profile.error.message);
