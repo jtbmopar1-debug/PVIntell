@@ -204,6 +204,12 @@ export function sequentialDiscoveryStageProgress(questions: DiscoveryQuestion[],
 
 export const newSystemQuestions: DiscoveryQuestion[] = [
   {
+    id: "site_name", stage: "discovery", title: "Where will this power system be located?",
+    noviceHelp: "Every discovery belongs to a Site. Name the property or location and confirm its map pin before describing the system or equipment.",
+    technicalHelp: "The confirmed Site coordinates control solar resource, weather, timezone and jurisdiction. They must be established before system discovery begins.",
+    type: "text",
+  },
+  {
     id: "existing_system_status", stage: "discovery", title: "Is a system or part-system installed at this Site?",
     noviceHelp: "Choose Yes when any solar, battery or related equipment is physically installed, even when it is incomplete or you know very little about it.",
     technicalHelp: "Installed and partly installed equipment establishes an as-built baseline. The next question records the user’s knowledge separately from the physical state of the system.",

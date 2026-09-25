@@ -69,12 +69,10 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const [answers, setAnswers] = useState<DiscoveryAnswers>(normalizedInitialAnswers);
   const combinedInitialSetup = !stageFilter && !siteDiscoveryId;
   const questionsFor = useCallback((values: DiscoveryAnswers) => visibleDiscoveryQuestions(values)
-    .filter((item) => (item.id !== "existing_system_status" || (combinedInitialSetup && !existingSystemId)) && (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "site_name"))
+    .filter((item) => (item.id !== "existing_system_status" || (combinedInitialSetup && !existingSystemId)) && (!stageFilter || item.stage === stageFilter) && !(siteDiscoveryId && item.id === "site_name") && !(combinedInitialSetup && item.id === "system_name"))
     .map((question) => discoveryQuestionForUnits(question, unitPreferences.distance)), [combinedInitialSetup, existingSystemId, siteDiscoveryId, stageFilter, unitPreferences.distance]);
   const initialQuestions = questionsFor(normalizedInitialAnswers);
   const [index, setIndex] = useState(() => {
-    const gateIndex = initialQuestions.findIndex((question) => question.id === "existing_system_status" && !discoveryAnswerComplete(question.id, normalizedInitialAnswers[question.id], normalizedInitialAnswers));
-    if (gateIndex >= 0) return gateIndex;
     const completionContext = { combinedInitialSetup, hasSavedSites: sites.length > 0 };
     const firstIncompleteIndex = initialQuestions.findIndex((question) => !guidedQuestionComplete(question, normalizedInitialAnswers, completionContext));
     const requestedIndex = initialQuestions.findIndex((question) => question.id === initialQuestionId);
@@ -132,6 +130,9 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Could not save discovery");
+      const savedAnswers = body.answers && typeof body.answers === "object" ? body.answers as DiscoveryAnswers : nextAnswers;
+      if (savedAnswers !== nextAnswers) setAnswers(savedAnswers);
+      return savedAnswers;
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Could not save discovery"); }
     finally { setSaving(false); }
   }
@@ -209,6 +210,13 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
 
   async function next() {
     if (!question) return;
+    if (question.id === "site_name") {
+      const savedAnswers = await save(answers, "existing_system_status");
+      if (!savedAnswers) return;
+      const nextQuestions = questionsFor(savedAnswers);
+      setIndex(Math.max(0, nextQuestions.findIndex((item) => item.id === "existing_system_status")));
+      return;
+    }
     const nextQuestions = questionsFor(answers);
     if (question.id === "installed_system_knowledge" && ["know_well", "know_main"].includes(String(answers.installed_system_knowledge))) {
       await save(answers, question.id);
@@ -221,6 +229,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
       const selectedSiteId = siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined);
       const proposalQuery = new URLSearchParams({ from: "discovery" });
       if (selectedSiteId) proposalQuery.set("site", selectedSiteId);
+      if (typeof answers.system_name === "string") proposalQuery.set("name", answers.system_name);
       if (discoveryDraftId) proposalQuery.set("draft", discoveryDraftId);
       if (existingSystemId) proposalQuery.set("system", existingSystemId);
       router.push(`/proposals/new?${proposalQuery.toString()}`);
@@ -493,11 +502,8 @@ function QuestionCard({ question, value, profile, distanceUnit, sites, selectedS
   const noteIndex = helpText.indexOf("Note:");
   const helpIntroduction = noteIndex >= 0 ? helpText.slice(0, noteIndex).trim() : helpText;
   const helpNote = noteIndex >= 0 ? helpText.slice(noteIndex).trim() : "";
-  if (question.id === "system_name") {
-    return <SystemSetupQuestionCard sites={sites} selectedSiteId={selectedSiteId} siteName={siteName} defaultRegion={String(profile.location ?? "")} siteLocationAnswers={siteLocationAnswers} value={value} setAnswer={setAnswer} setSite={setSite} setSiteLocation={setSiteLocation} onAskWattson={onAskWattson}/>;
-  }
-  if (question.id === "site_name" && sites.length > 0) {
-    return <SiteQuestionCard question={question} profile={profile} sites={sites} selectedSiteId={selectedSiteId} value={value} defaultRegion={String(profile.location ?? "")} siteLocationAnswers={siteLocationAnswers} setSite={setSite} setSiteLocation={setSiteLocation}/>;
+  if (question.id === "site_name") {
+    return <SiteQuestionCard question={question} profile={profile} sites={sites} selectedSiteId={selectedSiteId} value={value} systemName={String(siteLocationAnswers.system_name ?? "")} defaultRegion={String(profile.location ?? "")} siteLocationAnswers={siteLocationAnswers} setSite={setSite} setSystemName={(name) => setRelatedAnswer("system_name", name)} setSiteLocation={setSiteLocation}/>;
   }
   if (question.id === "ev_status") {
     return <EvSetupCard question={question} profile={profile} distanceUnit={distanceUnit} answers={siteLocationAnswers} setAnswer={setAnswer} setRelatedAnswer={setRelatedAnswer} onAskWattson={onAskWattson}/>;
@@ -911,10 +917,13 @@ type PanelObstruction = { id: string; areaId: string; kind: string; lengthM: str
 
 function guidedQuestionComplete(question: DiscoveryQuestion, answers: DiscoveryAnswers, context: { combinedInitialSetup: boolean; hasSavedSites: boolean }) {
   if (!discoveryAnswerComplete(question.id, answers[question.id], answers)) return false;
-  if (question.id === "site_name" && context.hasSavedSites && !answers.site_id) return false;
-  if (question.id === "system_name" && context.combinedInitialSetup) {
-    if (!answers.site_name || (context.hasSavedSites && !answers.site_id)) return false;
+  if (question.id === "site_name") {
+    if (!answers.site_id) return false;
+    if (!String(answers.system_name ?? "").trim()) return false;
     if (typeof answers.site_latitude !== "number" || typeof answers.site_longitude !== "number") return false;
+  }
+  if (question.id === "system_name" && context.combinedInitialSetup) {
+    if (!answers.site_id) return false;
   }
   return true;
 }
@@ -1401,15 +1410,17 @@ function SystemSetupQuestionCard({ sites, selectedSiteId, siteName, defaultRegio
   </section>;
 }
 
-function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, defaultRegion, siteLocationAnswers, setSite, setSiteLocation }: {
+function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, systemName, defaultRegion, siteLocationAnswers, setSite, setSystemName, setSiteLocation }: {
   question: DiscoveryQuestion;
   profile: OnboardingAnswers;
   sites: DiscoverySite[];
   selectedSiteId: string;
   value: string | number | string[] | undefined;
+  systemName: string;
   defaultRegion: string;
   siteLocationAnswers: DiscoveryAnswers;
   setSite: (siteId: string, siteName: string) => void;
+  setSystemName: (name: string) => void;
   setSiteLocation: (location: DiscoveryAnswers) => void;
 }) {
   return <section className="card overflow-hidden bg-white">
@@ -1422,6 +1433,8 @@ function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, def
       </div>
     </div>
     <div className="p-6 md:p-8">
+      <label className="mb-6 block text-xs font-bold"><span>Power system name<span className="ml-1 text-[#b63f2d]" aria-hidden="true">*</span></span><span className="mt-1 block font-normal leading-5 text-muted">For example, House solar, Main home or Workshop.</span><input type="text" value={systemName} onChange={(event) => setSystemName(event.target.value)} className="field mt-2" placeholder="Power system name"/></label>
+      <div className="mb-3 text-xs font-bold">Choose or create its Site</div>
       <div className="grid gap-3 sm:grid-cols-2">
         {sites.map((site) => {
           const selected = selectedSiteId === site.id;

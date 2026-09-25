@@ -157,7 +157,27 @@ export async function PUT(request: Request) {
   if (!parsed.success) return Response.json({ error: "Invalid discovery draft" }, { status: 400 });
   const context = await accountContext();
   if ("error" in context) return context.error;
-  const answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers);
+  let answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers);
+  if (!parsed.data.projectId && answers.site_id === "__new__") {
+    const siteName = String(answers.site_name ?? "").trim();
+    const latitude = typeof answers.site_latitude === "number" ? answers.site_latitude : null;
+    const longitude = typeof answers.site_longitude === "number" ? answers.site_longitude : null;
+    if (!siteName || latitude == null || longitude == null) return Response.json({ error: "Name the Site and confirm its map pin before continuing." }, { status: 400 });
+    let timezone = typeof answers.site_timezone === "string" ? answers.site_timezone : context.profile.timezone || "UTC";
+    try { timezone = tzLookup(latitude, longitude); } catch { /* Retain the geocoder timezone if lookup fails. */ }
+    const created = await context.supabase.from("sites").insert({
+      owner_id: context.userId,
+      name: siteName,
+      location: typeof answers.site_location === "string" ? answers.site_location : siteName,
+      latitude,
+      longitude,
+      timezone,
+      location_source: "search",
+      location_confirmed: true,
+    }).select("id").single();
+    if (created.error) return Response.json({ error: created.error.message }, { status: 400 });
+    answers = { ...answers, site_id: created.data.id };
+  }
   if (parsed.data.projectId) {
     const project = await context.supabase.from("projects").select("id").eq("id", parsed.data.projectId).eq("owner_id", context.userId).maybeSingle();
     if (project.error || !project.data) return Response.json({ error: project.error?.message ?? "System not found." }, { status: 404 });
@@ -180,7 +200,7 @@ export async function PUT(request: Request) {
       answers,
     }, { onConflict: "id" });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-    return Response.json({ saved: true, draftId: parsed.data.draftId });
+    return Response.json({ saved: true, draftId: parsed.data.draftId, answers });
   }
   const assessment = (context.profile.onboarding_assessment ?? {}) as Record<string, unknown>;
   assessment.guidedNewSystem = {
@@ -192,7 +212,7 @@ export async function PUT(request: Request) {
   };
   const saved = await context.supabase.from("profiles").update({ onboarding_assessment: assessment }).eq("id", context.userId);
   if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-  return Response.json({ saved: true });
+  return Response.json({ saved: true, answers });
 }
 
 export async function PATCH(request: Request) {

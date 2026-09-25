@@ -153,7 +153,7 @@ export async function POST(request: Request) {
         const assessment = (profile.data.onboarding_assessment ?? {}) as { guidedNewSystem?: { answers?: Record<string, unknown> } };
         discoveryAnswers = assessment.guidedNewSystem?.answers ?? {};
       }
-      const questionnaire = await supabase.from("questionnaire_responses").upsert({ project_id: systemId, template_key: "guided_new_system", template_version: 1, status: "draft", answers: { ...mergeDiscoveryEquipmentAnswers(discoveryAnswers, parsed.data), existing_proposal_status: "yes", system_name: parsed.data.systemName } }, { onConflict: "project_id,template_key" });
+      const questionnaire = await supabase.from("questionnaire_responses").upsert({ project_id: systemId, template_key: "guided_new_system", template_version: 1, status: "draft", answers: { ...mergeDiscoveryEquipmentAnswers(discoveryAnswers, parsed.data), existing_proposal_status: "yes" } }, { onConflict: "project_id,template_key" });
       if (questionnaire.error) throw questionnaire.error;
       if (conversationId) {
         const linkedConversation = await supabase.from("user_conversations").update({ site_id: siteId, project_id: systemId }).eq("id", conversationId).eq("owner_id", userId);
