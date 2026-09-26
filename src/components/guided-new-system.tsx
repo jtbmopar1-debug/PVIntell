@@ -101,10 +101,17 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const incompleteQuestionIds = new Set(incompleteQuestions.map((item) => item.id));
   const answered = questions.length - incompleteQuestions.length;
   const currentAnswerComplete = question ? !incompleteQuestionIds.has(question.id) : true;
+  const siteSetupComplete = Boolean(
+    String(answers.system_name ?? "").trim()
+    && String(answers.site_name ?? "").trim()
+    && answers.site_id
+    && typeof answers.site_latitude === "number"
+    && typeof answers.site_longitude === "number"
+  );
   // Returning to the review is a safe save-and-navigate action. It must not
   // share the strict completion gate used to advance the guided flow: the
   // review page is where an incomplete answer is visibly flagged for return.
-  const canLeaveCurrentQuestion = returningToReview || currentAnswerComplete;
+  const canLeaveCurrentQuestion = returningToReview || (question?.id === "site_name" ? siteSetupComplete : currentAnswerComplete);
   const completedQuestionIds = new Set(questions.filter((item) => !incompleteQuestionIds.has(item.id)).map((item) => item.id));
   const stageProgress = sequentialDiscoveryStageProgress(questions, completedQuestionIds);
 
@@ -335,7 +342,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
           /> : <Review answers={answers} questions={questions} proposedEquipment={proposedEquipment} proposedEquipmentEditHref={existingSystemId && proposedEquipment.length ? `/proposals/new?from=discovery&system=${existingSystemId}` : undefined} onSelectQuestion={returnToQuestion}/>}
           {siteDiscoveryId && <div className="mt-4 rounded-xl border border-[#f1ce71] bg-[#fff9df] p-3 text-xs leading-5 text-[#725800]">This is the complete brief for this Site, including its proposed system. Saving changes flags every proposed design at this Site for review; nothing is silently overwritten.</div>}
           {error && <div className="mt-4 rounded-xl border border-[#efb6a7] bg-[#fff1ed] p-3 text-xs text-[#9b3f2c]">{error}</div>}
-          <div className="mt-5 flex items-center justify-between gap-3"><button type="button" onClick={() => returningToReview ? (setReturningToReview(false), setIndex(questions.length)) : void back()} disabled={(!returningToReview && index===0) || saving} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold disabled:opacity-40"><ArrowLeft size={15}/>{returningToReview ? "Back to review" : "Back"}</button>{reviewing?<button type="button" onClick={() => incompleteQuestions.length ? returnToQuestion(incompleteQuestions[0].id) : void complete()} disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{incompleteQuestions.length ? <CircleHelp size={16}/> : null}{incompleteQuestions.length ? `Complete ${incompleteQuestions.length} missing answer${incompleteQuestions.length === 1 ? "" : "s"}` : "Save and build proposal"}</button>:question?<button type="button" onClick={() => void next()} disabled={!canLeaveCurrentQuestion || (question.id==="site_name" && sites.length>0 && !answers.site_id) || (question.id==="system_name" && combinedInitialSetup && (!answers.site_name || (sites.length>0 && !answers.site_id))) || saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{returningToReview ? "Save answer and return to review" : "Continue"}<ArrowRight size={15}/></button>:null}</div>
+          <div className="mt-5 flex items-center justify-between gap-3"><button type="button" onClick={() => returningToReview ? (setReturningToReview(false), setIndex(questions.length)) : void back()} disabled={(!returningToReview && index===0) || saving} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold disabled:opacity-40"><ArrowLeft size={15}/>{returningToReview ? "Back to review" : "Back"}</button>{reviewing?<button type="button" onClick={() => incompleteQuestions.length ? returnToQuestion(incompleteQuestions[0].id) : void complete()} disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{incompleteQuestions.length ? <CircleHelp size={16}/> : null}{incompleteQuestions.length ? `Complete ${incompleteQuestions.length} missing answer${incompleteQuestions.length === 1 ? "" : "s"}` : "Save and build proposal"}</button>:question?<button type="button" onClick={() => void next()} disabled={!canLeaveCurrentQuestion || saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{returningToReview ? "Save answer and return to review" : "Continue"}<ArrowRight size={15}/></button>:null}</div>
         </main>
       </div>
     </div>
@@ -1423,6 +1430,12 @@ function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, sys
   setSystemName: (name: string) => void;
   setSiteLocation: (location: DiscoveryAnswers) => void;
 }) {
+  const missing = [
+    !systemName.trim() ? "enter a power system name" : "",
+    !selectedSiteId ? "choose or create a Site" : "",
+    selectedSiteId === "__new__" && !String(value ?? "").trim() ? "enter a Site name" : "",
+    selectedSiteId && (typeof siteLocationAnswers.site_latitude !== "number" || typeof siteLocationAnswers.site_longitude !== "number") ? "choose a location from the search results" : "",
+  ].filter(Boolean);
   return <section className="card overflow-hidden bg-white">
     <div className="border-b border-line bg-[linear-gradient(110deg,#eef5fc,#fff8d9)] p-6 md:p-8">
       <div className="eyebrow">{question.stage}</div>
@@ -1450,6 +1463,10 @@ function SiteQuestionCard({ question, profile, sites, selectedSiteId, value, sys
       </div>
       {selectedSiteId === "__new__" && <input autoFocus type="text" value={String(value ?? "")} onChange={(event) => setSite("__new__", event.target.value)} className="field mt-4" placeholder="Name the new Site, e.g. River Views"/>}
       {selectedSiteId && (selectedSiteId === "__new__" || typeof siteLocationAnswers.site_latitude !== "number" || typeof siteLocationAnswers.site_longitude !== "number") ? <NewSiteLocation siteName={String(value ?? "")} defaultRegion={defaultRegion} initial={siteLocationAnswers} onChange={setSiteLocation}/> : null}
+      <div className={`mt-5 rounded-xl border px-4 py-3 text-xs leading-5 ${missing.length ? "border-[#e5c45e] bg-[#fff8d8] text-[#725800]" : "border-[#9bd2ad] bg-[#f2fbf5] text-[#17603b]"}`}>
+        <strong>{missing.length ? "Before you can continue:" : "Ready to continue"}</strong>
+        {missing.length ? <ul className="mt-1 list-disc pl-5">{missing.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="mt-1">The system name, Site and confirmed map pin are recorded.</p>}
+      </div>
     </div>
   </section>;
 }
