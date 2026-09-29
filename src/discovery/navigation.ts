@@ -1,4 +1,4 @@
-import type { DiscoveryQuestion } from "./new-system";
+import { visibleDiscoveryQuestions, type DiscoveryAnswers, type DiscoveryQuestion } from "./new-system";
 
 export function nextVisibleQuestionId(questions: DiscoveryQuestion[], currentQuestionId: string) {
   const currentIndex = questions.findIndex((question) => question.id === currentQuestionId);
@@ -24,4 +24,8 @@ export function proposalIntakeDiscoveryHrefs(systemId?: string, draftId?: string
     previousQuestionHref: discoveryHref("existing_proposal_status"),
     discoveryBeginningHref: discoveryHref("site_name"),
   };
+}
+
+export function questionAfterProposalIntake(answers: DiscoveryAnswers) {
+  return nextVisibleQuestionId(visibleDiscoveryQuestions(answers), "existing_proposal_status");
 }

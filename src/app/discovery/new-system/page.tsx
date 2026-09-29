@@ -27,6 +27,7 @@ export default async function NewSystemDiscoveryPage({ searchParams }: { searchP
   if (edit) {
     const project = await supabase.from("projects").select("id,site_id,name,settings").eq("id", edit).eq("owner_id", userId).maybeSingle();
     if (!project.data) redirect("/dashboard");
+    const selectedProject = project.data;
     const [questionnaire, arrays, components, conversations] = await Promise.all([
       supabase.from("questionnaire_responses").select("answers,question_id").eq("project_id", edit).eq("template_key", "guided_new_system").maybeSingle(),
       supabase.from("pv_arrays").select("id,name,manufacturer,panel_model,panel_count,panel_watts").eq("project_id", edit),
@@ -34,12 +35,17 @@ export default async function NewSystemDiscoveryPage({ searchParams }: { searchP
       supabase.from("user_conversations").select("id").eq("project_id", edit).eq("owner_id", userId).order("updated_at", { ascending: false }),
     ]);
     if (questionnaire.error || arrays.error || components.error || conversations.error) throw new Error(questionnaire.error?.message ?? arrays.error?.message ?? components.error?.message ?? conversations.error?.message);
-    editAnswers = (questionnaire.data?.answers ?? {}) as DiscoveryAnswers;
+    const projectSite = (sites.data ?? []).find((site) => site.id === selectedProject.site_id);
+    editAnswers = {
+      ...((questionnaire.data?.answers ?? {}) as DiscoveryAnswers),
+      site_id: selectedProject.site_id,
+      site_name: projectSite?.name ?? String(((questionnaire.data?.answers ?? {}) as DiscoveryAnswers).site_name ?? ""),
+    };
     draftQuestionId = questionnaire.data?.question_id ?? undefined;
-    const settings = (project.data.settings ?? {}) as Record<string, unknown>;
+    const settings = (selectedProject.settings ?? {}) as Record<string, unknown>;
     if (settings.workflowOrigin === "discovery" && settings.schematicOrigin === "structured_proposal_intake") {
       const legacyAnswers = assessment.guidedNewSystem?.answers;
-      if (legacyAnswers?.existing_proposal_status === "yes" && String(legacyAnswers.system_name ?? "").trim() === project.data.name) {
+      if (legacyAnswers?.existing_proposal_status === "yes" && String(legacyAnswers.system_name ?? "").trim() === selectedProject.name) {
         const sharedMatches = Object.keys(legacyAnswers).filter((key) => editAnswers?.[key] !== undefined && JSON.stringify(editAnswers[key]) === JSON.stringify(legacyAnswers[key])).length;
         if (sharedMatches >= 3) {
           editAnswers = { ...editAnswers, ...legacyAnswers };
@@ -65,8 +71,7 @@ export default async function NewSystemDiscoveryPage({ searchParams }: { searchP
       if (messages.error) throw new Error(messages.error.message);
       draftConversationId = (messages.data ?? []).find((message) => message.structured_context?.kind === "discovery_help" || message.structured_context?.kind === "discovery_topic")?.conversation_id;
     }
-    if (Array.isArray(editAnswers.proposal_intake_equipment) && editAnswers.site_id && !editAnswers.site_name) delete editAnswers.site_id;
-    returnUrl = `/sites/${project.data.site_id}/systems/${project.data.id}`;
+    returnUrl = `/sites/${selectedProject.site_id}/systems/${selectedProject.id}`;
   }
   if (draft && !edit) {
     const savedDraft = await supabase.from("discovery_drafts").select("answers,question_id,conversation_id").eq("id", draft).eq("owner_id", userId).maybeSingle();

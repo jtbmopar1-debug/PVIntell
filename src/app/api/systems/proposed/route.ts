@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createSystem } from "@/data/cloud-project";
+import { questionAfterProposalIntake } from "@/discovery/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 const optionalNumber = z.number().nonnegative().optional();
@@ -153,7 +154,8 @@ export async function POST(request: Request) {
         const assessment = (profile.data.onboarding_assessment ?? {}) as { guidedNewSystem?: { answers?: Record<string, unknown> } };
         discoveryAnswers = assessment.guidedNewSystem?.answers ?? {};
       }
-      const questionnaire = await supabase.from("questionnaire_responses").upsert({ project_id: systemId, template_key: "guided_new_system", template_version: 1, status: "draft", answers: { ...mergeDiscoveryEquipmentAnswers(discoveryAnswers, parsed.data), existing_proposal_status: "yes" } }, { onConflict: "project_id,template_key" });
+      const questionnaireAnswers = { ...mergeDiscoveryEquipmentAnswers(discoveryAnswers, parsed.data), existing_proposal_status: "yes" };
+      const questionnaire = await supabase.from("questionnaire_responses").upsert({ project_id: systemId, template_key: "guided_new_system", template_version: 1, status: "draft", question_id: questionAfterProposalIntake(questionnaireAnswers), answers: questionnaireAnswers }, { onConflict: "project_id,template_key" });
       if (questionnaire.error) throw questionnaire.error;
       if (conversationId) {
         const linkedConversation = await supabase.from("user_conversations").update({ site_id: siteId, project_id: systemId }).eq("id", conversationId).eq("owner_id", userId);
@@ -203,7 +205,8 @@ export async function PATCH(request: Request) {
     const questionnaire = await supabase.from("questionnaire_responses").select("answers").eq("project_id", parsed.data.systemId).eq("template_key", "guided_new_system").maybeSingle();
     if (questionnaire.error) return Response.json({ error: questionnaire.error.message }, { status: 400 });
     const currentAnswers = (questionnaire.data?.answers ?? {}) as Record<string, unknown>;
-    const savedAnswers = await supabase.from("questionnaire_responses").upsert({ project_id: parsed.data.systemId, template_key: "guided_new_system", template_version: 1, status: "draft", answers: mergeDiscoveryEquipmentAnswers(currentAnswers, parsed.data) }, { onConflict: "project_id,template_key" });
+    const nextAnswers = mergeDiscoveryEquipmentAnswers(currentAnswers, parsed.data);
+    const savedAnswers = await supabase.from("questionnaire_responses").upsert({ project_id: parsed.data.systemId, template_key: "guided_new_system", template_version: 1, status: "draft", question_id: questionAfterProposalIntake(nextAnswers), answers: nextAnswers }, { onConflict: "project_id,template_key" });
     if (savedAnswers.error) return Response.json({ error: savedAnswers.error.message }, { status: 400 });
   }
   if (parsed.data.removedArrayIds.length) await supabase.from("pv_arrays").delete().eq("project_id", parsed.data.systemId).in("id", parsed.data.removedArrayIds);

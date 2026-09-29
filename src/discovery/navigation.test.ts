@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { visibleDiscoveryQuestions } from "./new-system";
-import { nextVisibleQuestionId, previousVisibleQuestionId, proposalIntakeDiscoveryHrefs, routesToInstalledSystemCapture } from "./navigation";
+import { nextVisibleQuestionId, previousVisibleQuestionId, proposalIntakeDiscoveryHrefs, questionAfterProposalIntake, routesToInstalledSystemCapture } from "./navigation";
 
 describe("discovery navigation", () => {
   it("moves forward and back by visible question id", () => {
@@ -32,5 +32,16 @@ describe("discovery navigation", () => {
       previousQuestionHref: "/discovery/new-system?draft=draft-1&question=existing_proposal_status",
       discoveryBeginningHref: "/discovery/new-system?draft=draft-1&question=site_name",
     });
+  });
+
+  it("resumes after the panels-or-parts question when yellow intake is saved", () => {
+    expect(questionAfterProposalIntake({
+      site_name: "Workshop",
+      system_name: "Workshop solar",
+      site_id: "site-1",
+      existing_system_status: "none",
+      existing_proposal_status: "yes",
+      proposal_intake_equipment: ["panels", "inverter", "battery", "generator"],
+    })).toBe("system_name");
   });
 });

@@ -5,6 +5,7 @@ import { createSystem } from "@/data/cloud-project";
 import { discoveryQuestionComplete } from "@/discovery/completion";
 import { discoveryProjectType, newSystemQuestions, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers } from "@/discovery/new-system";
 import { reconcileDiscoveryDependencies } from "@/discovery/dependencies";
+import { confirmedDiscoverySiteLocation } from "@/discovery/site-location";
 import { invalidateProposalAfterDiscovery } from "@/design/invalidate-proposal";
 import { deterministicProposalActions } from "@/design/proposal-action";
 import { refreshProjectSolarResource } from "@/design/refresh-solar-resource";
@@ -239,6 +240,16 @@ export async function PATCH(request: Request) {
   const project = await context.supabase.from("projects").select("id,site_id").eq("id", parsed.data.projectId).eq("owner_id", context.userId).maybeSingle();
   if (project.error || !project.data) return Response.json({ error: "Power system not found." }, { status: 404 });
   const answers = reconcileDiscoveryDependencies(parsed.data.answers as DiscoveryAnswers);
+  const missingAnswers = visibleDiscoveryQuestions(answers)
+    .filter((question) => !["existing_system_status", "system_name"].includes(question.id))
+    .filter((question) => !discoveryQuestionComplete(question, answers, { combinedInitialSetup: true }));
+  if (missingAnswers.length) return Response.json({ error: `Complete all discovery questions before review. First missing answer: ${missingAnswers[0].title}`, questionId: missingAnswers[0].id }, { status: 400 });
+  const siteLocation = confirmedDiscoverySiteLocation(answers, project.data.site_id, context.profile.timezone || "UTC");
+  if (!siteLocation.ok) return Response.json({ error: siteLocation.error }, { status: 400 });
+  let timezone = siteLocation.update.timezone;
+  try { timezone = tzLookup(siteLocation.update.latitude, siteLocation.update.longitude); } catch { /* Retain the geocoder timezone if lookup fails. */ }
+  const updatedSite = await context.supabase.from("sites").update({ ...siteLocation.update, timezone }).eq("id", project.data.site_id).eq("owner_id", context.userId);
+  if (updatedSite.error) return Response.json({ error: updatedSite.error.message }, { status: 400 });
   try {
     await refreshProjectSolarResource(context.supabase, context.userId, project.data.id, project.data.site_id, discoveryProjectType(answers) === "off-grid");
   } catch (problem) {
