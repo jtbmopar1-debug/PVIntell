@@ -212,7 +212,7 @@ function ComponentFields({ component, update }: { component: ProposedComponent; 
       <Field label="Nominal battery voltage (V DC)" required><input type="number" min="0" value={component.voltage ?? ""} onChange={(e) => updateVoltage(e.target.value)} className="field"/></Field>
       <BatteryCapacityFields component={component} update={update}/>
     </> : <>
-      <Field label={component.type === "inverter" ? "Continuous rating (kW)" : "Continuous rating (W)"} required><input type="number" step="any" min="0" value={component.rating ?? ""} onChange={(e) => update({ rating: numberValue(e.target.value) })} className="field"/></Field>
+      <Field label="Continuous rating (kW)" required><input type="number" step="any" min="0" value={component.rating ?? ""} onChange={(e) => update({ rating: numberValue(e.target.value) })} className="field"/></Field>
       <Field label="AC output voltage (V)" required><input type="number" min="0" value={component.voltage ?? ""} onChange={(e) => updateVoltage(e.target.value)} className="field"/></Field>
     </>}
     {component.type === "battery" ? <>

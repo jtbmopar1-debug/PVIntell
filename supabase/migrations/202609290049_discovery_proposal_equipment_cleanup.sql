@@ -1,6 +1,6 @@
--- Removing proposal-intake equipment must also remove the saved connection
--- records that point at it. The refs are text rather than foreign keys, so the
--- database cannot cascade this cleanup automatically.
+-- Leaving proposal intake means discarding that proposed design as one
+-- user-confirmed operation. Connections use text refs rather than foreign keys,
+-- so the database cannot cascade this cleanup automatically.
 create or replace function public.save_discovery_without_proposed_equipment(
   target_project_id uuid,
   next_answers jsonb,
@@ -12,40 +12,36 @@ security invoker
 set search_path = ''
 as $$
 begin
-  if not public.owns_project(target_project_id) then
+  if not exists (
+    select 1
+    from public.projects project
+    where project.id = target_project_id
+      and project.owner_id = (select auth.uid())
+      and project.phase in ('discover', 'design')
+      and project.settings->>'workflowOrigin' = 'discovery'
+      and project.settings->>'schematicOrigin' = 'structured_proposal_intake'
+  ) then
     raise exception 'Power system not found';
   end if;
 
-  delete from public.system_connections connection
-  where connection.project_id = target_project_id
-    and (
-      exists (
-        select 1
-        from public.pv_arrays array_record
-        where array_record.project_id = target_project_id
-          and (
-            connection.source_ref = 'pv:' || array_record.id::text
-            or connection.target_ref = 'pv:' || array_record.id::text
-          )
-      )
-      or exists (
-        select 1
-        from public.system_components component
-        where component.project_id = target_project_id
-          and component.type in ('inverter', 'battery', 'generator')
-          and (
-            connection.source_ref = 'component:' || component.id::text
-            or connection.target_ref = 'component:' || component.id::text
-          )
-      )
-    );
+  -- Every connection in this guarded workspace belongs to the proposal being
+  -- discarded, including links between generated protection and board nodes.
+  delete from public.system_connections
+  where project_id = target_project_id;
 
   delete from public.pv_arrays
   where project_id = target_project_id;
 
   delete from public.system_components
-  where project_id = target_project_id
-    and type in ('inverter', 'battery', 'generator');
+  where project_id = target_project_id;
+
+  update public.projects
+  set phase = 'discover',
+      settings = settings
+        - 'designCalculator'
+        - 'designPreferences'
+        - 'designDiscovery'
+  where id = target_project_id;
 
   insert into public.questionnaire_responses (
     project_id,
@@ -71,3 +67,4 @@ end;
 $$;
 
 revoke all on function public.save_discovery_without_proposed_equipment(uuid, jsonb, text) from public;
+grant execute on function public.save_discovery_without_proposed_equipment(uuid, jsonb, text) to authenticated;

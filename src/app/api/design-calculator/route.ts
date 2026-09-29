@@ -13,7 +13,7 @@ const calculatorSchema = z.object({
       architecture: z.enum(["combined_hybrid_inverter", "separate_solar_controller_and_inverter", "ac_coupled", "not_decided"]).optional(),
       flow: z.array(z.string().max(100)).min(2).max(10),
       nodes: z.array(z.object({ id: z.string().max(50), label: z.string().max(160), detail: z.string().max(2000), image: z.string().max(200), x: finite, y: finite, recordRef: z.string().max(100).optional(), installed: z.boolean().optional(), installedRecordId: z.string().uuid().optional(), reviewed: z.boolean().optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional() })).max(100).optional(),
-      connections: z.array(z.object({ from: z.string().max(50), to: z.string().max(50), label: z.string().max(200), kind: z.enum(["solar-dc", "battery-dc", "ac", "earth"]), lengthM: finite.optional(), lengthBasis: z.enum(["estimated", "measured"]).optional(), cableSizeMm2: finite.optional(), protectionAmps: finite.optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional(), configured: z.boolean().optional() })).max(200).optional(),
+      connections: z.array(z.object({ from: z.string().max(50), to: z.string().max(50), label: z.string().max(200), kind: z.enum(["solar-dc", "battery-dc", "ac", "earth"]), lengthM: finite.optional(), lengthBasis: z.enum(["estimated", "measured"]).optional(), cableSizeMm2: finite.optional(), protectionAmps: finite.optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional(), configured: z.boolean().optional(), provisionalInterface: z.boolean().optional() })).max(200).optional(),
       panelCount: finite.optional(), panelWatts: finite.optional(), pvStrings: finite.optional(), panelsPerString: finite.optional(),
       panelVmpV: finite.optional(), panelVocV: finite.optional(), panelImpA: finite.optional(), panelIscA: finite.optional(), batteryVoltage: finite.optional(),
       batteryAh: finite.optional(), batteryQuantity: finite.optional(), inverterKw: finite.optional(), evChargingKw: finite.optional(), evChargingPhase: z.enum(["single", "three"]).optional(), generatorContinuousKw: finite.optional(), generatorSurgeKw: finite.optional(),
@@ -32,9 +32,12 @@ const calculatorSchema = z.object({
     mountingLocations: z.array(z.string().max(80)).max(12).optional(),
     pvArrayPlan: z.object({
       status: z.enum(["surface_allocation_required", "topology_unresolved", "resolved"]),
+      configurationSource: z.enum(["discovery", "user"]).optional(),
       arrays: z.array(z.object({
         id: z.string().max(100), name: z.string().max(200), capacity: finite.optional(), mounting: z.string().max(100).optional(),
         direction: z.string().max(100).optional(), pitch: z.string().max(100).optional(), allocatedPanelCount: finite.optional(),
+        panelWatts: finite.optional(), panelVmpV: finite.optional(), panelVocV: finite.optional(), panelImpA: finite.optional(), panelIscA: finite.optional(),
+        panelElectricalBasis: z.enum(["recorded", "representative"]).optional(),
         topology: z.object({
           kind: z.enum(["series", "parallel", "series_parallel"]),
           status: z.enum(["pending_surface_allocation_and_equipment", "resolved"]),
@@ -115,7 +118,7 @@ export async function PUT(request: Request) {
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const current = await supabase.from("projects").select("settings").eq("id", parsed.data.projectId).eq("owner_id", userId).maybeSingle();
+  const current = await supabase.from("projects").select("settings,phase").eq("id", parsed.data.projectId).eq("owner_id", userId).maybeSingle();
   if (current.error) return Response.json({ error: current.error.message }, { status: 400 });
   if (!current.data) return Response.json({ error: "Power system not found." }, { status: 404 });
   const settings = (current.data.settings ?? {}) as Record<string, unknown>;
@@ -123,7 +126,7 @@ export async function PUT(request: Request) {
   if (draft?.nodes?.length) {
     const componentType = (nodeId: string) => {
       if (nodeId === "battery") return "battery";
-      if (nodeId === "generator" || nodeId.startsWith("generator-")) return "generator";
+      if (nodeId === "generator") return "generator";
       if (nodeId === "controller" || nodeId === "charge-controller") return "charger";
       if (nodeId.includes("isolator")) return "isolator";
       if (nodeId.includes("combiner")) return "combiner";
@@ -135,66 +138,163 @@ export async function PUT(request: Request) {
       return "other";
     };
     const plannedArrays = parsed.data.design.pvArrayPlan?.arrays ?? [];
-    for (const node of draft.nodes) {
-      if (node.authorityCheck || node.recordRef) continue;
-      const isPvArray = node.id === "solar" || node.id.startsWith("solar-pv-");
-      if (isPvArray) {
-        const existing = await supabase.from("pv_arrays").select("id").eq("project_id", parsed.data.projectId).eq("name", node.label).order("created_at", { ascending: true }).limit(1).maybeSingle();
-        if (existing.error) return Response.json({ error: existing.error.message }, { status: 400 });
+    try {
+      await Promise.all(draft.nodes.map(async (node) => {
+        if (node.authorityCheck || node.recordRef) return;
+        const isPvArray = node.id === "solar" || node.id.startsWith("solar-pv-");
+        if (isPvArray) {
+          const identity = { "Proposal source": "Wattson design", "Proposal node id": node.id };
+          const identified = await supabase.from("pv_arrays").select("id,specifications").eq("project_id", parsed.data.projectId).contains("specifications", identity).limit(1).maybeSingle();
+          if (identified.error) throw new Error(identified.error.message);
+          const existing = identified.data ? { data: identified.data, error: null } : await supabase.from("pv_arrays").select("id,specifications").eq("project_id", parsed.data.projectId).eq("name", node.label).contains("specifications", { "Proposal source": "Wattson design" }).order("created_at", { ascending: true }).limit(1).maybeSingle();
+          if (existing.error) throw new Error(existing.error.message);
+          let id = existing.data?.id;
+          if (id && !identified.data) {
+            const tagged = await supabase.from("pv_arrays").update({ specifications: { ...(existing.data?.specifications ?? {}), ...identity } }).eq("id", id).eq("project_id", parsed.data.projectId);
+            if (tagged.error) throw new Error(tagged.error.message);
+          }
+          if (!id) {
+            const plannedIndex = Number(node.id.match(/^solar-pv-(\d+)$/)?.[1] ?? 1) - 1;
+            const plannedArray = plannedArrays[plannedIndex];
+            const panelCount = plannedArray?.allocatedPanelCount ?? parsed.data.design.panelCount ?? null;
+            const created = await supabase.from("pv_arrays").insert({
+              project_id: parsed.data.projectId,
+              name: node.label,
+              panel_watts: plannedArray?.panelWatts ?? parsed.data.design.panelWatts ?? null,
+              panel_count: panelCount,
+              strings: plannedArray?.topology.strings.length || null,
+              panels_per_string: plannedArray?.topology.strings.every((string) => string.panelsInSeries === plannedArray.topology.strings[0]?.panelsInSeries) ? plannedArray.topology.strings[0]?.panelsInSeries ?? null : null,
+              maximum_power_voltage_v: plannedArray?.panelVmpV ?? parsed.data.design.panelVmpV ?? null,
+              open_circuit_voltage_v: plannedArray?.panelVocV ?? parsed.data.design.panelVocV ?? null,
+              maximum_power_current_a: plannedArray?.panelImpA ?? parsed.data.design.panelImpA ?? null,
+              short_circuit_current_a: plannedArray?.panelIscA ?? parsed.data.design.panelIscA ?? null,
+              specifications: identity,
+              confidence: "estimated",
+            }).select("id").single();
+            if (created.error?.code === "23505") {
+              const raced = await supabase.from("pv_arrays").select("id").eq("project_id", parsed.data.projectId).contains("specifications", identity).single();
+              if (raced.error) throw new Error(raced.error.message);
+              id = raced.data.id;
+            } else if (created.error) throw new Error(created.error.message);
+            else id = created.data.id;
+          }
+          node.recordRef = `pv:${id}`;
+          return;
+        }
+        const type = componentType(node.id);
+        const identity = { "Proposal source": "Wattson design", "Proposal node id": node.id };
+        const identified = await supabase.from("system_components").select("id,specifications").eq("project_id", parsed.data.projectId).contains("specifications", identity).limit(1).maybeSingle();
+        if (identified.error) throw new Error(identified.error.message);
+        const existing = identified.data ? { data: identified.data, error: null } : await supabase.from("system_components").select("id,specifications").eq("project_id", parsed.data.projectId).eq("type", type).eq("display_name", node.label).contains("specifications", { "Proposal source": "Wattson design" }).order("created_at", { ascending: true }).limit(1).maybeSingle();
+        if (existing.error) throw new Error(existing.error.message);
         let id = existing.data?.id;
+        if (id) {
+          const refreshed = await supabase.from("system_components").update({
+            display_name: node.label,
+            type,
+            specifications: { ...(existing.data?.specifications ?? {}), ...identity, "Schematic image": node.image },
+          }).eq("id", id).eq("project_id", parsed.data.projectId);
+          if (refreshed.error) throw new Error(refreshed.error.message);
+        }
         if (!id) {
-          const plannedIndex = Number(node.id.match(/^solar-pv-(\d+)$/)?.[1] ?? 1) - 1;
-          const panelCount = plannedArrays[plannedIndex]?.allocatedPanelCount ?? parsed.data.design.panelCount ?? null;
-          const created = await supabase.from("pv_arrays").insert({
+          const specifications: Record<string, string | number> = { ...identity, "Schematic image": node.image };
+          if (type === "inverter" && parsed.data.design.inverterKw) specifications["Rated power"] = `${parsed.data.design.inverterKw} kW`;
+          if (type === "battery") {
+            if (parsed.data.design.batteryChemistry) specifications["Chemistry / battery type"] = parsed.data.design.batteryChemistry;
+            if (parsed.data.design.batteryVoltage) specifications["Nominal voltage"] = `${parsed.data.design.batteryVoltage} V`;
+            if (parsed.data.design.batteryAh) specifications.Capacity = `${parsed.data.design.batteryAh} Ah`;
+          }
+          if (type === "generator" && parsed.data.design.generatorContinuousKw) specifications["Continuous output"] = `${parsed.data.design.generatorContinuousKw} kW`;
+          const created = await supabase.from("system_components").insert({
             project_id: parsed.data.projectId,
-            name: node.label,
-            panel_watts: parsed.data.design.panelWatts ?? null,
-            panel_count: panelCount,
-            strings: plannedArrays[plannedIndex]?.topology.strings.length || null,
-            panels_per_string: plannedArrays[plannedIndex]?.topology.strings[0]?.panelsInSeries ?? null,
-            maximum_power_voltage_v: parsed.data.design.panelVmpV ?? null,
-            open_circuit_voltage_v: parsed.data.design.panelVocV ?? null,
-            maximum_power_current_a: parsed.data.design.panelImpA ?? null,
-            short_circuit_current_a: parsed.data.design.panelIscA ?? null,
-            specifications: { "Proposal source": "Wattson design" },
+            type,
+            display_name: node.label,
+            quantity: type === "battery" ? parsed.data.design.batteryQuantity ?? 1 : 1,
+            specifications,
+            notes: node.notes || null,
             confidence: "estimated",
           }).select("id").single();
-          if (created.error) return Response.json({ error: created.error.message }, { status: 400 });
-          id = created.data.id;
+          if (created.error?.code === "23505") {
+            const raced = await supabase.from("system_components").select("id").eq("project_id", parsed.data.projectId).contains("specifications", identity).single();
+            if (raced.error) throw new Error(raced.error.message);
+            id = raced.data.id;
+          } else if (created.error) throw new Error(created.error.message);
+          else id = created.data.id;
         }
-        node.recordRef = `pv:${id}`;
-        continue;
+        node.recordRef = `component:${id}`;
+      }));
+
+      const currentNodeIds = new Set(draft.nodes.map((node) => node.id));
+      const generatedComponents = await supabase.from("system_components")
+        .select("id,specifications")
+        .eq("project_id", parsed.data.projectId)
+        .contains("specifications", { "Proposal source": "Wattson design" });
+      if (generatedComponents.error) throw new Error(generatedComponents.error.message);
+      const obsoleteIds = (generatedComponents.data ?? []).filter((component) => {
+        const specifications = (component.specifications ?? {}) as Record<string, unknown>;
+        const nodeId = specifications["Proposal node id"];
+        return typeof nodeId === "string" && !currentNodeIds.has(nodeId);
+      }).map((component) => component.id);
+      for (const id of obsoleteIds) {
+        const recordRef = `component:${id}`;
+        const links = await supabase.from("system_connections").delete().eq("project_id", parsed.data.projectId).or(`source_ref.eq.${recordRef},target_ref.eq.${recordRef}`);
+        if (links.error) throw new Error(links.error.message);
       }
-      const type = componentType(node.id);
-      const existing = await supabase.from("system_components").select("id").eq("project_id", parsed.data.projectId).eq("type", type).eq("display_name", node.label).order("created_at", { ascending: true }).limit(1).maybeSingle();
+      if (obsoleteIds.length) {
+        const removed = await supabase.from("system_components").delete().eq("project_id", parsed.data.projectId).in("id", obsoleteIds);
+        if (removed.error) throw new Error(removed.error.message);
+      }
+    } catch (problem) {
+      return Response.json({ error: problem instanceof Error ? problem.message : "Could not save the proposed equipment." }, { status: 400 });
+    }
+
+    const nodeRefs = new Map(draft.nodes.flatMap((node) => node.recordRef ? [[node.id, node.recordRef] as const] : []));
+    const proposalConnections = (draft.connections ?? []).filter((connection) =>
+      !connection.authorityCheck && nodeRefs.has(connection.from) && nodeRefs.has(connection.to));
+    if (proposalConnections.length) {
+      const existing = await supabase.from("system_connections")
+        .select("id,source_ref,target_ref,name,notes")
+        .eq("project_id", parsed.data.projectId);
       if (existing.error) return Response.json({ error: existing.error.message }, { status: 400 });
-      let id = existing.data?.id;
-      if (!id) {
-        const specifications: Record<string, string | number> = { "Proposal source": "Wattson design" };
-        if (type === "inverter" && parsed.data.design.inverterKw) specifications["Rated power"] = `${parsed.data.design.inverterKw} kW`;
-        if (type === "battery") {
-          if (parsed.data.design.batteryChemistry) specifications["Chemistry / battery type"] = parsed.data.design.batteryChemistry;
-          if (parsed.data.design.batteryVoltage) specifications["Nominal voltage"] = `${parsed.data.design.batteryVoltage} V`;
-          if (parsed.data.design.batteryAh) specifications.Capacity = `${parsed.data.design.batteryAh} Ah`;
-        }
-        if (type === "generator" && parsed.data.design.generatorContinuousKw) specifications["Continuous output"] = `${parsed.data.design.generatorContinuousKw} kW`;
-        const created = await supabase.from("system_components").insert({
-          project_id: parsed.data.projectId,
-          type,
-          display_name: node.label,
-          quantity: type === "battery" ? parsed.data.design.batteryQuantity ?? 1 : 1,
-          specifications,
-          notes: node.notes || null,
-          confidence: "estimated",
-        }).select("id").single();
-        if (created.error) return Response.json({ error: created.error.message }, { status: 400 });
-        id = created.data.id;
+      try {
+        await Promise.all(proposalConnections.map(async (connection) => {
+          const sourceRef = nodeRefs.get(connection.from)!;
+          const targetRef = nodeRefs.get(connection.to)!;
+          const marker = `[proposal-connection:${connection.from}:${connection.to}:${connection.kind}]`;
+          const prior = (existing.data ?? []).find((row) => String(row.notes ?? "").includes(marker))
+            ?? (existing.data ?? []).find((row) => row.name === connection.label && (
+              row.source_ref === sourceRef && row.target_ref === targetRef
+              || row.source_ref === targetRef && row.target_ref === sourceRef
+            ));
+          const values = {
+            project_id: parsed.data.projectId,
+            source_ref: sourceRef,
+            target_ref: targetRef,
+            name: connection.label,
+            connection_type: connection.kind === "solar-dc" || connection.kind === "battery-dc" ? "dc" : connection.kind,
+            circuit_role: connection.kind === "solar-dc" ? "pv_dc" : connection.kind === "battery-dc" ? "battery_dc" : "unspecified",
+            polarity: connection.kind === "solar-dc" || connection.kind === "battery-dc" ? "pair" : "na",
+            cable_size: connection.cableSizeMm2 ? `${connection.cableSizeMm2} mm²` : null,
+            cable_length: connection.lengthM ? `${connection.lengthM} m` : null,
+            breaker_size: connection.protectionAmps ? `${connection.protectionAmps} A` : null,
+            notes: [connection.notes, marker].filter(Boolean).join("\n"),
+            confidence: "estimated" as const,
+          };
+          const savedConnection = prior
+            ? await supabase.from("system_connections").update(values).eq("id", prior.id).eq("project_id", parsed.data.projectId)
+            : await supabase.from("system_connections").insert(values);
+          if (savedConnection.error) throw new Error(savedConnection.error.message);
+        }));
+      } catch (problem) {
+        return Response.json({ error: problem instanceof Error ? problem.message : "Could not save the proposed connections." }, { status: 400 });
       }
-      node.recordRef = `component:${id}`;
     }
   }
   settings.designCalculator = { ...parsed.data.design, sizingMethod: "user-adjusted", updatedAt: new Date().toISOString(), updatedBy: "user" };
-  const saved = await supabase.from("projects").update({ settings }).eq("id", parsed.data.projectId).eq("owner_id", userId);
+  const proposalPhase = ["discover", "design", "build", "commission"].includes(current.data.phase)
+    ? parsed.data.design.proposedChecklist?.["proposed-schematic"] === true ? "build" : "design"
+    : current.data.phase;
+  const saved = await supabase.from("projects").update({ settings, phase: proposalPhase }).eq("id", parsed.data.projectId).eq("owner_id", userId);
   if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
   return Response.json({ saved: true, design: settings.designCalculator });
 }

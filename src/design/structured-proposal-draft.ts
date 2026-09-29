@@ -1,4 +1,6 @@
 import type { ComponentSpec, DesignCalculatorState, Project, PVArray, SystemConnection } from "../domain/models";
+import { defaultProposalPanel } from "./candidate-panel";
+import { provisionalArrayTopology } from "./pv-array-plan";
 
 type ProposedDraft = NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>;
 type ProposedNode = NonNullable<ProposedDraft["nodes"]>[number];
@@ -13,6 +15,15 @@ function text(value: unknown) {
 function numberFrom(value: unknown) {
   const parsed = Number(typeof value === "string" ? value.match(/-?\d+(?:\.\d+)?/)?.[0] : value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function powerKwFrom(value: unknown) {
+  const raw = text(value).toLowerCase();
+  const rating = numberFrom(value);
+  if (rating === undefined) return undefined;
+  if (/\bkw\b/.test(raw)) return rating;
+  if (/\bw\b/.test(raw)) return Number((rating / 1000).toFixed(3));
+  return rating;
 }
 
 export function isGeneratedProposalRecord(record: { specifications?: Record<string, string | number>; specs?: Record<string, string | number> }) {
@@ -150,7 +161,7 @@ function fnv1a(value: string) {
 }
 
 function sourceFingerprint(arrays: PVArray[], components: ComponentSpec[], connections: SystemConnection[]) {
-  return `structured-v1-${fnv1a(JSON.stringify({
+  return `structured-v2-${fnv1a(JSON.stringify({
     arrays: arrays.map((array) => [array.id, array.name, array.panelCount, array.panelWatts, array.strings, array.panelsPerString, array.manufacturer, array.panelModel, array.maximumPowerVoltageV, array.maximumPowerCurrentA, array.openCircuitVoltageV, array.shortCircuitCurrentA, array.cableLengthM, array.cableSizeMm2]),
     components: components.map((component) => [component.id, component.kind, component.name, component.manufacturer, component.model, component.quantity, component.specs, component.notes]),
     connections: connections.map((connection) => [connection.id, connection.sourceRef, connection.targetRef, connection.name, connection.connectionType, connection.circuitRole, connection.cableLength, connection.cableSize, connection.breakerSize, connection.fuseSize, connection.isolator, connection.notes]),
@@ -166,35 +177,80 @@ export function structuredProposalDesignFacts(project: Project): Partial<DesignC
   const generator = components.find((component) => component.kind === "generator");
   const totalPanels = arrays.reduce((total, array) => total + (array.panelCount ?? 0), 0);
   const totalPvKw = arrays.reduce((total, array) => total + (array.panelCount ?? 0) * (array.panelWatts ?? 0) / 1000, 0);
-  const topologyResolved = arrays.length > 0 && arrays.every((array) => array.panelCount && array.strings && array.panelsPerString && array.strings * array.panelsPerString === array.panelCount);
   const batteryNominalKwh = numberFrom(battery?.specs["Nominal energy"]);
   const batteryUsableFromNotes = numberFrom(battery?.notes?.match(/([\d.]+)\s*kWh\s*usable/i)?.[1]);
   const inverterType = text(inverter?.specs["Inverter type"]).toLowerCase();
+  let nextMppt = 1;
+  const plannedArrays = arrays.map((array) => {
+    const resolved = Boolean(array.panelCount && array.strings && array.panelsPerString && array.strings * array.panelsPerString === array.panelCount);
+    const hasRecordedElectrical = Boolean(array.panelWatts && array.maximumPowerVoltageV && array.openCircuitVoltageV && array.maximumPowerCurrentA && array.shortCircuitCurrentA);
+    const electrical = {
+      watts: array.panelWatts ?? defaultProposalPanel.watts,
+      vmpV: array.maximumPowerVoltageV ?? defaultProposalPanel.vmpV,
+      vocV: array.openCircuitVoltageV ?? defaultProposalPanel.vocV,
+      impA: array.maximumPowerCurrentA ?? defaultProposalPanel.impA,
+      iscA: array.shortCircuitCurrentA ?? defaultProposalPanel.iscA,
+      electricalBasis: hasRecordedElectrical ? "recorded" as const : "representative" as const,
+    };
+    const suggested = provisionalArrayTopology(array.panelCount ?? 0, electrical, array.id, nextMppt);
+    const topology = resolved ? {
+      kind: array.strings! > 1 ? "series_parallel" as const : "series" as const,
+      status: "resolved" as const,
+      strings: Array.from({ length: array.strings! }, (_, index) => ({
+        id: `${array.id}-string-${index + 1}`,
+        panelsInSeries: array.panelsPerString!,
+        mpptInput: `MPPT ${nextMppt + index}`,
+      })),
+      combinerRequirement: "not_required" as const,
+      reason: "Recorded by the user and provisionally assigned to independent MPPT inputs; verify the selected inverter's documented input limits.",
+    } : suggested.topology;
+    nextMppt += topology.strings.length;
+    return {
+      id: array.id,
+      name: array.name,
+      allocatedPanelCount: array.panelCount,
+      panelWatts: suggested.panelWatts,
+      panelVmpV: suggested.panelVmpV,
+      panelVocV: suggested.panelVocV,
+      panelImpA: suggested.panelImpA,
+      panelIscA: suggested.panelIscA,
+      panelElectricalBasis: suggested.panelElectricalBasis,
+      mounting: text(array.specifications["Mounting option"]) || undefined,
+      direction: array.orientationDegrees == null ? undefined : String(array.orientationDegrees),
+      pitch: array.tiltDegrees == null ? undefined : String(array.tiltDegrees),
+      topology,
+    };
+  });
+  const requiredMpptInputs = plannedArrays.reduce((total, array) => total + array.topology.strings.length, 0);
+  const recordedMpptInputs = numberFrom(inverter?.specs["MPPT count"] ?? inverter?.specs["Number of MPPTs"]);
+  const inverterMinimumV = numberFrom(inverter?.specs["MPPT minimum voltage"]);
+  const inverterMaximumV = numberFrom(inverter?.specs["MPPT maximum voltage"] ?? inverter?.specs["Maximum PV voltage"]);
+  const inverterMaximumA = numberFrom(inverter?.specs["Maximum PV input current"]);
+  const compatibilityWarnings = [
+    requiredMpptInputs && recordedMpptInputs && requiredMpptInputs > recordedMpptInputs
+      ? `The provisional design needs ${requiredMpptInputs} independent MPPT inputs, but the recorded inverter lists ${recordedMpptInputs}. Reallocate compatible equal strings only where the inverter instructions permit it, add suitable conversion equipment, or select an inverter with enough inputs.`
+      : requiredMpptInputs
+        ? `${requiredMpptInputs} independent MPPT input${requiredMpptInputs === 1 ? " is" : "s are"} provisionally required; confirm that count on the selected inverter.`
+        : undefined,
+    ...plannedArrays.flatMap((array) => array.topology.strings.flatMap((string) => {
+      const vmp = string.panelsInSeries * Number(array.panelVmpV ?? 0);
+      const voc = string.panelsInSeries * Number(array.panelVocV ?? 0);
+      return [
+        inverterMinimumV && vmp && vmp < inverterMinimumV ? `${array.name} ${string.id} has provisional Vmp ${vmp.toFixed(1)} V, below the recorded inverter MPPT minimum of ${inverterMinimumV} V.` : undefined,
+        inverterMaximumV && voc && voc > inverterMaximumV ? `${array.name} ${string.id} has nameplate Voc ${voc.toFixed(1)} V, above the recorded inverter maximum of ${inverterMaximumV} V before cold correction.` : undefined,
+        inverterMaximumA && array.panelIscA && array.panelIscA > inverterMaximumA ? `${array.name} has module Isc ${array.panelIscA} A, above the recorded inverter input limit of ${inverterMaximumA} A.` : undefined,
+      ];
+    })),
+  ].filter((warning): warning is string => Boolean(warning));
   return {
     panelCount: totalPanels || undefined,
     targetPvKw: totalPvKw ? Number(totalPvKw.toFixed(3)) : undefined,
     panelProfileBasis: "user_equipment",
+    sizingWarnings: compatibilityWarnings,
     pvArrayPlan: arrays.length ? {
-      status: topologyResolved ? "resolved" : "topology_unresolved",
+      status: arrays.every((array) => Boolean(array.panelCount)) ? "resolved" : "topology_unresolved",
       configurationSource: "user",
-      arrays: arrays.map((array) => {
-        const resolved = Boolean(array.panelCount && array.strings && array.panelsPerString && array.strings * array.panelsPerString === array.panelCount);
-        return {
-          id: array.id,
-          name: array.name,
-          allocatedPanelCount: array.panelCount,
-          mounting: text(array.specifications["Mounting option"]) || undefined,
-          direction: array.orientationDegrees == null ? undefined : String(array.orientationDegrees),
-          pitch: array.tiltDegrees == null ? undefined : String(array.tiltDegrees),
-          topology: {
-            kind: array.strings && array.strings > 1 ? "parallel" as const : "series" as const,
-            status: resolved ? "resolved" as const : "pending_surface_allocation_and_equipment" as const,
-            strings: resolved ? Array.from({ length: array.strings! }, (_, index) => ({ id: `${array.id}-string-${index + 1}`, panelsInSeries: array.panelsPerString! })) : [],
-            combinerRequirement: !resolved ? "pending" as const : array.strings! > 1 ? "required" as const : "not_required" as const,
-            reason: resolved ? "Recorded by the user; electrical limits still require assessment." : "The user-entered array is preserved, but its string topology is incomplete.",
-          },
-        };
-      }),
+      arrays: plannedArrays,
     } : undefined,
     architecture: inverterType === "hybrid" ? "combined_hybrid_inverter" : undefined,
     inverterArrangement: inverter ? "combined" : undefined,
@@ -207,6 +263,7 @@ export function structuredProposalDesignFacts(project: Project): Partial<DesignC
     batteryQuantity: battery?.quantity,
     batteryUsableKwh: battery ? batteryUsableFromNotes ?? (batteryNominalKwh ? Number((batteryNominalKwh * battery.quantity).toFixed(2)) : undefined) : undefined,
     generatorIncluded: Boolean(generator),
+    generatorContinuousKw: powerKwFrom(generator?.specs["Rated power"]),
   };
 }
 
@@ -285,6 +342,73 @@ export function createStructuredProposalDraft(project: Project, design: DesignCa
       notes: [connection.notes, "User-entered candidate route; cable, protection and equipment limits still require validation."].filter(Boolean).join(" "),
       configured: Boolean(lengthM && cableSizeMm2 && (kind === "earth" || connection.breakerSize || connection.fuseSize || connection.isolator)),
     };
+  });
+
+  const inverterNode = inverter ? nodeByRecordRef.get(`component:${inverter.id}`) : undefined;
+  const connected = (nodeId: string, kind: ProposedConnection["kind"]) => connections.some((connection) =>
+    connection.kind === kind && (connection.from === nodeId || connection.to === nodeId));
+  if (inverterNode) {
+    for (const array of arrays) {
+      const arrayNode = nodeByRecordRef.get(`pv:${array.id}`);
+      if (arrayNode && !connected(arrayNode, "solar-dc")) connections.push({
+        from: arrayNode,
+        to: inverterNode,
+        label: `${array.name} proposed PV DC input`,
+        kind: "solar-dc",
+        notes: "Candidate PV-to-inverter route. Confirm string allocation, MPPT limits, isolation, protection and cable sizing before installation.",
+      });
+    }
+    for (const battery of components.filter((component) => component.kind === "battery")) {
+      const batteryNode = nodeByRecordRef.get(`component:${battery.id}`);
+      if (batteryNode && !connected(batteryNode, "battery-dc")) connections.push({
+        from: batteryNode,
+        to: inverterNode,
+        label: `${battery.name} proposed battery DC connection`,
+        kind: "battery-dc",
+        notes: "Candidate battery-to-inverter route. Confirm BMS communications, voltage/current limits, isolation, protection and cable sizing before installation.",
+      });
+    }
+  }
+
+  const generators = components.filter((component) => component.kind === "generator");
+  const inverterType = text(inverter?.specs["Inverter type"]).toLowerCase();
+  const generatorMethod = text(design.generatorConnectionMethod);
+  const generatorTarget = generatorMethod === "inverter_input"
+    ? inverterNode ?? "switchboard"
+    : !generatorMethod && inverterNode && /hybrid|off[ -]?grid|inverter[ -]?charger/.test(inverterType)
+      ? inverterNode
+      : "switchboard";
+  generators.forEach((generator, index) => {
+    const generatorNode = nodeByRecordRef.get(`component:${generator.id}`);
+    if (!generatorNode || connected(generatorNode, "ac")) return;
+    if (!generatorMethod) {
+      connections.push({
+        from: generatorNode,
+        to: generatorTarget,
+        label: "Generator connection method to confirm",
+        kind: "ac",
+        notes: "Confirm whether the generator feeds an approved inverter input or the switchboard; isolation, protection and any source-transfer requirements follow that choice and local rules.",
+        configured: false,
+        provisionalInterface: true,
+      });
+      return;
+    }
+    const interfaceId = generators.length === 1 ? "generator-changeover" : `generator-changeover-${index + 1}`;
+    const inverterInput = generatorMethod === "inverter_input";
+    nodes.push({
+      id: interfaceId,
+      label: inverterInput ? "Generator AC input breaker" : generatorMethod === "ats" ? "Automatic source transfer" : generatorMethod === "changeover" ? "Generator inlet and manual changeover" : "Generator isolation and protection",
+      detail: inverterInput
+        ? "Candidate protected generator input; the selected inverter must explicitly support the generator voltage, phase, frequency, transfer and start/control arrangement."
+        : "Candidate protected changeover connection; isolation, interlocking, neutral/earth arrangement and local requirements must be confirmed.",
+      image: inverterInput ? "/schematic-components/generator-ac-input-breaker-v2.png" : generatorMethod === "ats" ? "/schematic-components/automatic-transfer-switch-ats.jpg" : generatorMethod === "changeover" || generatorMethod === "portable_inlet" ? "/schematic-components/generator-inlet-box.jpg" : "/schematic-components/ac-circuit-breaker-mcb.jpg",
+      x: 560,
+      y: 820 + index * 145,
+    });
+    connections.push(
+      { from: generatorNode, to: interfaceId, label: `${generator.name} proposed AC supply`, kind: "ac", notes: "Candidate generator supply route; confirm continuous/surge rating, voltage, phase, frequency and protection." },
+      { from: interfaceId, to: generatorTarget, label: "Protected generator input", kind: "ac", notes: "Connection method is provisional until the exact inverter or changeover instructions and Site requirements are verified." },
+    );
   });
 
   const inverterNodes = nodes.filter((node) => node.recordRef && componentByRef.get(node.recordRef)?.kind === "inverter");

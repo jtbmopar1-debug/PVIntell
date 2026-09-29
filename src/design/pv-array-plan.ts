@@ -1,4 +1,5 @@
 import type { DesignCalculatorState } from "@/domain/models";
+import { defaultProposalPanel, defaultProposalPanelStringLayout, type ProposalPanelProfile } from "./candidate-panel";
 
 type Surface = { id: string; name: string; capacity?: number; mounting?: string; direction?: string; pitch?: string };
 
@@ -12,6 +13,58 @@ const unresolvedTopology = (): PvArray["topology"] => ({
   combinerRequirement: "pending",
   reason: "Set series length and any parallel grouping only after this array's panel allocation and the selected inverter MPPT voltage, current, short-circuit-current and input limits are known.",
 });
+
+type ArrayElectricalProfile = Pick<ProposalPanelProfile, "watts" | "vmpV" | "vocV" | "impA" | "iscA"> & {
+  electricalBasis?: "recorded" | "representative";
+};
+
+/**
+ * Create a usable preliminary string plan. Each string is assigned to its own
+ * provisional MPPT input so the proposal never silently assumes that unequal
+ * strings or unknown inverter inputs can be paralleled.
+ */
+export function provisionalArrayTopology(
+  panelCount: number,
+  profile: ArrayElectricalProfile = defaultProposalPanel,
+  arrayId = "proposed-array",
+  mpptStart = 1,
+): Pick<PvArray, "panelWatts" | "panelVmpV" | "panelVocV" | "panelImpA" | "panelIscA" | "panelElectricalBasis" | "topology"> {
+  const total = Math.max(0, Math.round(panelCount));
+  if (!total) return {
+    panelWatts: profile.watts,
+    panelVmpV: profile.vmpV,
+    panelVocV: profile.vocV,
+    panelImpA: profile.impA,
+    panelIscA: profile.iscA,
+    panelElectricalBasis: profile.electricalBasis ?? "representative",
+    topology: unresolvedTopology(),
+  };
+
+  const equal = defaultProposalPanelStringLayout(total, { ...defaultProposalPanel, ...profile });
+  const stringCount = equal?.strings ?? Math.max(1, Math.ceil(total / 12));
+  const allocations = equal
+    ? Array.from({ length: stringCount }, () => equal.panelsPerString)
+    : balancedPanelAllocation(total, stringCount);
+  return {
+    panelWatts: profile.watts,
+    panelVmpV: profile.vmpV,
+    panelVocV: profile.vocV,
+    panelImpA: profile.impA,
+    panelIscA: profile.iscA,
+    panelElectricalBasis: profile.electricalBasis ?? "representative",
+    topology: {
+      kind: allocations.length === 1 ? "series" : "series_parallel",
+      status: "resolved",
+      strings: allocations.map((panelsInSeries, index) => ({
+        id: `${arrayId}-string-${index + 1}`,
+        panelsInSeries,
+        mpptInput: `MPPT ${mpptStart + index}`,
+      })),
+      combinerRequirement: "not_required",
+      reason: `${allocations.length} provisional independent MPPT input${allocations.length === 1 ? "" : "s"} suggested from the available array and module data. Verify the selected inverter's MPPT voltage, current, short-circuit-current and input-count limits before purchase or installation.`,
+    },
+  };
+}
 
 export function balancedPanelAllocation(panelCount: number, arrayCount: number) {
   const total = Math.max(0, Math.round(panelCount));
@@ -49,44 +102,49 @@ export function buildPvArrayPlan(input: {
   panelCount?: number;
   surfaces: Surface[];
   existingPanelGroup?: DesignCalculatorState["existingPanelGroup"];
+  panelProfile?: ArrayElectricalProfile;
 }): NonNullable<DesignCalculatorState["pvArrayPlan"]> {
+  const profile = input.panelProfile ?? defaultProposalPanel;
+  let nextMppt = 1;
+  const planned = (array: Omit<PvArray, "topology">): PvArray => {
+    const topology = provisionalArrayTopology(array.allocatedPanelCount ?? 0, profile, array.id, nextMppt);
+    nextMppt += topology.topology.strings.length;
+    return { ...array, ...topology };
+  };
   const existing = input.existingPanelGroup;
   if (existing?.proposedUseCount) {
-    const arrays: NonNullable<DesignCalculatorState["pvArrayPlan"]>["arrays"] = [{
+    const arrays: NonNullable<DesignCalculatorState["pvArrayPlan"]>["arrays"] = [planned({
       id: "existing-array",
       name: existing.name || "Existing panel array",
       allocatedPanelCount: existing.proposedUseCount,
-      topology: unresolvedTopology(),
-    }];
-    if (existing.supplementaryTargetPvKw) arrays.push({
+    })];
+    if (existing.supplementaryTargetPvKw) arrays.push(planned({
       id: "supplementary-array",
       name: "Supplementary solar array",
       allocatedPanelCount: existing.supplementaryCount,
-      topology: unresolvedTopology(),
-    });
-    return { status: "topology_unresolved", arrays };
+    }));
+    return { status: arrays.every((array) => array.topology.status === "resolved") ? "resolved" : "topology_unresolved", arrays };
   }
   if (input.surfaces.length === 1) return {
-    status: "topology_unresolved",
-    arrays: [{ ...input.surfaces[0], allocatedPanelCount: input.panelCount, topology: unresolvedTopology() }],
+    status: input.panelCount ? "resolved" : "topology_unresolved",
+    arrays: [planned({ ...input.surfaces[0], allocatedPanelCount: input.panelCount })],
   };
   if (input.surfaces.length > 1) {
     const allocations = input.panelCount ? allocatePanelCount(input.panelCount, input.surfaces) : input.surfaces.map(() => 0);
     const arrays = input.surfaces
-      .map((surface, index) => ({ ...surface, allocatedPanelCount: allocations[index] || undefined, topology: unresolvedTopology() }))
+      .map((surface, index) => planned({ ...surface, allocatedPanelCount: allocations[index] || undefined }))
       .filter((array) => !input.panelCount || array.allocatedPanelCount);
     const allocated = allocations.reduce((sum, count) => sum + count, 0);
-    if (input.panelCount && allocated < input.panelCount) arrays.push({
+    if (input.panelCount && allocated < input.panelCount) arrays.push(planned({
       id: "unallocated-panels",
       name: "Panel location to confirm",
       allocatedPanelCount: input.panelCount - allocated,
-      topology: unresolvedTopology(),
-    });
-    return { status: input.panelCount ? "topology_unresolved" : "surface_allocation_required", arrays };
+    }));
+    return { status: input.panelCount ? "resolved" : "surface_allocation_required", arrays };
   }
   return {
     status: "surface_allocation_required",
-    arrays: [{ id: "proposed-array", name: "Proposed solar array", allocatedPanelCount: input.panelCount, topology: unresolvedTopology() }],
+    arrays: [planned({ id: "proposed-array", name: "Proposed solar array", allocatedPanelCount: input.panelCount })],
   };
 }
 
@@ -101,17 +159,23 @@ export function splitPvArrayPlan(plan: PvArrayPlan, arrayIndex: number, arrayCou
 
   const allocations = balancedPanelAllocation(count, parts);
   const capacities = source.capacity ? balancedPanelAllocation(source.capacity, parts) : [];
-  const replacements = allocations.map((allocatedPanelCount, index): PvArray => ({
-    ...source,
-    id: `${source.id}-part-${index + 1}`,
-    name: `${source.name} ${index + 1}`,
-    capacity: capacities[index] || undefined,
-    allocatedPanelCount,
-    topology: unresolvedTopology(),
-  }));
+  let mppt = 1;
+  const replacements = allocations.map((allocatedPanelCount, index): PvArray => {
+    const id = `${source.id}-part-${index + 1}`;
+    const planned = provisionalArrayTopology(allocatedPanelCount, {
+      watts: source.panelWatts ?? defaultProposalPanel.watts,
+      vmpV: source.panelVmpV ?? defaultProposalPanel.vmpV,
+      vocV: source.panelVocV ?? defaultProposalPanel.vocV,
+      impA: source.panelImpA ?? defaultProposalPanel.impA,
+      iscA: source.panelIscA ?? defaultProposalPanel.iscA,
+      electricalBasis: source.panelElectricalBasis,
+    }, id, mppt);
+    mppt += planned.topology.strings.length;
+    return { ...source, ...planned, id, name: `${source.name} ${index + 1}`, capacity: capacities[index] || undefined, allocatedPanelCount };
+  });
 
   return {
-    status: "topology_unresolved",
+    status: "resolved",
     configurationSource: "user",
     arrays: [...plan.arrays.slice(0, arrayIndex), ...replacements, ...plan.arrays.slice(arrayIndex + 1)],
   };
@@ -124,10 +188,17 @@ export function setPvArrayPanelCount(plan: PvArrayPlan, arrayIndex: number, pane
   if (!source) throw new RangeError("The selected PV array does not exist.");
   if (count < 1) throw new RangeError("An array must contain at least one panel.");
   return {
-    status: "topology_unresolved",
+    status: "resolved",
     configurationSource: "user",
     arrays: plan.arrays.map((array, index) => index === arrayIndex
-      ? { ...array, allocatedPanelCount: count, topology: unresolvedTopology() }
+      ? { ...array, allocatedPanelCount: count, ...provisionalArrayTopology(count, {
+        watts: array.panelWatts ?? defaultProposalPanel.watts,
+        vmpV: array.panelVmpV ?? defaultProposalPanel.vmpV,
+        vocV: array.panelVocV ?? defaultProposalPanel.vocV,
+        impA: array.panelImpA ?? defaultProposalPanel.impA,
+        iscA: array.panelIscA ?? defaultProposalPanel.iscA,
+        electricalBasis: array.panelElectricalBasis,
+      }, array.id) }
       : array),
   };
 }
@@ -156,10 +227,17 @@ export function resizeUserPvArrayPlan(plan: PvArrayPlan, panelCount: number): Pv
   }
 
   return {
-    status: "topology_unresolved",
+    status: "resolved",
     configurationSource: "user",
     arrays: plan.arrays
-      .map((array, index) => ({ ...array, allocatedPanelCount: allocations[index] || undefined, topology: unresolvedTopology() }))
+      .map((array, index) => ({ ...array, allocatedPanelCount: allocations[index] || undefined, ...provisionalArrayTopology(allocations[index], {
+        watts: array.panelWatts ?? defaultProposalPanel.watts,
+        vmpV: array.panelVmpV ?? defaultProposalPanel.vmpV,
+        vocV: array.panelVocV ?? defaultProposalPanel.vocV,
+        impA: array.panelImpA ?? defaultProposalPanel.impA,
+        iscA: array.panelIscA ?? defaultProposalPanel.iscA,
+        electricalBasis: array.panelElectricalBasis,
+      }, array.id) }))
       .filter((array) => array.allocatedPanelCount),
   };
 }

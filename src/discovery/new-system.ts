@@ -225,8 +225,8 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
     type: "choice", options: [
       { value: "know_well", label: "Yes — I know the system very well", description: "Open System Capture and document the installed equipment and connections." },
       { value: "know_main", label: "Yes — I know the main equipment and connections", description: "Open System Capture, enter the known baseline and leave unsupported details unconfirmed." },
-      { value: "know_little", label: "I know a few details but need help", description: "Stay in guided Discovery so PVIntell can establish what you know and what still needs checking." },
-      { value: "know_nothing", label: "I know little or nothing about it", description: "Stay in guided Discovery with explanations and no assumed system details." },
+      { value: "know_little", label: "I know a few details but need help", description: "Open System Capture with guided help, record what you know and leave unsupported details unconfirmed." },
+      { value: "know_nothing", label: "I know little or nothing about it", description: "Open System Capture with guided help and begin with no assumed system details." },
     ], showWhen: (answers) => answers.existing_system_status === "installed",
   },
   {
@@ -292,10 +292,6 @@ export const newSystemQuestions: DiscoveryQuestion[] = [
       { value: "backup", label: "Power during outages", description: "Keep chosen items operating when public electricity fails." },
       { value: "independence", label: "Rely less on the grid", description: "Use and store more of your own energy." },
     ],
-  },
-  {
-    id: "site_name", stage: "site", title: "Where will this power system be located?",
-    noviceHelp: "Choose an existing Site when this system is at the same physical property, or create a new Site for a different location. One Site can contain several power systems, such as a house and shed.", type: "text",
   },
   {
     id: "building_type", stage: "site", title: "What kind of building or property is this?",

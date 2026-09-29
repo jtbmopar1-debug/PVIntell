@@ -43,7 +43,7 @@ import { BrandLogo } from "@/components/brand-logo";
 import { SchematicWattsonChat } from "@/components/schematic-wattson-chat";
 import { allHowToGuides } from "@/components/pvintell-workspace";
 import { GRID_CONNECTION_IMAGE } from "@/ui/assets";
-import { isVisibleInstalledAccessory, removeCoveredInferredLinks } from "@/schematic/installed-layout";
+import { collapseLegacyGeneratorRoute, isVisibleInstalledAccessory, removeCoveredInferredLinks } from "@/schematic/installed-layout";
 import { hasUnresolvedSuitabilityIssue } from "@/lib/suitability-status";
 import { formatPower } from "@/lib/power-units";
 
@@ -131,6 +131,11 @@ function arraySuitabilityUnresolved(array: PVArray) {
 }
 
 const imageBase = "/schematic-components";
+const containedEquipmentImages = new Set([
+  `${imageBase}/ac-distribution-board.jpg`,
+  EARTH_ELECTRODE_IMAGE,
+  `${imageBase}/earthing-ground-bar.jpg`,
+]);
 
 function componentImage(component: ComponentSpec) {
   const selectedImage = text(component.specs["Schematic image"]);
@@ -214,12 +219,13 @@ function componentImage(component: ComponentSpec) {
   if (
     identity.includes("earth electrode") ||
     identity.includes("earth peg") ||
-    identity.includes("ground rod")
+    identity.includes("ground rod") ||
+    identity.includes("safety earth")
   )
     return EARTH_ELECTRODE_IMAGE;
   if (identity.includes("transfer") || identity.includes("changeover"))
     return `${imageBase}/automatic-transfer-switch-ats.jpg`;
-  if (identity.includes("switchboard") || identity.includes("distribution"))
+  if (identity.includes("switchboard") || identity.includes("distribution") || identity.includes("power board") || identity.includes("powerboard"))
     return `${imageBase}/ac-distribution-board.jpg`;
   if (identity.includes("relay"))
     return `${imageBase}/smart-load-relay-controller.jpg`;
@@ -336,7 +342,7 @@ function NodeCard({
               width={160}
               height={120}
               draggable={false}
-              className={node.imageSrc === GRID_CONNECTION_IMAGE ? "h-full w-full object-contain p-2" : "h-full w-full object-cover"}
+              className={node.imageSrc === GRID_CONNECTION_IMAGE || containedEquipmentImages.has(node.imageSrc) ? "h-full w-full object-contain p-2" : "h-full w-full object-cover"}
             />
           </span>
         ) : (
@@ -736,10 +742,13 @@ export function SystemSchematic({
     return matchesSearch && (assetGroup === "all" || schematicAssetGroups(asset).includes(assetGroup));
   });
   const diagram = useMemo(() => {
-    const inverters = project.components.filter((item) => item.kind === "inverter");
-    const batteries = project.components.filter((item) => item.kind === "battery");
-    const generators = project.components.filter((item) => item.kind === "generator");
-    const gridComponents = project.components.filter((item) => {
+    const normalized = collapseLegacyGeneratorRoute(project.components, project.connections);
+    const systemComponents = normalized.components;
+    const systemConnections = normalized.connections;
+    const inverters = systemComponents.filter((item) => item.kind === "inverter");
+    const batteries = systemComponents.filter((item) => item.kind === "battery");
+    const generators = systemComponents.filter((item) => item.kind === "generator");
+    const gridComponents = systemComponents.filter((item) => {
       const identity = `${item.name} ${item.notes ?? ""}`.toLowerCase();
       return (
         identity.includes("grid connection") ||
@@ -747,12 +756,12 @@ export function SystemSchematic({
         identity.includes("mains connection")
       );
     });
-    const batteryLinks = project.components.filter(
+    const batteryLinks = systemComponents.filter(
       (item) =>
         (item.kind === "cable" && item.name.toLowerCase().includes("battery")) ||
         (item.kind === "protection" && item.name.toLowerCase().includes("battery")),
     );
-    const acLinks = project.components.filter(
+    const acLinks = systemComponents.filter(
       (item) =>
         item.specs["Connection type"] === "Inverter to switchboard AC" ||
         item.name.toLowerCase().includes("switchboard ac connection"),
@@ -760,12 +769,12 @@ export function SystemSchematic({
     const upstreamAcName =
       text(acLinks[0]?.specs["Alternate / bypass source"]) ??
       text(acLinks[0]?.specs["Normal supply source"]);
-    const earth = project.components.find(
+    const earth = systemComponents.find(
       (item) =>
         item.specs["Equipment record"] === "System earthing and bonding" ||
         item.name.toLowerCase().includes("earthing / bonding"),
     );
-    const accessories = project.components.filter(
+    const accessories = systemComponents.filter(
       (item) =>
         !["inverter", "battery", "generator"].includes(item.kind) &&
         !(project.pvArrays.length > 0 && ["panel", "pv_string"].includes(item.kind)) &&
@@ -968,7 +977,7 @@ export function SystemSchematic({
     const connections: ConnectionDetail[] = [];
     const claimedDirectPairs = new Set<string>();
     for (const inlineNode of [...pvInlineNodes, ...batteryInlineNodes]) {
-      const component = project.components.find(
+      const component = systemComponents.find(
         (item) => inlineNode.id === `component:${item.id}`,
       );
       if (!component) continue;
@@ -1091,12 +1100,12 @@ export function SystemSchematic({
           unconfirmed: true,
         });
     }
-    const explicitConnections: ConnectionDetail[] = project.connections.map(
+    const explicitConnections: ConnectionDetail[] = systemConnections.map(
       (connection) => {
         const endpointNames = [connection.sourceRef, connection.targetRef]
           .map((reference) => {
             if (reference.startsWith("component:"))
-              return project.components.find(
+              return systemComponents.find(
                 (component) => `component:${component.id}` === reference,
               )?.name;
             if (reference.startsWith("pv:"))
@@ -1121,6 +1130,7 @@ export function SystemSchematic({
                 : effectiveConnectionType === "dc"
                   ? "pair"
                   : "na";
+        const provisionalInterface = connection.notes?.includes("[provisional-generator-interface]") === true;
         return {
         id: connection.id,
         label: connection.name,
@@ -1140,13 +1150,14 @@ export function SystemSchematic({
         ],
         polarity,
         connectionType: effectiveConnectionType,
-        saved: { ...connection, connectionType: effectiveConnectionType },
+        saved: provisionalInterface ? undefined : { ...connection, connectionType: effectiveConnectionType },
+        unconfirmed: provisionalInterface,
         incompatible: hasUnresolvedSuitabilityIssue(connection.notes),
       };
       },
     );
     const unmatchedInferredConnections = removeCoveredInferredLinks(connections, explicitConnections);
-    const firstConnectionGuide = project.connections.length
+    const firstConnectionGuide = systemConnections.length
       ? undefined
       : unmatchedInferredConnections.find((connection) => connection.unconfirmed);
     return {

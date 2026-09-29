@@ -21,6 +21,7 @@ import {
   MapPin,
   Mail,
   Menu,
+  MessageCircle,
   Package,
   PlugZap,
   Printer,
@@ -36,6 +37,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
@@ -83,9 +85,21 @@ import { SiteOverview } from "@/components/site-overview";
 import { SystemEquipmentOverview } from "@/components/system-equipment-overview";
 import { SystemTechnicalOverview } from "@/components/system-technical-overview";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
-import { DesignCalculator, ProposedBuildSchematic } from "@/components/design-calculator";
 import type { SolarArrayForecastInput } from "@/weather/forecast";
 import { usePurchasePromptPreference } from "@/preferences/financials";
+import { projectHasPoolContext } from "@/design/pool-context";
+import { concerningHandoverAnswers, handoverModuleLabels, handoverReviewAllowsCompletion, handoverScreeningQuestions, isConcerningHandoverAnswer, missingHandoverEvidence, type HandoverFinding, type HandoverModuleId, type HandoverReviewStatus, type HandoverScreeningAnswer, type HandoverScreeningAnswers, type HandoverScreeningKey } from "@/commissioning/handover-review";
+
+const DesignCalculator = dynamic(() => import("@/components/design-calculator").then((module) => module.DesignCalculator), {
+  loading: () => <WorkspacePanelLoading label="Opening proposed design…" />,
+});
+const ProposedBuildSchematic = dynamic(() => import("@/components/design-calculator").then((module) => module.ProposedBuildSchematic), {
+  loading: () => <WorkspacePanelLoading label="Opening proposed schematic…" />,
+});
+
+function WorkspacePanelLoading({ label }: { label: string }) {
+  return <div className="card animate-pulse p-6" role="status"><div className="h-3 w-28 rounded bg-[#dce8f2]"/><div className="mt-4 h-7 w-64 max-w-full rounded bg-[#dce8f2]"/><p className="mt-4 text-xs font-bold text-muted">{label}</p></div>;
+}
 
 export type WorkspaceView =
   | "site"
@@ -314,6 +328,17 @@ export function PVIntellWorkspace({
   const [menu, setMenu] = useState(false);
   const [expandedSiteId, setExpandedSiteId] = useState(initialSite.id);
   const [equipmentToEdit, setEquipmentToEdit] = useState<string>();
+  const openWorkspaceView = (nextView: View, replace = false) => {
+    setView(nextView);
+    setMenu(false);
+    if (!systemPage || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", nextView);
+    const href = `${url.pathname}${url.search}${url.hash}`;
+    if (replace) window.history.replaceState(null, "", href);
+    else window.history.pushState(null, "", href);
+    window.scrollTo({ top: 0 });
+  };
   const loads = useMemo(() => calculateLoads(project.loads), [project.loads]);
   const solar = useMemo(
     () =>
@@ -382,10 +407,10 @@ export function PVIntellWorkspace({
         body: JSON.stringify({ phase: "monitor" }),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error ?? "Could not mark this system as commissioned.");
+      if (!response.ok) throw new Error(body.error ?? "Could not finish this system handover.");
     }
     setProject((current) => ({ ...current, phase: "monitor" }));
-    setView("overview");
+    openWorkspaceView("monitor", true);
     router.refresh();
   }
   function openDiscovery() {
@@ -765,10 +790,10 @@ export function PVIntellWorkspace({
               onAskWattson={() => setView("wattson")}
             />
           )}{" "}
-          {view === "build" && <Build project={project} location={initialSite.location} onAskGuide={askGuide} />}{" "}
-          {view === "shopping-list" && <Build project={project} location={initialSite.location} onAskGuide={askGuide} shoppingListOnly />}{" "}
+          {view === "build" && <Build project={project} location={initialSite.location} cloud={cloud} onAskGuide={askGuide} onOpenShoppingList={() => openWorkspaceView("shopping-list")} onContinueToCommission={() => openWorkspaceView("commission")} />}{" "}
+          {view === "shopping-list" && <Build project={project} location={initialSite.location} cloud={cloud} onAskGuide={askGuide} shoppingListOnly />}{" "}
           {view === "commission" && (
-            <Commission project={project} complete={completeCommissioning} />
+            <Commission project={project} cloud={cloud} complete={completeCommissioning} />
           )}{" "}
           {view === "monitor" && (
             <SystemMonitor project={project} site={initialSite} />
@@ -1534,8 +1559,8 @@ export function UniversalHowToMenu({ onAsk, location }: { onAsk: (guide: NoviceH
   );
 }
 
-function Build({ project, location, onAskGuide, shoppingListOnly = false }: { project: Project; location?: string; onAskGuide: (guide: NoviceHowToGuide, question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) => Promise<GuideChatReply>; shoppingListOnly?: boolean }) {
-  const isPoolSystem = /pool|spa|swimming/.test(`${project.name} ${project.projectType} ${JSON.stringify(project.designDiscovery ?? {})}`.toLowerCase());
+function Build({ project, location, cloud, onAskGuide, shoppingListOnly = false, onOpenShoppingList, onContinueToCommission }: { project: Project; location?: string; cloud: boolean; onAskGuide: (guide: NoviceHowToGuide, question: string, recentConversation: Array<{ role: "user" | "assistant"; content: string }>) => Promise<GuideChatReply>; shoppingListOnly?: boolean; onOpenShoppingList?: () => void; onContinueToCommission?: () => void }) {
+  const isPoolSystem = projectHasPoolContext(project);
   type ShoppingItem = { name: string; specification: string; quantity: string; regulated: boolean; basis?: string };
   const base = `/sites/${project.siteId}/systems/${project.id}`;
   const acquiredStorageKey = `pvintell:shopping-acquired:${project.id}`;
@@ -1550,40 +1575,83 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
   const [purchaseNotice, setPurchaseNotice] = useState("");
   const [selectedBuildModuleId, setSelectedBuildModuleId] = useState("");
   const [moduleChatGuide, setModuleChatGuide] = useState<NoviceHowToGuide | null>(null);
+  const [buildCompletionArmed, setBuildCompletionArmed] = useState(false);
+  const [buildCongratsOpen, setBuildCongratsOpen] = useState(false);
+  const [savingBuildModuleId, setSavingBuildModuleId] = useState("");
+  const [buildModuleError, setBuildModuleError] = useState("");
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
+      let storedCompleted: Record<string, boolean> = {};
       try {
         const stored = window.localStorage.getItem(acquiredStorageKey);
         if (stored) setAcquired(JSON.parse(stored) as Record<string, boolean>);
         const completed = window.localStorage.getItem(moduleCompletionStorageKey);
-        if (completed) setCompletedModules(JSON.parse(completed) as Record<string, boolean>);
+        if (completed) {
+          storedCompleted = JSON.parse(completed) as Record<string, boolean>;
+          setCompletedModules(storedCompleted);
+        }
       } catch { /* A blocked or damaged local store must not stop the shopping list. */ }
+      if (cloud) void fetch(`/api/projects/${project.id}/build-modules`).then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Could not load Build It progress.");
+        const remote = body.modules as Array<{ module_id: string; complete: boolean }>;
+        if (remote.length) {
+          setCompletedModules(Object.fromEntries(remote.map((module) => [module.module_id, module.complete])));
+          return;
+        }
+        const legacyProgress = Object.entries(storedCompleted);
+        if (legacyProgress.length) await Promise.all(legacyProgress.map(([moduleId, complete]) => fetch(`/api/projects/${project.id}/build-modules`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ moduleId, complete }) }).then(async (saved) => { if (!saved.ok) throw new Error((await saved.json()).error ?? "Could not migrate Build It progress."); })));
+      }).catch((problem) => setBuildModuleError(problem instanceof Error ? problem.message : "Could not load Build It progress."));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [acquiredStorageKey, moduleCompletionStorageKey]);
-  const setModuleCompleted = (moduleId: string, complete: boolean) => setCompletedModules((current) => {
-    const next = { ...current, [moduleId]: complete };
-    try { window.localStorage.setItem(moduleCompletionStorageKey, JSON.stringify(next)); } catch { /* Keep completion usable for this session. */ }
-    return next;
-  });
+  }, [acquiredStorageKey, cloud, moduleCompletionStorageKey, project.id]);
+  const setModuleCompleted = async (moduleId: string, complete: boolean) => {
+    if (savingBuildModuleId) return;
+    setSavingBuildModuleId(moduleId);
+    setBuildModuleError("");
+    if (cloud) {
+      try {
+        const response = await fetch(`/api/projects/${project.id}/build-modules`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ moduleId, complete }) });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Could not save Build It progress.");
+      } catch (problem) {
+        setBuildModuleError(problem instanceof Error ? problem.message : "Could not save Build It progress.");
+        setSavingBuildModuleId("");
+        return;
+      }
+    }
+    setCompletedModules((current) => {
+      const next = { ...current, [moduleId]: complete };
+      try { window.localStorage.setItem(moduleCompletionStorageKey, JSON.stringify(next)); } catch { /* Keep completion usable for this session. */ }
+      return next;
+    });
+    setBuildCompletionArmed(true);
+    setSavingBuildModuleId("");
+  };
   const decimal = (value: number, places = 1) => Number.isFinite(value) ? value.toFixed(places) : "—";
   const proposal = project.designCalculator?.proposedAsBuiltDraft;
-  const acceptedComponents = (proposal?.nodes ?? []).filter((node) => node.reviewed);
-  const acceptedConnections = (proposal?.connections ?? []).filter((connection) => connection.configured);
   const design = project.designCalculator ?? {};
+  const planApproved = design.proposedChecklist?.["proposed-schematic"] === true;
+  const acceptedComponents = planApproved ? (proposal?.nodes ?? []).filter((node) => node.reviewed) : [];
+  const acceptedConnections = planApproved ? (proposal?.connections ?? []).filter((connection) => connection.configured) : [];
   const acceptedPvNodes = acceptedComponents.filter((node) => node.id === "solar" || node.id.startsWith("solar-pv-"));
-  const hasAsBuiltRecord = project.pvArrays.length > 0 || project.components.length > 0 || project.connections.length > 0;
+  const acceptedPvRecordIds = new Set(acceptedPvNodes.map((node) => node.recordRef?.match(/^pv:(.+)$/)?.[1]).filter((id): id is string => Boolean(id)));
+  const acceptedComponentRecordIds = new Set(acceptedComponents.map((node) => node.recordRef?.match(/^component:(.+)$/)?.[1]).filter((id): id is string => Boolean(id)));
+  const acceptedPvRecords = project.pvArrays.filter((array) => acceptedPvRecordIds.has(array.id));
+  const acceptedComponentRecords = project.components.filter((component) => acceptedComponentRecordIds.has(component.id));
+  const acceptedPlannedArrays = acceptedPvNodes.map((node) => {
+    const index = Number(node.id.match(/^solar-pv-(\d+)$/)?.[1]) - 1;
+    return Number.isInteger(index) && index >= 0 ? design.pvArrayPlan?.arrays[index] : design.pvArrayPlan?.arrays[0];
+  }).filter((array): array is NonNullable<NonNullable<typeof design.pvArrayPlan>["arrays"]>[number] => Boolean(array));
   const proposedPanelCount = acceptedPvNodes.reduce((total, node) => total + (
     design.existingPanelGroup?.supplementaryTargetPvKw
       ? node.id === "solar-pv-1" ? Number(design.existingPanelGroup.proposedUseCount ?? 0) : 0
-      : node.id.startsWith("solar-pv-") ? Number(design.panelsPerString ?? 0) : Number(design.panelCount ?? 0)
+      : node.id.startsWith("solar-pv-") ? Number(design.pvArrayPlan?.arrays[Number(node.id.match(/^solar-pv-(\d+)$/)?.[1]) - 1]?.allocatedPanelCount ?? 0) : Number(design.panelCount ?? 0)
   ), 0);
-  const acceptedPanelCount = hasAsBuiltRecord
-    ? project.pvArrays.reduce((total, array) => total + Number(array.panelCount ?? 0), 0)
-    : proposedPanelCount;
-  const acceptedPvStrings = hasAsBuiltRecord
-    ? project.pvArrays.reduce((total, array) => total + Number(array.strings ?? 1), 0)
-    : acceptedPvNodes.length || (acceptedPanelCount ? 1 : 0);
+  const acceptedPanelCount = proposedPanelCount || acceptedPvRecords.reduce((total, array) => total + Number(array.panelCount ?? 0), 0);
+  const acceptedPvStrings = acceptedPlannedArrays.reduce((total, array) => total + array.topology.strings.length, 0)
+    || acceptedPvRecords.reduce((total, array) => total + Number(array.strings ?? 1), 0)
+    || (acceptedPanelCount ? 1 : 0);
   const panelsPerAcceptedRow = acceptedPvStrings ? Math.max(1, Math.ceil(acceptedPanelCount / acceptedPvStrings)) : 0;
   const panelWidthM = Number(design.panelWidthMm ?? 0) / 1000;
   const assumedRowLengthM = panelsPerAcceptedRow && panelWidthM ? panelsPerAcceptedRow * panelWidthM + Math.max(0, panelsPerAcceptedRow - 1) * .02 : 0;
@@ -1611,21 +1679,23 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
   }, new Map<string, { kind: "solar-dc" | "battery-dc" | "ac" | "earth"; cableSizeMm2: number; lengthM: number; routeCount: number }>());
   const pvRouteLength = acceptedConnections.filter((connection) => connection.kind === "solar-dc").reduce((total, connection) => total + Number(connection.lengthM ?? 0), 0);
   const isolators = acceptedComponents.filter((node) => node.id.includes("solar-safety"));
-  const stringVoc = Number(design.panelVocV ?? 0) * Number(design.panelsPerString ?? 0);
+  const stringVoc = acceptedPlannedArrays.reduce((maximum, array) => Math.max(maximum, ...array.topology.strings.map((string) => string.panelsInSeries * Number(array.panelVocV ?? design.panelVocV ?? 0))), 0);
   const isolatorVoltage = stringVoc <= 600 ? 600 : stringVoc <= 1000 ? 1000 : 1500;
   const pvProtection = acceptedConnections.filter((connection) => connection.kind === "solar-dc").reduce((largest, connection) => Math.max(largest, Number(connection.protectionAmps ?? 0)), 0);
-  const pvStringDesignCurrent = Number(design.panelIscA ?? 0) * 1.25;
+  const maximumStringIsc = acceptedPlannedArrays.reduce((maximum, array) => Math.max(maximum, Number(array.panelIscA ?? design.panelIscA ?? 0)), Number(design.panelIscA ?? 0));
+  const maximumStringImp = acceptedPlannedArrays.reduce((maximum, array) => Math.max(maximum, Number(array.panelImpA ?? design.panelImpA ?? 0)), Number(design.panelImpA ?? 0));
+  const pvStringDesignCurrent = maximumStringIsc * 1.25;
   const isolatorCurrent = [20, 25, 32, 40, 50, 63].find((rating) => rating >= Math.max(20, pvStringDesignCurrent, pvProtection)) ?? Math.ceil(Math.max(20, pvStringDesignCurrent, pvProtection));
-  const combinedPvIsc = Number(design.panelIscA ?? 0) * Math.max(1, acceptedPvStrings);
+  const combinedPvIsc = maximumStringIsc * Math.max(1, acceptedPvStrings);
   const combinedPvDesignCurrent = combinedPvIsc * 1.25;
   const combinedPvRating = [20, 25, 32, 40, 50, 63, 80, 100].find((rating) => rating >= combinedPvDesignCurrent) ?? Math.ceil(combinedPvDesignCurrent);
-  const stringVmp = Number(design.panelVmpV ?? 0) * Number(design.panelsPerString ?? 0);
-  const reverseCurrent = Math.max(0, acceptedPvStrings - 1) * Number(design.panelIscA ?? 0) * 1.25;
+  const stringVmp = acceptedPlannedArrays.reduce((maximum, array) => Math.max(maximum, ...array.topology.strings.map((string) => string.panelsInSeries * Number(array.panelVmpV ?? design.panelVmpV ?? 0))), 0);
+  const reverseCurrent = Math.max(0, acceptedPvStrings - 1) * maximumStringIsc * 1.25;
   const moduleFuseLimit = Number(design.panelMaximumSeriesFuseA ?? 0);
   const stringFusingRequired = acceptedPvStrings > 1 && moduleFuseLimit > 0 && reverseCurrent > moduleFuseLimit;
   const acProtection = acceptedConnections.filter((connection) => connection.kind === "ac" && !connection.authorityCheck).reduce((largest, connection) => Math.max(largest, Number(connection.protectionAmps ?? 0)), 0);
   const shoppingItems: ShoppingItem[] = [];
-  if (acceptedPvNodes.length && !hasAsBuiltRecord) {
+  if (acceptedPvNodes.length) {
     shoppingItems.push(...mountingShoppingItems(project.designDiscovery ?? {}, design, project.solarResource?.latitude));
     if (design.existingPanelGroup?.supplementaryTargetPvKw && acceptedPvNodes.some((node) => node.id === "solar-pv-2")) {
       const extra = design.existingPanelGroup;
@@ -1634,13 +1704,13 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
   }
 
   if (acceptedPanelCount) {
-    if (hasAsBuiltRecord && project.pvArrays.length) {
-      for (const array of project.pvArrays) shoppingItems.push({
+    if (acceptedPvRecords.length) {
+      for (const array of acceptedPvRecords) shoppingItems.push({
         name: `${array.name} solar PV modules`,
         specification: `${array.manufacturer ?? "Manufacturer not recorded"}${array.panelModel ? ` ${array.panelModel}` : ""}${array.panelWatts ? ` · ${array.panelWatts} W` : ""}${array.openCircuitVoltageV ? ` · Voc ${array.openCircuitVoltageV} V` : ""}`,
         quantity: `${array.panelCount ?? 0} panels`,
         regulated: false,
-        basis: `Current as-built record · ${array.strings ?? 1} string${(array.strings ?? 1) === 1 ? "" : "s"}`,
+        basis: `Accepted proposed equipment record · ${array.strings ?? 1} string${(array.strings ?? 1) === 1 ? "" : "s"}`,
       });
     } else shoppingItems.push({
       name: "Solar PV module",
@@ -1652,7 +1722,8 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
     if (groundRows) {
       shoppingItems.push(
         { name: "Ground-mount structural frame", specification: `Frame and cross-members sized for ${groundRows * panelsPerAcceptedRow} modules`, quantity: `${groundRows} row set${groundRows === 1 ? "" : "s"}`, regulated: false, basis: groundOnly ? "Accepted ground-mount location" : "Planning split across the accepted ground and building locations" },
-        { name: "Ground-frame foundation / anchor set", specification: "To suit the confirmed soil, wind zone and frame engineering", quantity: `${groundRows} row set${groundRows === 1 ? "" : "s"}`, regulated: false },
+        { name: "Ground-frame foundations (concrete / piles / screws / ballast)", specification: "Select the engineered foundation method for the confirmed soil, wind, frost/flood and frame loads; do not assume concrete where driven piles, ground screws or ballast are specified", quantity: "Foundation schedule required", regulated: false, basis: `${groundRows} accepted ground-frame row set${groundRows === 1 ? "" : "s"}; footing count, dimensions and concrete volume remain subject to the mounting-system structural design` },
+        { name: "Ground-frame structural fastener set", specification: "Corrosion-compatible bolts, nuts, washers, locking hardware and frame-to-foundation fixings approved for the selected mounting system", quantity: "Quantity from frame and foundation schedule", regulated: false },
       );
     }
     if (railRows) {
@@ -1660,6 +1731,8 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
         { name: "Solar panel mounting rail", specification: `${railStockLengthM} m rail lengths · compatible with selected module clamps`, quantity: railStockQuantity ? `${railStockQuantity} lengths` : "Layout confirmation required", regulated: false, basis: `${decimal(railLinearM, 1)} linear m plus cutting allocation; assumes one portrait row per accepted string` },
         { name: "Rail splice / extension kit", specification: "Matched to the selected rail system", quantity: `${railJoinQuantity} kits`, regulated: false, basis: "One splice at each planned rail extension" },
         { name: "Roof mounting feet / brackets", specification: "Matched to roof cladding, structure and rail system", quantity: "Quantity from engineered mounting layout", regulated: false, basis: "Use the selected mounting manufacturer's spacing for the roof structure, wind and snow loads; no universal bracket spacing assumed" },
+        { name: "Roof-mount structural fastener set", specification: "Manufacturer-approved screws, bolts, washers and locking hardware matched to the roof structure, bracket and corrosion environment", quantity: "Quantity from engineered mounting layout", regulated: false, basis: "Every mounting foot or bracket needs its specified structural fixing; generic roofing screws are not assumed suitable" },
+        { name: "Roof penetration flashing / weatherproofing set", specification: "Roof-profile-compatible flashing, boots or seals, plus manufacturer-approved sealant where the installation detail requires it", quantity: "One set per roof penetration", regulated: false, basis: "Use flashing as the primary weatherproofing method where applicable; sealant alone must not replace a compliant roof detail" },
       );
     }
     shoppingItems.push(
@@ -1673,7 +1746,7 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
   if (isolators.length) shoppingItems.push({ name: "PV DC isolator", specification: `${isolatorVoltage} V DC · ${isolatorCurrent} A minimum · PV-rated DC load-break · poles and enclosure rating to suit the selected equipment, mounting location and local rules`, quantity: `${isolators.length}`, regulated: true, basis: `One accepted isolator per independent PV string · current rating based on ${design.panelIscA ? `${design.panelIscA} A module Isc × 1.25` : "the available PV design current"}` });
   if (acceptedComponents.some((node) => node.id === "pv-combiner")) shoppingItems.push({ name: "PV combiner box", specification: `${isolatorVoltage} V DC minimum · ${combinedPvRating || "rating to confirm"} A minimum output · ${acceptedPvStrings} string inputs · terminals and enclosure to suit the selected conductors, environment and local rules`, quantity: "1", regulated: true, basis: `${acceptedPvStrings} × ${design.panelIscA ?? "?"} A Isc × 1.25 = ${combinedPvDesignCurrent ? decimal(combinedPvDesignCurrent, 1) : "—"} A design output` });
   if (stringFusingRequired) shoppingItems.push({ name: "gPV string fuse and holder", specification: `Coordinate the fuse with string current and do not exceed the module's ${moduleFuseLimit} A maximum-series-fuse rating; final voltage, class and holder must match the selected equipment and local rules`, quantity: `${acceptedPvStrings} sets`, regulated: true, basis: `Preliminary reverse-current check: ${decimal(reverseCurrent, 1)} A exceeds the recorded ${moduleFuseLimit} A module limit` });
-  if (acceptedPvNodes.length) shoppingItems.push({ name: "Inverter / MPPT PV input requirement", specification: `MPPT range must include ${stringVmp ? `${decimal(stringVmp, 1)} V string Vmp` : "the final string Vmp"} · maximum input voltage must exceed temperature-corrected string Voc · operating input current at least ${design.panelImpA ? `${decimal(Number(design.panelImpA) * Math.max(1, acceptedPvStrings), 1)} A` : "TBC"} · input short-circuit rating at least ${combinedPvIsc ? `${decimal(combinedPvIsc, 1)} A` : "TBC"}`, quantity: "Design requirement", regulated: true, basis: `${acceptedPvStrings} parallel string${acceptedPvStrings === 1 ? "" : "s"} on a combined input; separate MPPT allocation changes the per-input current requirement` });
+  if (acceptedPvNodes.length) shoppingItems.push({ name: "Inverter / MPPT PV input requirement", specification: `${acceptedPvStrings} independent MPPT input${acceptedPvStrings === 1 ? "" : "s"} provisionally required · MPPT range must include up to ${stringVmp ? `${decimal(stringVmp, 1)} V string Vmp` : "the final string Vmp"} · maximum input voltage must exceed temperature-corrected string Voc · per-input operating current at least ${maximumStringImp ? `${decimal(maximumStringImp, 1)} A` : "TBC"} · per-input short-circuit rating at least ${maximumStringIsc ? `${decimal(maximumStringIsc, 1)} A` : "TBC"}`, quantity: "Design requirement", regulated: true, basis: "Each provisional string is assigned to a separate MPPT input; do not combine currents unless the selected inverter explicitly supports that arrangement" });
 
   for (const route of groupedRoutes.values()) {
     const purchaseLength = routeLengthWithAllowance(route.lengthM);
@@ -1702,7 +1775,7 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
     { name: "PV DC labels and warning set", specification: "Complete durable identification set for array, isolators, routes and inverter", quantity: "1 set", regulated: true },
   );
 
-  for (const node of hasAsBuiltRecord ? [] : acceptedComponents) {
+  for (const node of acceptedComponents.filter((node) => !node.recordRef)) {
     if (node.id === "solar" || node.id.startsWith("solar-pv-") || node.id.includes("solar-safety")) continue;
     if (node.id.includes("inverter")) shoppingItems.push({ name: node.label, specification: `${design.inverterKw ?? "Rating to confirm"} kW continuous · ${node.detail}`, quantity: "1", regulated: true });
     else if (node.id === "ac-safety") shoppingItems.push({ name: "AC circuit breaker / safety switch", specification: `${design.connectionType === "ac_three" ? 400 : 230} V AC · ${acProtection || "rating to confirm"} A · poles, curve, fault rating and RCD type to final design`, quantity: "1", regulated: true });
@@ -1710,13 +1783,21 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
     else if (node.id === "earth") shoppingItems.push({ name: "Earthing electrode and termination kit", specification: node.detail, quantity: "1 set", regulated: true });
     else shoppingItems.push({ name: node.label, specification: node.detail, quantity: "1", regulated: node.id.includes("switchboard") || node.id.includes("controller") || node.authorityCheck === true });
   }
-  if (hasAsBuiltRecord) for (const component of project.components) shoppingItems.push({
-    name: component.name,
-    specification: [component.manufacturer, component.model, component.location, component.notes].filter(Boolean).join(" · ") || "Specifications not recorded",
-    quantity: String(component.quantity || 1),
-    regulated: ["inverter", "charger", "generator", "protection", "isolator", "cable", "combiner"].includes(component.kind),
-    basis: "Current as-built equipment record",
-  });
+  for (const component of acceptedComponentRecords) {
+    const acceptedNode = acceptedComponents.find((node) => node.recordRef === `component:${component.id}`);
+    const recordedSpecifications = Object.entries(component.specs)
+      .filter(([key, value]) => !["Proposal source", "Proposal node id", "Schematic image"].includes(key) && String(value).trim())
+      .map(([key, value]) => `${key}: ${value}`);
+    const specificationParts = [component.manufacturer, component.model, component.location, component.notes, ...recordedSpecifications, acceptedNode?.detail, acceptedNode?.notes]
+      .filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
+    shoppingItems.push({
+      name: component.name,
+      specification: [...new Set(specificationParts)].join(" · ") || "Accepted schematic item; exact product specification remains to be confirmed",
+      quantity: String(component.quantity || 1),
+      regulated: ["inverter", "charger", "generator", "protection", "isolator", "cable", "combiner"].includes(component.kind) || acceptedNode?.authorityCheck === true,
+      basis: acceptedNode ? "Accepted schematic specification linked to its proposed equipment record" : "Accepted proposed equipment record",
+    });
+  }
   type BuildModule = {
     id: string;
     title: string;
@@ -1726,13 +1807,12 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
     evidence: (value: string) => boolean;
     Icon: typeof Sun;
   };
-  const acceptedDesignText = hasAsBuiltRecord
-    ? [
-        ...project.pvArrays.map((array) => `${array.name} solar pv panel array ${array.panelCount ?? ""} ${array.manufacturer ?? ""} ${array.panelModel ?? ""}`),
-        ...project.components.map((component) => `${component.kind} ${component.name} ${component.manufacturer ?? ""} ${component.model ?? ""} ${component.location ?? ""}`),
-        ...project.connections.map((connection) => `${connection.connectionType} ${connection.name} ${connection.sourceRef} ${connection.targetRef}`),
-      ].join(" ").toLowerCase()
-    : [...acceptedComponents.map((node) => `${node.id} ${node.label} ${node.detail}`), ...acceptedConnections.map((connection) => `${connection.kind} ${connection.label} ${connection.from} ${connection.to}`)].join(" ").toLowerCase();
+  const acceptedDesignText = [
+    ...acceptedComponents.map((node) => `${node.id} ${node.label} ${node.detail}`),
+    ...acceptedConnections.map((connection) => `${connection.kind} ${connection.label} ${connection.from} ${connection.to}`),
+    ...acceptedPvRecords.map((array) => `${array.name} solar pv panel array ${array.panelCount ?? ""} ${array.manufacturer ?? ""} ${array.panelModel ?? ""}`),
+    ...acceptedComponentRecords.map((component) => `${component.kind} ${component.name} ${component.manufacturer ?? ""} ${component.model ?? ""} ${component.location ?? ""}`),
+  ].join(" ").toLowerCase();
   const includesAny = (...terms: string[]) => terms.some((term) => acceptedDesignText.includes(term));
   const panelModuleTitle = groundOnly
     ? "Panels, ground mount and framing"
@@ -1772,7 +1852,11 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
     const moduleIds = buildModuleIds ? buildModuleIds.split("|") : [];
     const allComplete = moduleIds.length > 0 && moduleIds.every((moduleId) => completedModules[moduleId]);
     try { window.localStorage.setItem(`pvintell:build-complete:${project.id}`, allComplete ? "true" : "false"); } catch { /* Completion remains usable on this page. */ }
-  }, [buildModuleIds, completedModules, project.id]);
+    if (buildCompletionArmed && allComplete && !shoppingListOnly) {
+      setBuildCongratsOpen(true);
+      setBuildCompletionArmed(false);
+    }
+  }, [buildCompletionArmed, buildModuleIds, completedModules, project.id, shoppingListOnly]);
   const selectedBuildModule = buildModules.find((module) => module.id === selectedBuildModuleId);
   const buildGuideIds = (module: BuildModule) => {
     if (module.id === "pv-array") return new Set([
@@ -1904,7 +1988,7 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
       {!shoppingListOnly && !selectedBuildModule ? <section>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div><div className="eyebrow">Modules in this accepted design</div><h2 className="mt-2 text-lg font-extrabold">Choose the part of the system you are installing</h2><p className="mt-1 max-w-3xl text-xs leading-5 text-muted">Each module combines its accepted equipment, shopping-list materials and relevant visual guidance. There is no forced task order.</p></div>
-          <Link href={`${base}?view=shopping-list`} className="inline-flex h-10 items-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand"><ShoppingCart size={15}/>Open shopping list</Link>
+          <button type="button" onClick={onOpenShoppingList} className="inline-flex h-10 items-center gap-2 rounded-xl border border-brand bg-white px-4 text-xs font-bold text-brand"><ShoppingCart size={15}/>Open shopping list</button>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {buildModules.map((module) => {
@@ -1918,10 +2002,11 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
               <p className="mt-2 flex-1 text-[11px] leading-5 text-muted">{module.description}</p>
               <span className="mt-4 flex w-full items-center justify-between border-t border-line pt-3 text-[10px] font-bold text-brand"><span>{materialCount} materials · {guideCount} how-to subjects</span><ChevronRight size={15}/></span>
               </button>
-              <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line pt-3 text-[10px] font-extrabold text-[#17603b]"><input type="checkbox" checked={completed} onChange={(event) => setModuleCompleted(module.id, event.target.checked)} className="size-4 accent-[#238653]"/>Completed</label>
+              <label className="mt-3 flex cursor-pointer items-center gap-2 border-t border-line pt-3 text-[10px] font-extrabold text-[#17603b]"><input type="checkbox" checked={completed} disabled={Boolean(savingBuildModuleId)} onChange={(event) => void setModuleCompleted(module.id, event.target.checked)} className="size-4 accent-[#238653] disabled:opacity-50"/>{savingBuildModuleId === module.id ? "Saving…" : "Completed"}</label>
             </article>;
           })}
         </div>
+        {buildModuleError ? <p className="mt-3 rounded-xl border border-[#e2a49a] bg-[#fff0ed] p-3 text-[10px] font-bold text-[#9b4033]">{buildModuleError}</p> : null}
         {!buildModules.length ? <div className="card mt-4 p-6 text-xs leading-5 text-muted">Accept the component specifications and configure the schematic connections before opening the installation modules.</div> : null}
       </section> : null}
       {!shoppingListOnly && selectedBuildModule ? <section className="space-y-4">
@@ -1948,6 +2033,22 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
         </div>
         <div className="flex gap-3 rounded-xl border border-[#e6cc74] bg-[#fff9df] p-4 text-[10px] leading-5 text-[#624b14]"><AlertTriangle size={17} className="mt-0.5 shrink-0"/><p><strong>{authority.label}:</strong> {authority.note} <a href={authority.url} target="_blank" rel="noreferrer" className="font-bold underline">Open authority guidance</a></p></div>
       </section> : null}
+      {buildCongratsOpen ? createPortal(
+        <div className="fixed inset-0 z-[110] grid place-items-center bg-[#17324d]/55 p-4" role="presentation">
+          <section role="dialog" aria-modal="true" aria-labelledby="build-complete-dialog-title" className="w-full max-w-md overflow-hidden rounded-3xl border border-[#8bc8a0] bg-white text-center shadow-[0_24px_70px_rgba(9,35,58,.35)]">
+            <header className="bg-[#effaf3] px-6 pb-5 pt-7">
+              <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-[#d9f2e2] text-[#17603b]"><Sparkles size={27}/></span>
+              <div className="mt-4 eyebrow text-[#17603b]">Build It complete</div>
+              <h2 id="build-complete-dialog-title" className="mt-2 text-2xl font-extrabold">Congrats!</h2>
+              <p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-muted">You have marked every installation module complete. Next, work through startup, testing, certification and handover before treating the system as commissioned.</p>
+            </header>
+            <div className="grid gap-2 p-5 sm:grid-cols-2">
+              <button type="button" onClick={() => setBuildCongratsOpen(false)} className="h-11 rounded-xl border border-brand bg-white text-xs font-bold text-brand">Stay in Build It</button>
+              <button type="button" onClick={() => { setBuildCongratsOpen(false); onContinueToCommission?.(); }} className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#238653] px-4 text-xs font-bold text-white"><ClipboardCheck size={16}/>Continue to Startup &amp; Handover</button>
+            </div>
+          </section>
+        </div>, document.body,
+      ) : null}
       {moduleChatGuide ? <GuideWattsonChat guide={moduleChatGuide} onAsk={onAskGuide} onClose={() => setModuleChatGuide(null)}/> : null}
       {purchaseItem ? createPortal(
         <div className="fixed inset-0 z-[100] grid place-items-center bg-[#17324d]/55 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !purchaseSaving) setPurchaseItem(null); }}>
@@ -1974,80 +2075,163 @@ function Build({ project, location, onAskGuide, shoppingListOnly = false }: { pr
     </div>
   );
 }
-function Commission({
-  project,
-  complete,
-}: {
-  project: Project;
-  complete: () => Promise<void>;
-}) {
+function Commission({ project, cloud, complete }: { project: Project; cloud: boolean; complete: () => Promise<void> }) {
+  type HandoverRecord = { observations: string; readings: string; documents: string; issues: string; screeningAnswers: HandoverScreeningAnswers; complete: boolean; reviewStatus: HandoverReviewStatus; reviewSummary?: string; reviewFindings: HandoverFinding[]; reviewedAt?: string };
+  const emptyHandoverRecord = (): HandoverRecord => ({ observations: "", readings: "", documents: "", issues: "", screeningAnswers: {}, complete: false, reviewStatus: "unreviewed", reviewFindings: [] });
+  const handoverStorageKey = `pvintell:handover-modules:${project.id}`;
   const [completing, setCompleting] = useState(false);
   const [error, setError] = useState("");
   const [completedModules, setCompletedModules] = useState<Record<string, boolean>>({});
-  type HandoverRecord = { observations: string; readings: string; documents: string; issues: string; complete: boolean };
-  const handoverStorageKey = `pvintell:handover-modules:${project.id}`;
-  const emptyHandoverRecord: HandoverRecord = { observations: "", readings: "", documents: "", issues: "", complete: false };
   const [handoverRecords, setHandoverRecords] = useState<Record<string, HandoverRecord>>({});
   const [selectedHandoverId, setSelectedHandoverId] = useState("");
+  const [reviewingModuleId, setReviewingModuleId] = useState("");
+  const [savingModuleId, setSavingModuleId] = useState("");
+  const [reviewChatModuleId, setReviewChatModuleId] = useState<HandoverModuleId>();
+  const [reviewClarification, setReviewClarification] = useState("");
+  const normaliseHandoverRecord = (record: Record<string, unknown>): HandoverRecord => {
+    const reviewStatus = String(record.review_status ?? record.reviewStatus ?? "unreviewed") as HandoverReviewStatus;
+    return {
+      observations: String(record.observations ?? ""),
+      readings: String(record.readings ?? ""),
+      documents: String(record.documents ?? ""),
+      issues: String(record.issues ?? ""),
+      screeningAnswers: (record.screening_answers ?? record.screeningAnswers ?? {}) as HandoverScreeningAnswers,
+      complete: Boolean(record.complete) && handoverReviewAllowsCompletion(reviewStatus),
+      reviewStatus,
+      reviewSummary: typeof (record.review_summary ?? record.reviewSummary) === "string" ? String(record.review_summary ?? record.reviewSummary) : undefined,
+      reviewFindings: Array.isArray(record.review_findings ?? record.reviewFindings) ? (record.review_findings ?? record.reviewFindings) as HandoverFinding[] : [],
+      reviewedAt: typeof (record.reviewed_at ?? record.reviewedAt) === "string" ? String(record.reviewed_at ?? record.reviewedAt) : undefined,
+    };
+  };
+
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
+      let localBuild: Record<string, boolean> = {};
+      let localHandover: Record<string, HandoverRecord> = {};
       try {
-        setCompletedModules(JSON.parse(window.localStorage.getItem(`pvintell:build-modules:${project.id}`) ?? "{}") as Record<string, boolean>);
-        setHandoverRecords(JSON.parse(window.localStorage.getItem(handoverStorageKey) ?? "{}") as Record<string, HandoverRecord>);
-      }
-      catch { setCompletedModules({}); }
+        localBuild = JSON.parse(window.localStorage.getItem(`pvintell:build-modules:${project.id}`) ?? "{}") as Record<string, boolean>;
+        const storedHandover = JSON.parse(window.localStorage.getItem(handoverStorageKey) ?? "{}") as Record<string, Record<string, unknown>>;
+        localHandover = Object.fromEntries(Object.entries(storedHandover).map(([moduleId, record]) => [moduleId, normaliseHandoverRecord(record)]));
+        setCompletedModules(localBuild);
+        setHandoverRecords(localHandover);
+      } catch { setCompletedModules({}); }
+      if (cloud) void Promise.all([
+        fetch(`/api/projects/${project.id}/build-modules`).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Could not load Build It progress."); return body; }),
+        fetch(`/api/projects/${project.id}/handover`).then(async (response) => { const body = await response.json(); if (!response.ok) throw new Error(body.error ?? "Could not load handover records."); return body; }),
+      ]).then(async ([buildBody, handoverBody]) => {
+        const remoteBuild = buildBody.modules as Array<{ module_id: string; complete: boolean }>;
+        const remoteHandover = handoverBody.records as Array<Record<string, unknown>>;
+        if (remoteBuild.length) setCompletedModules(Object.fromEntries(remoteBuild.map((module) => [module.module_id, module.complete])));
+        else if (Object.keys(localBuild).length) await Promise.all(Object.entries(localBuild).map(([moduleId, done]) => fetch(`/api/projects/${project.id}/build-modules`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ moduleId, complete: done }) })));
+        if (remoteHandover.length) setHandoverRecords(Object.fromEntries(remoteHandover.map((record) => [String(record.module_id), normaliseHandoverRecord(record)])));
+        else if (Object.keys(localHandover).length) await Promise.all(Object.entries(localHandover).map(([moduleId, record]) => fetch(`/api/projects/${project.id}/handover`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ moduleId, observations: record.observations, readings: record.readings, documents: record.documents, issues: record.issues, screeningAnswers: record.screeningAnswers }) })));
+      }).catch((problem) => setError(problem instanceof Error ? problem.message : "Could not load startup and handover records."));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [handoverStorageKey, project.id]);
-  const completedModuleLabels: Record<string, string> = { "pv-array": "Panels and mounting", "pv-dc": "PV strings, DC cable and isolation", battery: "Battery storage and battery DC", inverter: "Inverter and power conversion", ac: "AC supply, switchboard and protection", generator: "Generator connection and controls", earthing: "Earthing and equipment bonding" };
-  const handoverModules = Object.entries(completedModules).filter(([, complete]) => complete).map(([id]) => ({ id, title: completedModuleLabels[id] ?? id }));
+  }, [cloud, handoverStorageKey, project.id]);
+
+  const handoverModules = Object.entries(completedModules).filter(([, done]) => done).map(([id]) => ({ id: id as HandoverModuleId, title: handoverModuleLabels[id as HandoverModuleId] ?? id }));
   const buildComplete = handoverModules.length > 0;
-  const handoverComplete = handoverModules.length > 0 && handoverModules.every((module) => handoverRecords[module.id]?.complete);
+  const handoverComplete = handoverModules.length > 0 && handoverModules.every((module) => handoverRecords[module.id]?.complete && handoverReviewAllowsCompletion(handoverRecords[module.id].reviewStatus));
   const installed = ["check", "monitor", "diagnose", "maintain", "explain"].includes(project.phase);
   const selectedHandover = handoverModules.find((module) => module.id === selectedHandoverId) ?? handoverModules[0];
-  const selectedRecord = selectedHandover ? handoverRecords[selectedHandover.id] ?? emptyHandoverRecord : emptyHandoverRecord;
-  function updateHandover(moduleId: string, patch: Partial<HandoverRecord>) {
+  const selectedRecord = selectedHandover ? handoverRecords[selectedHandover.id] ?? emptyHandoverRecord() : emptyHandoverRecord();
+
+  function updateHandover(moduleId: string, patch: Partial<HandoverRecord>, resetReview = true) {
     setHandoverRecords((current) => {
-      const next = { ...current, [moduleId]: { ...(current[moduleId] ?? emptyHandoverRecord), ...patch } };
+      const previous = current[moduleId] ?? emptyHandoverRecord();
+      const nextRecord = resetReview
+        ? { ...previous, ...patch, complete: false, reviewStatus: "unreviewed" as const, reviewSummary: undefined, reviewFindings: [], reviewedAt: undefined }
+        : { ...previous, ...patch };
+      const next = { ...current, [moduleId]: nextRecord };
       try { window.localStorage.setItem(handoverStorageKey, JSON.stringify(next)); } catch { /* Keep the record usable in this session. */ }
       return next;
     });
   }
-  async function finish() {
-    setCompleting(true);
+
+  function answerScreening(moduleId: HandoverModuleId, key: HandoverScreeningKey, answer: HandoverScreeningAnswer) {
+    const current = handoverRecords[moduleId] ?? emptyHandoverRecord();
+    const next = { ...current, screeningAnswers: { ...current.screeningAnswers, [key]: answer } };
+    const finalAnswer = !missingHandoverEvidence(next).length;
+    const needsWattson = isConcerningHandoverAnswer(key, answer);
+    updateHandover(moduleId, { screeningAnswers: next.screeningAnswers }, needsWattson || finalAnswer);
+    if (needsWattson || finalAnswer) void reviewHandover(moduleId, next);
+    else void saveHandover(moduleId, next, true);
+  }
+
+  async function saveHandover(moduleId: HandoverModuleId, record = handoverRecords[moduleId] ?? emptyHandoverRecord(), preserveReview = false) {
+    if (!cloud) return true;
+    setSavingModuleId(moduleId);
     setError("");
+    try {
+      const response = await fetch(`/api/projects/${project.id}/handover`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ moduleId, observations: record.observations, readings: record.readings, documents: record.documents, issues: record.issues, screeningAnswers: record.screeningAnswers, preserveReview }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Could not save this handover record.");
+      return true;
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "Could not save this handover record.");
+      return false;
+    } finally { setSavingModuleId(""); }
+  }
+
+  async function reviewHandover(moduleId: HandoverModuleId, suppliedRecord?: HandoverRecord) {
+    const record = suppliedRecord ?? handoverRecords[moduleId] ?? emptyHandoverRecord();
+    setReviewingModuleId(moduleId);
+    setError("");
+    try {
+      if (cloud) {
+        if (!await saveHandover(moduleId, record)) return;
+        const response = await fetch(`/api/projects/${project.id}/handover`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ moduleId, observations: record.observations, readings: record.readings, documents: record.documents, issues: record.issues, screeningAnswers: record.screeningAnswers }) });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Wattson could not review this module.");
+        const review = body.review as { status: HandoverReviewStatus; summary: string; findings: HandoverFinding[] };
+        const nextRecord = { ...record, complete: Boolean(body.complete), reviewStatus: review.status, reviewSummary: review.summary, reviewFindings: review.findings, reviewedAt: new Date().toISOString() };
+        setHandoverRecords((current) => ({ ...current, [moduleId]: nextRecord }));
+        try { window.localStorage.setItem(handoverStorageKey, JSON.stringify({ ...handoverRecords, [moduleId]: nextRecord })); } catch { /* Cloud remains authoritative. */ }
+        if (reviewChatModuleId === moduleId && suppliedRecord?.issues.trim()) setReviewClarification("");
+        if (review.status === "critical_issue") {
+          setReviewChatModuleId(moduleId);
+          if (reviewChatModuleId !== moduleId) setReviewClarification("");
+        }
+        if (body.complete && review.status === "ready") {
+          const nextModule = handoverModules.find((module) => module.id !== moduleId && !handoverRecords[module.id]?.complete);
+          if (nextModule) window.setTimeout(() => setSelectedHandoverId(nextModule.id), 450);
+        }
+      } else {
+        const missing = missingHandoverEvidence(record);
+        const concerns = concerningHandoverAnswers(record.screeningAnswers);
+        const status: HandoverReviewStatus = missing.length ? "insufficient_information" : concerns.length ? "needs_attention" : "ready";
+        const nextRecord = { ...record, complete: handoverReviewAllowsCompletion(status), reviewStatus: status, reviewSummary: missing.length ? "Answer all four startup questions before completing this module." : concerns.length ? "Review the flagged startup answers before handover." : "All four startup checks have the expected result.", reviewFindings: [] };
+        setHandoverRecords((current) => ({ ...current, [moduleId]: nextRecord }));
+        if (status === "ready") {
+          const nextModule = handoverModules.find((module) => module.id !== moduleId && !handoverRecords[module.id]?.complete);
+          if (nextModule) window.setTimeout(() => setSelectedHandoverId(nextModule.id), 450);
+        }
+      }
+    } catch (problem) { setError(problem instanceof Error ? problem.message : "Wattson could not review this module."); }
+    finally { setReviewingModuleId(""); }
+  }
+
+  async function finish() {
+    setCompleting(true); setError("");
     try { await complete(); }
     catch (problem) { setError(problem instanceof Error ? problem.message : "Could not finish startup and handover."); }
     finally { setCompleting(false); }
   }
-  return (
-    <div className="animate-rise space-y-6">
-      <Heading
-        eyebrow="Startup & handover"
-        title="Record startup and handover"
-        description="Keep initial readings, settings, supplied documents and observed behaviour as a baseline for future support."
-      />
-      <div role="alert" className="flex gap-3 rounded-2xl border-2 border-[#d94a3a] bg-[#fff0ed] p-5 text-[#8f2f24] shadow-sm"><AlertTriangle size={22} className="mt-0.5 shrink-0"/><div><strong className="block text-sm">This is not an inspection or certification service</strong><p className="mt-2 text-[11px] font-semibold leading-5">PVIntell is a DIY planning, startup and record-keeping tool. Completing this page does not certify, approve or grant permission to energise the system. You are responsible for checking the requirements that apply at this Site and arranging any local-authority, electrical, network or independent inspection or certification if it is required—or if you decide you want it.</p></div></div>
-      <section className="card overflow-hidden"><div className="border-b border-line bg-[#eef5fc] p-5"><div className="eyebrow">From Build It</div><h2 className="mt-2 text-base font-extrabold">Completed modules ready for startup records</h2><p className="mt-1 text-[10px] leading-5 text-muted">A module appears here only after you mark it Completed in Build It. That means the physical section is ready to record—not inspected or approved.</p></div>{handoverModules.length ? <div className="grid gap-3 p-4 md:grid-cols-2">{handoverModules.map((module) => <article key={module.id} className="rounded-xl border border-[#72b98b] bg-[#f1faf4] p-4"><div className="flex items-center gap-2 text-[#17603b]"><Check size={15}/><strong className="text-xs">{module.title}</strong></div><p className="mt-2 text-[10px] leading-4 text-muted">Ready to record first-start behaviour, relevant settings, readings, photos, supplied documents and anything needing attention.</p></article>)}</div> : <p className="p-5 text-xs text-muted">No Build It modules have been marked completed yet.</p>}</section>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <section className="card overflow-hidden"><header className="border-b border-line p-5"><div className="eyebrow">Handover records</div><h2 className="mt-2 text-base font-extrabold">Record what happened at first startup</h2><p className="mt-1 text-[10px] leading-5 text-muted">Choose a completed module and keep useful facts, supplied paperwork and anything still needing attention. This is a record—not a pass/fail inspection.</p></header>{handoverModules.length ? <div className="grid min-h-[420px] md:grid-cols-[230px_minmax(0,1fr)]"><div className="border-b border-line p-3 md:border-b-0 md:border-r">{handoverModules.map((module) => { const done = handoverRecords[module.id]?.complete; return <button type="button" key={module.id} onClick={() => setSelectedHandoverId(module.id)} className={`mb-2 flex w-full items-center gap-2 rounded-xl border p-3 text-left text-[10px] font-bold ${selectedHandover?.id === module.id ? "border-brand bg-[#eef5fc]" : done ? "border-[#8fc8a2] bg-[#f1faf4] text-[#17603b]" : "border-line bg-white"}`}><span className={`grid size-6 shrink-0 place-items-center rounded-full ${done ? "bg-[#dff3e8]" : "bg-[#eaf2fb]"}`}>{done ? <Check size={13}/> : <ClipboardCheck size={13}/>}</span>{module.title}</button>; })}</div>{selectedHandover ? <div className="p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="eyebrow">Module record</div><h3 className="mt-2 text-base font-extrabold">{selectedHandover.title}</h3></div><label className="flex cursor-pointer items-center gap-2 rounded-xl border border-[#8fc8a2] bg-[#f1faf4] px-3 py-2 text-[10px] font-bold text-[#17603b]"><input type="checkbox" checked={selectedRecord.complete} onChange={(event) => updateHandover(selectedHandover.id, { complete: event.target.checked })} className="size-4 accent-[#238653]"/>Record finished</label></div><div className="mt-5 grid gap-4 sm:grid-cols-2"><label className="text-[10px] font-bold text-muted">Startup observations<textarea className="field min-h-28 resize-y" value={selectedRecord.observations} onChange={(event) => updateHandover(selectedHandover.id, { observations: event.target.value })} placeholder="What started, what happened and what was observed…"/></label><label className="text-[10px] font-bold text-muted">Settings and readings<textarea className="field min-h-28 resize-y" value={selectedRecord.readings} onChange={(event) => updateHandover(selectedHandover.id, { readings: event.target.value })} placeholder="Values with units, settings and where they came from…"/></label><label className="text-[10px] font-bold text-muted">Documents and photo references<textarea className="field min-h-28 resize-y" value={selectedRecord.documents} onChange={(event) => updateHandover(selectedHandover.id, { documents: event.target.value })} placeholder="Manuals, serials, receipts, certificates supplied by others, photo names…"/></label><label className="text-[10px] font-bold text-muted">Open issues or follow-up<textarea className="field min-h-28 resize-y" value={selectedRecord.issues} onChange={(event) => updateHandover(selectedHandover.id, { issues: event.target.value })} placeholder="Anything unresolved, unusual or deliberately left off…"/></label></div><p className="mt-3 text-[9px] leading-4 text-muted">Changes save automatically in this browser. Uncheck “Record finished” whenever this section needs updating.</p></div> : null}</div> : <p className="p-6 text-xs text-muted">Finish at least one Build It module before creating its startup record.</p>}</section>
-        <div className="card p-5">
-          <div className="eyebrow">Lifecycle</div>
-          <h3 className="mt-2 text-base font-extrabold">{installed ? "Installed system record" : "Ready to finish handover?"}</h3>
-          <div className="mt-4 space-y-2 text-xs"><div className="flex items-center justify-between gap-3"><span>Build modules supplied</span><strong>{buildComplete ? "Yes" : "Not yet"}</strong></div><div className="flex items-center justify-between gap-3"><span>Handover records finished</span><strong>{handoverComplete ? "Yes" : "Not yet"}</strong></div></div>
-          <p className="mt-4 text-[11px] leading-5 text-muted">Finishing handover changes the project to an installed system record. It records your workflow only; it does not certify the installation or authorise energisation.</p>
-          {error ? <p className="mt-3 rounded-lg bg-[#fff0eb] p-3 text-[11px] text-[#913e31]">{error}</p> : null}
-          <button
-            onClick={() => void finish()}
-            disabled={installed || !buildComplete || !handoverComplete || completing}
-            className="mt-4 w-full rounded-xl bg-brand py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {installed ? "Handover recorded" : completing ? "Updating…" : "Finish startup & handover"}
-          </button>
-        </div>
-      </div>
+
+  const reviewTone = (status: HandoverReviewStatus) => status === "ready" ? "border-[#72b98b] bg-[#f1faf4] text-[#17603b]" : status === "critical_issue" ? "border-[#d94a3a] bg-[#fff0ed] text-[#8f2f24]" : status === "unreviewed" ? "border-line bg-[#f7fafc] text-muted" : "border-[#e6b84c] bg-[#fff9df] text-[#765918]";
+  const screeningQuestions = selectedHandover ? handoverScreeningQuestions[selectedHandover.id] : [];
+  const reviewLabel = (status: HandoverReviewStatus) => ({ unreviewed: "Not reviewed", ready: "Ready", needs_attention: "Needs attention", insufficient_information: "More information needed", critical_issue: "Critical issue — do not energise" })[status];
+
+  return <div className="animate-rise space-y-6">
+    <Heading eyebrow="Startup & handover" title="Run the startup checks" description="Answer four short questions for each completed module. Wattson steps in when an answer is uncertain or potentially unsafe, then handover leads directly into monitoring."/>
+    <div role="alert" className="flex gap-3 rounded-2xl border-2 border-[#d94a3a] bg-[#fff0ed] p-5 text-[#8f2f24] shadow-sm"><AlertTriangle size={22} className="mt-0.5 shrink-0"/><div><strong className="block text-sm">This is not an inspection or certification service</strong><p className="mt-2 text-[11px] font-semibold leading-5">Wattson can spot inconsistencies and suggest checks, but cannot inspect, certify or authorise energisation. Follow the selected equipment instructions and arrange any authority, electrical, network or independent checks required at this Site.</p></div></div>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+      <section className="card overflow-hidden"><header className="border-b border-line p-5"><div className="eyebrow">Module progress</div><h2 className="mt-2 text-base font-extrabold">Startup checks</h2><p className="mt-1 text-[10px] leading-5 text-muted">Choose a module and answer its four questions in one place. Expected answers finish immediately; uncertain or adverse answers are checked by Wattson.</p></header>{handoverModules.length ? <div className="grid min-h-[300px] md:grid-cols-[230px_minmax(0,1fr)]"><div className="flex gap-2 overflow-x-auto border-b border-line p-3 md:block md:overflow-visible md:border-b-0 md:border-r">{handoverModules.map((module) => { const record = handoverRecords[module.id]; return <button type="button" key={module.id} onClick={() => setSelectedHandoverId(module.id)} className={`flex min-w-[200px] items-center gap-2 rounded-xl border p-3 text-left text-[10px] font-bold md:mb-2 md:w-full md:min-w-0 ${selectedHandover?.id === module.id ? "border-brand bg-[#eef5fc]" : record?.complete ? "border-[#8fc8a2] bg-[#f1faf4] text-[#17603b]" : "border-line bg-white"}`}><span className={`grid size-6 shrink-0 place-items-center rounded-full ${record?.complete ? "bg-[#dff3e8]" : "bg-[#eaf2fb]"}`}>{record?.complete ? <Check size={13}/> : <ClipboardCheck size={13}/>}</span><span>{module.title}<small className="mt-1 block text-[8px] font-semibold opacity-75">{reviewLabel(record?.reviewStatus ?? "unreviewed")}</small></span></button>; })}</div>{selectedHandover ? <div className="p-4 sm:p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="eyebrow">Selected module</div><h3 className="mt-2 text-base font-extrabold">{selectedHandover.title}</h3><p className="mt-1 text-[9px] leading-4 text-muted">Work through each check before answering. “Not sure” asks Wattson for the relevant test and expected result.</p></div><button type="button" disabled={Boolean(missingHandoverEvidence(selectedRecord).length) || reviewingModuleId === selectedHandover.id || savingModuleId === selectedHandover.id} onClick={() => void reviewHandover(selectedHandover.id)} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-brand px-4 text-[10px] font-bold text-white disabled:opacity-50"><Sparkles size={14}/>{reviewingModuleId === selectedHandover.id ? "Wattson checking…" : missingHandoverEvidence(selectedRecord).length ? "Complete the four checks" : selectedRecord.complete ? "Check again" : "Check this module"}</button></div><div className="mt-5 grid gap-3 lg:grid-cols-2">{screeningQuestions.map((question) => <fieldset key={question.key} className="rounded-xl border border-line bg-[#f8fbfe] p-4"><legend className="px-1 text-[10px] font-extrabold">{question.prompt}</legend><p className="mt-2 text-[9px] leading-4 text-muted"><strong className="text-ink">Check:</strong> {question.check}</p><p className="mt-2 text-[9px] font-bold text-[#17603b]">Expected answer: {question.expected === "yes" ? "Yes" : "No"}</p><div className="mt-3 flex flex-wrap gap-2">{(["yes", "no", "not_sure"] as const).map((answer) => <button key={answer} type="button" disabled={reviewingModuleId === selectedHandover.id || savingModuleId === selectedHandover.id} onClick={() => answerScreening(selectedHandover.id, question.key, answer)} className={`min-h-10 rounded-lg border px-3 text-[9px] font-bold disabled:opacity-50 ${selectedRecord.screeningAnswers?.[question.key] === answer ? "border-brand bg-[#eaf2fb] text-brand" : "border-line bg-white text-muted"}`}>{answer === "not_sure" ? "Not sure" : answer === "yes" ? "Yes" : "No"}</button>)}</div></fieldset>)}</div>{selectedRecord.reviewStatus !== "unreviewed" ? <div className={`mt-5 rounded-xl border p-4 ${reviewTone(selectedRecord.reviewStatus)}`}><strong className="text-xs">Wattson: {reviewLabel(selectedRecord.reviewStatus)}</strong>{selectedRecord.reviewSummary ? <p className="mt-1 text-[10px] leading-5">{selectedRecord.reviewSummary}</p> : null}{selectedRecord.reviewFindings.length ? <ul className="mt-3 space-y-2">{selectedRecord.reviewFindings.map((finding, index) => <li key={`${finding.title}-${index}`} className="rounded-lg bg-white/70 p-3 text-[9px] leading-4"><strong>{finding.title}</strong><span className="block">{finding.guidance}</span></li>)}</ul> : null}{selectedRecord.reviewStatus !== "ready" ? <button type="button" onClick={() => { setReviewChatModuleId(selectedHandover.id); setReviewClarification(""); }} className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-xl border border-current bg-white/80 px-4 text-[10px] font-bold"><MessageCircle size={14}/>Ask Wattson / Explain this</button> : null}</div> : <div className="mt-5 rounded-xl border border-line bg-[#f8fbfe] p-4 text-[10px] leading-5 text-muted">Complete the four checks here. Wattson responds immediately to an adverse or uncertain answer.</div>}</div> : null}</div> : <p className="p-6 text-xs text-muted">Finish the Build It modules before creating startup records.</p>}</section>
+      <aside className="card p-5"><div className="eyebrow">Next: monitoring</div><h3 className="mt-2 text-base font-extrabold">{installed ? "Installed system record" : "Finish and connect"}</h3><div className="mt-4 space-y-2 text-xs"><div className="flex items-center justify-between gap-3"><span>Build modules supplied</span><strong>{buildComplete ? "Yes" : "Not yet"}</strong></div><div className="flex items-center justify-between gap-3"><span>Wattson reviews complete</span><strong>{handoverComplete ? "Yes" : "Not yet"}</strong></div></div><p className="mt-4 text-[11px] leading-5 text-muted">After handover, PVIntell opens Connect so you can choose available monitoring options and start watching the system.</p>{error ? <p className="mt-3 rounded-lg bg-[#fff0eb] p-3 text-[11px] text-[#913e31]">{error}</p> : null}<button onClick={() => void finish()} disabled={installed || !buildComplete || !handoverComplete || completing} className="mt-4 w-full rounded-xl bg-brand py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-45">{installed ? "Handover recorded" : completing ? "Updating…" : "Finish & open monitoring"}</button></aside>
     </div>
-  );
+    {reviewChatModuleId && typeof document !== "undefined" ? createPortal(<div className="fixed inset-0 z-[90] grid place-items-center bg-[#07182f]/70 p-4" role="dialog" aria-modal="true" aria-labelledby="review-chat-title"><div className={`w-full max-w-xl rounded-2xl border-2 bg-white p-6 shadow-2xl ${handoverRecords[reviewChatModuleId]?.reviewStatus === "critical_issue" ? "border-[#d94a3a]" : "border-brand"}`}><div className="flex items-start justify-between gap-4"><div><div className={`eyebrow ${handoverRecords[reviewChatModuleId]?.reviewStatus === "critical_issue" ? "text-[#8f2f24]" : "text-brand"}`}>{handoverRecords[reviewChatModuleId]?.reviewStatus === "critical_issue" ? "Wattson safety check" : "Ask Wattson"}</div><h2 id="review-chat-title" className="mt-2 text-xl font-extrabold">{handoverRecords[reviewChatModuleId]?.reviewStatus === "critical_issue" ? "Clarify this issue before continuing" : "What would you like Wattson to explain?"}</h2></div><button type="button" onClick={() => setReviewChatModuleId(undefined)} className="grid size-9 place-items-center rounded-full border border-line" aria-label="Close Wattson follow-up"><X size={16}/></button></div><p className="mt-3 text-xs leading-5 text-muted">{handoverRecords[reviewChatModuleId]?.reviewSummary}</p>{handoverRecords[reviewChatModuleId]?.reviewFindings.length ? <ul className="mt-4 space-y-2">{handoverRecords[reviewChatModuleId].reviewFindings.map((finding, index) => <li key={`${finding.title}-${index}`} className={`rounded-xl p-3 text-[10px] leading-5 ${finding.severity === "critical" ? "bg-[#fff0ed] text-[#8f2f24]" : "bg-[#eef5fc] text-ink"}`}><strong>{finding.title}</strong><span className="block">{finding.guidance}</span></li>)}</ul> : null}<label className="mt-4 block text-[10px] font-bold text-muted">Your question or additional observation<textarea className="field mt-2 min-h-24 resize-y" value={reviewClarification} onChange={(event) => setReviewClarification(event.target.value)} placeholder="Ask what the finding means, what to check next, or add the warning code and what the equipment display shows…"/></label><div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setReviewChatModuleId(undefined)} className="rounded-xl border border-brand px-4 py-3 text-xs font-bold text-brand">Back to checks</button><button type="button" disabled={!reviewClarification.trim() || reviewingModuleId === reviewChatModuleId} onClick={() => { const record = handoverRecords[reviewChatModuleId] ?? emptyHandoverRecord(); void reviewHandover(reviewChatModuleId, { ...record, issues: reviewClarification.trim() }); }} className="rounded-xl bg-brand px-4 py-3 text-xs font-bold text-white disabled:opacity-50">{reviewingModuleId === reviewChatModuleId ? "Wattson replying…" : "Ask Wattson"}</button></div></div></div>, document.body) : null}
+  </div>;
 }
 export function LegacyMonitor({ project, site }: { project: Project; site: Site }) {
   return (

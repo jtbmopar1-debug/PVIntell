@@ -9,6 +9,11 @@ describe("new-system discovery", () => {
     { id: "preference", stage: "design", title: "Preference", noviceHelp: "", type: "text" },
   ];
 
+  it("uses a unique ID for every discovery question", () => {
+    const ids = visibleDiscoveryQuestions({});
+    expect(new Set(ids.map((question) => question.id)).size).toBe(ids.length);
+  });
+
   it("removes only recorded yellow-intake equipment questions from combined discovery", () => {
     const ordinary = visibleDiscoveryQuestions({ utility_relationship: "grid_connected", existing_power_equipment_status: "yes", battery_requirement: "include", generator_requirement: "include" }).map((question) => question.id);
     expect(ordinary).toEqual(expect.arrayContaining(["panel_construction_interest", "existing_power_equipment", "battery_requirement", "generator_requirement", "generator_details", "architecture_preference"]));
@@ -75,6 +80,9 @@ describe("new-system discovery", () => {
       ],
     });
     expect(installedSystemQuestions.find((question) => question.id === "installed_system_knowledge")?.options).toHaveLength(4);
+    expect(installedSystemQuestions.find((question) => question.id === "installed_system_knowledge")?.options
+      ?.filter((option) => ["know_little", "know_nothing"].includes(option.value))
+      .every((option) => option.description.includes("System Capture"))).toBe(true);
     expect(installedSystemQuestions.map((question) => question.id)).not.toContain("existing_proposal_status");
   });
 

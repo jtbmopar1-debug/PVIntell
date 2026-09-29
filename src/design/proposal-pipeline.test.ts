@@ -7,7 +7,7 @@ import { deterministicProposalActions } from "./proposal-action";
 import { siteDiscoveryActions } from "@/discovery/site-actions";
 import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { PUT } from "@/app/api/design-calculator/route";
-import { componentPlanningDetail, createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, ensureSupplementaryMicroinverterRouting, planningNodeDetail, ProposalScopeOverview, recoverRecordedStringLayout, repairCustomEquipmentDraft, schematicCanvasSize, schematicCardDetail, schematicConnectionsForView, tidySchematicNodes, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
+import { componentPlanningDetail, createProposedAsBuiltDraft, ensureInverterProtectiveEarth, ensurePvArrayEarth, ensureSupplementaryMicroinverterRouting, planningNodeDetail, preliminaryConnectionValues, ProposalScopeOverview, recoverRecordedStringLayout, repairCustomEquipmentDraft, schematicCanvasSize, schematicCardDetail, schematicConnectionKey, schematicConnectionsForView, tidySchematicNodes, wattsonPanelSizingIsPlausible } from "@/components/design-calculator";
 import type { DesignCalculatorState, Project } from "@/domain/models";
 import { buildPvArrayPlan, splitPvArrayPlan } from "@/design/pv-array-plan";
 
@@ -31,7 +31,7 @@ function projectStore(mode = "off_grid") {
         return { data: table === "projects" ? structuredClone(project) : [], error: null };
       };
       const query = {
-        select: () => query, eq: () => query, order: () => query, limit: () => query, delete: () => query, insert: () => query,
+        select: () => query, eq: () => query, contains: () => query, order: () => query, limit: () => query, delete: () => query, insert: () => query,
         update: (value: Record<string, unknown>) => { update = value; return query; },
         single: async () => execute(), maybeSingle: async () => execute(),
         then: (resolve: (result: ReturnType<typeof execute>) => unknown) => Promise.resolve(execute()).then(resolve),
@@ -364,7 +364,7 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(layout).toBeUndefined();
   });
 
-  it("does not invent strings in a preliminary proposal from panel count alone", async () => {
+  it("creates a provisional string design in a preliminary proposal", async () => {
     const built = await build({
       ...workshop,
       panel_construction_interest: ["monofacial"],
@@ -374,8 +374,45 @@ describe("discovery → stored proposal → calculator save", () => {
     } as DiscoveryAnswers);
     expect(built.design).not.toHaveProperty("pvStrings");
     expect(built.design).not.toHaveProperty("panelsPerString");
-    expect(built.design.sizingWarnings).toContain("PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.");
-    expect(built.design.pvArrayPlan).toMatchObject({ status: "surface_allocation_required" });
+    expect(built.design.sizingWarnings).toContain("PV strings and independent MPPT inputs are provisionally designed from the available mounting and module data; verify them against the selected inverter's documented limits.");
+    expect(built.design.pvArrayPlan).toMatchObject({
+      status: "surface_allocation_required",
+      arrays: [{ topology: { status: "resolved", strings: expect.arrayContaining([expect.objectContaining({ mpptInput: "MPPT 1" })]) } }],
+    });
+  });
+
+  it("sizes a PV route from the selected array's provisional string design", () => {
+    const pvArrayPlan = buildPvArrayPlan({ panelCount: 14, surfaces: [{ id: "roof", name: "Roof" }] });
+    const design = { pvArrayPlan } as DesignCalculatorState;
+    const calculated = preliminaryConnectionValues({ from: "solar-pv-1", to: "solar-safety", label: "Roof DC", kind: "solar-dc", lengthM: 14 }, design);
+
+    expect(calculated.cableSizeMm2).toBeGreaterThan(0);
+    expect(calculated.notes).toContain("Preliminary PV DC string-cable sizing");
+  });
+
+  it("keeps AC and protective-earth connections between the same equipment distinct", () => {
+    expect(schematicConnectionKey({ from: "inverter", to: "switchboard", kind: "ac", label: "AC output" }))
+      .not.toBe(schematicConnectionKey({ from: "inverter", to: "switchboard", kind: "earth", label: "Inverter protective earth" }));
+  });
+
+  it("does not invent the main earthing conductor size from inverter output current", () => {
+    const calculated = preliminaryConnectionValues(
+      { from: "switchboard", to: "earth", label: "Safety earth and bonding", kind: "earth", lengthM: 8 },
+      { inverterKw: 5, connectionType: "ac_single", electricalStandard: "as_nzs" } as DesignCalculatorState,
+    );
+
+    expect(calculated.cableSizeMm2).toBeUndefined();
+    expect(calculated.notes).toContain("not inferred from the inverter output rating");
+  });
+
+  it("derives an inverter protective earth from its associated AC output circuit", () => {
+    const calculated = preliminaryConnectionValues(
+      { from: "inverter", to: "switchboard", label: "Inverter protective earth", kind: "earth" },
+      { inverterKw: 5, connectionType: "ac_single", electricalStandard: "as_nzs" } as DesignCalculatorState,
+    );
+
+    expect(calculated.configured).toBe(true);
+    expect(calculated.cableSizeMm2).toBeGreaterThan(0);
   });
 
   it("renders mounting arrays without relabelling them as invented PV strings", () => {
@@ -399,8 +436,8 @@ describe("discovery → stored proposal → calculator save", () => {
     } as DesignCalculatorState;
     const draft = createProposedAsBuiltDraft(design);
     expect(draft.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ label: "Main roof", detail: expect.stringContaining("series/parallel") }),
-      expect.objectContaining({ label: "Ground mount", detail: expect.stringContaining("MPPT allocation pending") }),
+      expect.objectContaining({ label: "Main roof", detail: expect.stringContaining("string and MPPT layout requires a panel quantity") }),
+      expect.objectContaining({ label: "Ground mount", detail: expect.stringContaining("string and MPPT layout requires a panel quantity") }),
     ]));
     expect(draft.nodes?.some((node) => /PV\d+.*panels/.test(node.label))).toBe(false);
     const nodeIds = new Set(draft.nodes?.map((node) => node.id));
@@ -411,7 +448,7 @@ describe("discovery → stored proposal → calculator save", () => {
     const mainRoofNode = draft.nodes?.find((node) => node.label === "Main roof");
     expect(mainRoofNode).toBeDefined();
     const formatted = planningNodeDetail(mainRoofNode as NonNullable<typeof mainRoofNode>, design);
-    expect(formatted.detail).toContain("series/parallel string, MPPT input and combiner arrangement pending");
+    expect(formatted.detail).toContain("string and MPPT layout requires a panel quantity");
     expect(formatted.detail).not.toContain("one independent PV string");
     expect(formatted.detail).not.toContain("? x 460 W");
   });
@@ -731,6 +768,22 @@ describe("discovery → stored proposal → calculator save", () => {
       expect.objectContaining({ from: "solar", to: "switchboard" }),
     ]);
     expect(frameBonds?.some((connection) => connection.to.includes("inverter"))).toBe(false);
+  });
+
+  it("loops adjacent array frames and returns to the main earth once", () => {
+    const design = {
+      architecture: "combined_hybrid_inverter",
+      panelCount: 14,
+      panelWatts: 460,
+      pvArrayPlan: buildPvArrayPlan({ panelCount: 14, surfaces: [{ id: "roof-1", name: "Roof 1", capacity: 7 }, { id: "roof-2", name: "Roof 2", capacity: 7 }] }),
+    } as DesignCalculatorState;
+    const bonded = ensurePvArrayEarth(createProposedAsBuiltDraft(design, true));
+    const frameBonds = bonded.connections?.filter((connection) => connection.kind === "earth" && /frame bond/i.test(connection.label));
+
+    expect(frameBonds).toEqual([
+      expect.objectContaining({ from: "solar-pv-1", to: "solar-pv-2" }),
+      expect.objectContaining({ from: "solar-pv-2", to: "switchboard" }),
+    ]);
   });
 
   it("removing the selected load removes its old surge on rebuild", async () => {

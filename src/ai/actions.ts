@@ -12,7 +12,20 @@ import type { DesignCalculatorState } from "@/domain/models";
 // Bump whenever persisted proposal semantics or downstream rendering contracts
 // change. Version 3 forces records already stamped by the incomplete v2 repair
 // back through canonical array/inverter reconciliation.
-export const PROPOSAL_ENGINE_VERSION = 8;
+export const PROPOSAL_ENGINE_VERSION = 9;
+
+function arrayPlanningProfile(design: Record<string, unknown>) {
+  const profile = proposalPanelProfile(design.panelType);
+  const positive = (value: unknown, fallback: number) => Number(value) > 0 ? Number(value) : fallback;
+  return {
+    watts: positive(design.panelWatts, profile.watts),
+    vmpV: positive(design.panelVmpV, profile.vmpV),
+    vocV: positive(design.panelVocV, profile.vocV),
+    impA: positive(design.panelImpA, profile.impA),
+    iscA: positive(design.panelIscA, profile.iscA),
+    electricalBasis: design.panelProfileBasis === "user_equipment" ? "recorded" as const : "representative" as const,
+  };
+}
 
 export function planReplacementConnectionMerge(
   connections: Array<{ id: string; source_ref: string; target_ref: string }>,
@@ -426,6 +439,7 @@ export function reconcileStoredProposal(
         panelCount: Number(current.panelCount) || undefined,
         surfaces: surfaceAssessment.faces,
         existingPanelGroup: current.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
+        panelProfile: arrayPlanningProfile(current),
       });
     else delete current.pvArrayPlan;
     const panelCount = Number(current.panelCount);
@@ -471,7 +485,7 @@ export function reconcileStoredProposal(
         ? "The proposal engine changed after this user-adjusted design. Its internally consistent string topology has been preserved but still requires equipment and local-rule review."
         : hasFlatTopology
           ? "The proposal engine changed after this user-adjusted design. Its inconsistent or surface-ambiguous legacy string topology was removed; array allocation and selected inverter MPPT/input limits must establish the replacement."
-          : "The proposal engine changed after this user-adjusted design. No string topology was inferred; array allocation and selected inverter MPPT/input limits must establish it.",
+          : "The proposal engine changed after this user-adjusted design. A provisional string and MPPT layout was generated and must be verified against the selected equipment.",
       ...((current.inverterPlan as { message?: string } | undefined)?.message ? [(current.inverterPlan as { message: string }).message] : []),
     ])];
     settings.designCalculator = current;
@@ -504,11 +518,12 @@ export function reconcileStoredProposal(
       panelCount: Number(calculator.panelCount) || undefined,
       surfaces: surfaceAssessment.faces,
       existingPanelGroup: calculator.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
+      panelProfile: arrayPlanningProfile(calculator),
     });
   else delete calculator.pvArrayPlan;
   calculator.sizingWarnings = [...new Set([
     ...(Array.isArray(calculator.sizingWarnings) ? calculator.sizingWarnings.map(String) : []),
-    "PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.",
+    "PV strings and independent MPPT inputs are provisionally designed from the available mounting and module data; verify them against the selected inverter's documented limits.",
     ...((calculator.inverterPlan as { message?: string } | undefined)?.message ? [(calculator.inverterPlan as { message: string }).message] : []),
   ])];
   delete calculator.proposedAsBuiltDraft;
@@ -1313,13 +1328,25 @@ export async function applyWattsonActions(
       const previous = settings.designCalculator && typeof settings.designCalculator === "object"
         ? settings.designCalculator as Record<string, unknown>
         : {};
+      const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
+        ? settings.designDiscovery as Record<string, { value?: unknown }>
+        : {};
       const previousPanelWatts = Number(previous.panelWatts) || undefined;
       const useDefaultCandidate = input.existing_panel_available_count === undefined
         && !previous.existingPanelGroup
         && !(previous.updatedBy === "user" && previous.panelProfileBasis === "user_equipment");
+      const mountingContext = JSON.stringify(discovery.proposed_panel_location?.value ?? "").toLowerCase();
+      const interestContext = JSON.stringify(discovery.panel_construction_interest?.value ?? "").toLowerCase();
+      const suggestedPanelType = input.panel_type !== "not_selected"
+        ? input.panel_type
+        : /bifacial/.test(interestContext) && /ground|fence|carport|pergola|canopy/.test(mountingContext)
+          ? "bifacial" as const
+          : /flexible|lightweight/.test(interestContext)
+            ? "flexible" as const
+            : "monofacial" as const;
       const candidate = useDefaultCandidate ? {
         ...defaultProposalPanel,
-        ...proposalPanelProfile(input.panel_type),
+        ...proposalPanelProfile(suggestedPanelType),
       } : undefined;
       const representativePanelWatts = input.representative_panel_watts ?? candidate?.watts ?? previousPanelWatts ?? defaultProposalPanel.watts;
       const sizing = validatePreliminarySizing(
@@ -1328,9 +1355,6 @@ export async function applyWattsonActions(
         String(current.data.mode),
         candidate ? { lengthMm: candidate.lengthMm, widthMm: candidate.widthMm } : undefined,
       );
-      const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
-        ? settings.designDiscovery as Record<string, { value?: unknown }>
-        : {};
       const recordedBatteryRequirement = String(discovery.battery_requirement?.value ?? "").trim().toLowerCase();
       const batteryExplicitlyExcluded = /^(?:none|no battery storage)$/.test(recordedBatteryRequirement);
       const standaloneMode = ["off-grid", "off_grid"].includes(String(current.data.mode).toLowerCase());
@@ -1422,7 +1446,7 @@ export async function applyWattsonActions(
         startingStage: input.starting_stage,
         expansionPath: input.expansion_path,
         nextValidation: input.next_validation,
-        panelType: candidate?.panelType ?? input.panel_type,
+        panelType: candidate?.panelType ?? suggestedPanelType,
         inverterArrangement: input.inverter_arrangement,
         panelProfileBasis: candidate ? "representative" : "user_equipment",
         mountingLocations: String(discovery.proposed_panel_location?.value ?? "").split(",").map((location) => location.trim()).filter(Boolean),
@@ -1510,7 +1534,7 @@ export async function applyWattsonActions(
           assumedNonSolarLoadKwh: sizing.sizing.assumedNonSolarLoadKwh,
         },
         sizingAssumptions: [...sizing.sizing.assumptions, ...(solarFirstUpgrade ? [`Solar-first proposal adds the panel and inverter capacity needed to assess the recorded ${sizing.sizing.startupPeakKw} kW motor-start demand before relying on generator or grid support.`] : [])],
-        sizingWarnings: [...sizing.sizing.warnings, ...(sizing.batteryUsableKwh && !batteryChemistry ? [BATTERY_CHEMISTRY_REQUIRED_WARNING] : []), "PV string topology withheld until panel allocation by mounting surface and the selected inverter's documented MPPT/input limits are recorded.", ...(inverterPlan ? [inverterPlan.message] : []), ...solarFirstWarnings, ...generatorSizingWarnings, ...generatorDetails.warnings, ...existingPanelWarnings, ...(candidate ? defaultProposalPanelWarnings : [])],
+        sizingWarnings: [...sizing.sizing.warnings, ...(sizing.batteryUsableKwh && !batteryChemistry ? [BATTERY_CHEMISTRY_REQUIRED_WARNING] : []), `${candidate?.label ?? suggestedPanelType} is the provisional panel type selected from the recorded mounting conditions; change it if the actual product or rear-side exposure differs.`, "PV strings and independent MPPT inputs are provisionally designed from the available mounting and module data; verify them against the selected inverter's documented limits.", ...(inverterPlan ? [inverterPlan.message] : []), ...solarFirstWarnings, ...generatorSizingWarnings, ...generatorDetails.warnings, ...existingPanelWarnings, ...(candidate ? defaultProposalPanelWarnings : [])],
         updatedAt: new Date().toISOString(),
         updatedBy: "wattson",
         proposalEngineVersion: PROPOSAL_ENGINE_VERSION,
@@ -1530,6 +1554,7 @@ export async function applyWattsonActions(
           panelCount: Number(nextDesign.panelCount) || undefined,
           surfaces: finalSurfaceAssessment.faces,
           existingPanelGroup: nextDesign.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
+          panelProfile: arrayPlanningProfile(nextDesign),
         });
       else delete nextDesign.pvArrayPlan;
       // These legacy flat fields cannot represent multiple arrays or MPPT
@@ -1610,6 +1635,7 @@ export async function applyWattsonActions(
         panelCount,
         surfaces: surfaceAssessment.faces,
         existingPanelGroup: calculator.existingPanelGroup as DesignCalculatorState["existingPanelGroup"],
+        panelProfile: arrayPlanningProfile(calculator),
       });
       if (dependentSizing.batteryUsableKwh) {
         calculator.batteryUsableKwh = dependentSizing.batteryUsableKwh;

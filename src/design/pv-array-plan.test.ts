@@ -25,20 +25,20 @@ describe("PV array proposal hierarchy", () => {
         { id: "west-roof", name: "Panel area 2", capacity: 22, direction: "west" },
       ],
     });
-    expect(plan.status).toBe("topology_unresolved");
+    expect(plan.status).toBe("resolved");
     expect(plan.arrays).toHaveLength(2);
     expect(plan.arrays.map((array) => array.allocatedPanelCount)).toEqual([18, 17]);
     expect(plan.arrays.reduce((total, array) => total + (array.allocatedPanelCount ?? 0), 0)).toBe(35);
     expect(plan.arrays.every((array) => array.topology.kind === "series_parallel")).toBe(true);
-    expect(plan.arrays.every((array) => array.topology.strings.length === 0)).toBe(true);
-    expect(plan.arrays.every((array) => array.topology.combinerRequirement === "pending")).toBe(true);
+    expect(plan.arrays.map((array) => array.topology.strings.map((string) => string.panelsInSeries))).toEqual([[9, 9], [9, 8]]);
+    expect(plan.arrays.every((array) => array.topology.combinerRequirement === "not_required")).toBe(true);
   });
 
-  it("represents one array without inventing its series length or parallel grouping", () => {
+  it("creates a provisional string and MPPT design for one array", () => {
     const plan = buildPvArrayPlan({ panelCount: 16, surfaces: [{ id: "ground", name: "Ground mount", capacity: 20 }] });
     expect(plan).toMatchObject({
-      status: "topology_unresolved",
-      arrays: [{ id: "ground", allocatedPanelCount: 16, topology: { kind: "series_parallel", status: "pending_surface_allocation_and_equipment", strings: [], combinerRequirement: "pending" } }],
+      status: "resolved",
+      arrays: [{ id: "ground", allocatedPanelCount: 16, panelElectricalBasis: "representative", topology: { kind: "series_parallel", status: "resolved", strings: [{ panelsInSeries: 8, mpptInput: "MPPT 1" }, { panelsInSeries: 8, mpptInput: "MPPT 2" }], combinerRequirement: "not_required" } }],
     });
   });
 
@@ -47,7 +47,7 @@ describe("PV array proposal hierarchy", () => {
     const split = splitPvArrayPlan(plan, 0, 2);
 
     expect(split).toMatchObject({
-      status: "topology_unresolved",
+      status: "resolved",
       configurationSource: "user",
       arrays: [
         { id: "main-roof-part-1", name: "Main roof 1", allocatedPanelCount: 5 },
@@ -55,7 +55,7 @@ describe("PV array proposal hierarchy", () => {
       ],
     });
     expect(split.arrays.reduce((total, array) => total + (array.allocatedPanelCount ?? 0), 0)).toBe(10);
-    expect(split.arrays.every((array) => array.topology.strings.length === 0)).toBe(true);
+    expect(split.arrays.every((array) => array.topology.strings.length === 1)).toBe(true);
   });
 
   it("balances a non-divisible array split without losing panels", () => {

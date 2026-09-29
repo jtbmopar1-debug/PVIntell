@@ -78,7 +78,7 @@ export function SystemEquipmentOverview({ project, onAskWattson }: { project: Pr
 
   return <div className="animate-rise space-y-7">
     <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-      <div><div className="eyebrow">Installed system record</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} System Overview</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted">The commissioned system’s actual equipment and as-built records.</p></div>
+      <div><div className="eyebrow">Installed system record</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.05em] md:text-[38px]">{project.name} System Overview</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted">The handover-recorded system’s actual equipment and as-built records.</p></div>
       <div className="flex flex-wrap gap-2">{!installed && <button onClick={() => router.push(`${base}/design`)} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-4 text-xs font-bold text-brand"><Zap size={15}/>Proposed design</button>}<button onClick={() => router.push(`${base}/schematic`)} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-4 text-xs font-bold text-brand"><Waypoints size={15}/>As-built schematic</button><button onClick={() => router.push(`${base}/photos`)} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-4 text-xs font-bold"><Camera size={15}/>Photos</button><button onClick={onAskWattson} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-5 text-xs font-bold text-white"><Zap size={15}/>Tell Wattson about equipment</button></div>
     </div>
 

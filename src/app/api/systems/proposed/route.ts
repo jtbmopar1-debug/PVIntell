@@ -41,7 +41,7 @@ const mergeDiscoveryEquipmentAnswers = (current: Record<string, unknown>, input:
 
 const arrayRows = (projectId: string, input: z.infer<typeof schema>, warnings: string[]) => input.arrays.map((array) => ({ ...(array.id ? { id: array.id } : {}), project_id: projectId, name: array.name, manufacturer: array.manufacturer || null, panel_model: array.model || null, panel_type: array.panelType, panel_count: array.panelCount, panel_watts: array.panelWatts, strings: array.strings ?? null, panels_per_string: array.panelsPerString ?? null, maximum_power_voltage_v: array.vmp ?? null, open_circuit_voltage_v: array.voc ?? null, maximum_power_current_a: array.imp ?? null, short_circuit_current_a: array.isc ?? null, tilt_degrees: array.tilt ?? null, orientation_degrees: array.orientation ?? null, installation_notes: array.location || null, specifications: { "Mounting option": array.mount, "Proposal status": warnings.length ? "Compatibility review pending" : "Compatibility checks passed" }, confidence: "estimated" }));
 
-const componentRows = (projectId: string, input: z.infer<typeof schema>, warnings: string[]) => input.components.map((component) => ({ ...(component.id ? { id: component.id } : {}), project_id: projectId, type: component.type, display_name: component.name, manufacturer: component.manufacturer || null, model: component.model || null, quantity: component.quantity, notes: component.notes || null, specifications: { ...(component.rating ? { "Rated power": component.type === "inverter" ? `${component.rating} kW` : `${component.rating} W` } : {}), ...(component.type === "battery" && component.batteryKwh ? { "Nominal energy": `${component.batteryKwh} kWh` } : {}), ...(component.type === "battery" && component.batteryAh ? { "Rated capacity": `${component.batteryAh} Ah` } : {}), ...(component.type === "battery" && component.batteryType ? { "Battery type": component.batteryType.replaceAll("_", " ") } : {}), ...(component.type === "battery" && component.bmsCompatibility ? { "BMS compatibility": component.bmsCompatibility.replaceAll("_", " ") } : {}), ...(component.inverterType ? { "Inverter type": component.inverterType.replaceAll("_", " ") } : {}), ...(component.generatorFuelType ? { "Fuel type": component.generatorFuelType.replaceAll("_", " ") } : {}), ...(component.voltage ? { [component.type === "battery" ? "Nominal battery voltage" : "AC output voltage"]: `${component.voltage} V` } : {}), ...(component.mpptInputs ? { "MPPT count": String(component.mpptInputs) } : {}), ...(component.mpptMin ? { "MPPT minimum voltage": `${component.mpptMin} V` } : {}), ...(component.mpptMax ? { "MPPT maximum voltage": `${component.mpptMax} V` } : {}), ...(component.maxPvVoltage ? { "Maximum PV voltage": `${component.maxPvVoltage} V` } : {}), ...(component.maxInputCurrent ? { "Maximum PV input current": `${component.maxInputCurrent} A` } : {}), ...(component.batteryVoltageMin ? { "Battery voltage minimum": `${component.batteryVoltageMin} V` } : {}), ...(component.batteryVoltageMax ? { "Battery voltage maximum": `${component.batteryVoltageMax} V` } : {}), "Proposal status": warnings.length ? "Compatibility review pending" : "Compatibility checks passed" }, confidence: "estimated" }));
+const componentRows = (projectId: string, input: z.infer<typeof schema>, warnings: string[]) => input.components.map((component) => ({ ...(component.id ? { id: component.id } : {}), project_id: projectId, type: component.type, display_name: component.name, manufacturer: component.manufacturer || null, model: component.model || null, quantity: component.quantity, notes: component.notes || null, specifications: { ...(component.rating ? { "Rated power": component.type === "battery" ? `${component.rating} W` : `${component.rating} kW` } : {}), ...(component.type === "battery" && component.batteryKwh ? { "Nominal energy": `${component.batteryKwh} kWh` } : {}), ...(component.type === "battery" && component.batteryAh ? { "Rated capacity": `${component.batteryAh} Ah` } : {}), ...(component.type === "battery" && component.batteryType ? { "Battery type": component.batteryType.replaceAll("_", " ") } : {}), ...(component.type === "battery" && component.bmsCompatibility ? { "BMS compatibility": component.bmsCompatibility.replaceAll("_", " ") } : {}), ...(component.inverterType ? { "Inverter type": component.inverterType.replaceAll("_", " ") } : {}), ...(component.generatorFuelType ? { "Fuel type": component.generatorFuelType.replaceAll("_", " ") } : {}), ...(component.voltage ? { [component.type === "battery" ? "Nominal battery voltage" : "AC output voltage"]: `${component.voltage} V` } : {}), ...(component.mpptInputs ? { "MPPT count": String(component.mpptInputs) } : {}), ...(component.mpptMin ? { "MPPT minimum voltage": `${component.mpptMin} V` } : {}), ...(component.mpptMax ? { "MPPT maximum voltage": `${component.mpptMax} V` } : {}), ...(component.maxPvVoltage ? { "Maximum PV voltage": `${component.maxPvVoltage} V` } : {}), ...(component.maxInputCurrent ? { "Maximum PV input current": `${component.maxInputCurrent} A` } : {}), ...(component.batteryVoltageMin ? { "Battery voltage minimum": `${component.batteryVoltageMin} V` } : {}), ...(component.batteryVoltageMax ? { "Battery voltage maximum": `${component.batteryVoltageMax} V` } : {}), "Proposal status": warnings.length ? "Compatibility review pending" : "Compatibility checks passed" }, confidence: "estimated" }));
 
 function compatibilityIssues(input: z.infer<typeof schema>) {
   const blockers: string[] = [];
@@ -132,14 +132,12 @@ export async function POST(request: Request) {
       ...(specifiedInverter ? { designCalculator: { inverterKw: specifiedInverter.rating, updatedBy: "user" } } : {}),
     } }).eq("id", systemId).eq("owner_id", userId);
     if (project.error) throw project.error;
-    if (parsed.data.arrays.length) {
-      const arrays = await supabase.from("pv_arrays").insert(arrayRows(systemId, parsed.data, issues.warnings));
-      if (arrays.error) throw arrays.error;
-    }
-    if (parsed.data.components.length) {
-      const components = await supabase.from("system_components").insert(componentRows(systemId, parsed.data, issues.warnings));
-      if (components.error) throw components.error;
-    }
+    const [arrays, components] = await Promise.all([
+      parsed.data.arrays.length ? supabase.from("pv_arrays").insert(arrayRows(systemId, parsed.data, issues.warnings)) : Promise.resolve({ error: null }),
+      parsed.data.components.length ? supabase.from("system_components").insert(componentRows(systemId, parsed.data, issues.warnings)) : Promise.resolve({ error: null }),
+    ]);
+    if (arrays.error) throw arrays.error;
+    if (components.error) throw components.error;
     if (parsed.data.discoveryContext) {
       let discoveryAnswers: Record<string, unknown> = {};
       let conversationId: string | null = null;
@@ -157,6 +155,14 @@ export async function POST(request: Request) {
       const questionnaireAnswers = { ...mergeDiscoveryEquipmentAnswers(discoveryAnswers, parsed.data), existing_proposal_status: "yes" };
       const questionnaire = await supabase.from("questionnaire_responses").upsert({ project_id: systemId, template_key: "guided_new_system", template_version: 1, status: "draft", question_id: questionAfterProposalIntake(questionnaireAnswers), answers: questionnaireAnswers }, { onConflict: "project_id,template_key" });
       if (questionnaire.error) throw questionnaire.error;
+      if (!parsed.data.discoveryContext.draftId) {
+        const currentProfile = await supabase.from("profiles").select("onboarding_assessment").eq("id", userId).single();
+        if (currentProfile.error) throw currentProfile.error;
+        const assessment = { ...((currentProfile.data.onboarding_assessment ?? {}) as Record<string, unknown>) };
+        delete assessment.guidedNewSystem;
+        const clearedDraft = await supabase.from("profiles").update({ onboarding_assessment: assessment }).eq("id", userId);
+        if (clearedDraft.error) throw clearedDraft.error;
+      }
       if (conversationId) {
         const linkedConversation = await supabase.from("user_conversations").update({ site_id: siteId, project_id: systemId }).eq("id", conversationId).eq("owner_id", userId);
         if (linkedConversation.error) throw linkedConversation.error;
@@ -191,15 +197,17 @@ export async function PATCH(request: Request) {
   const settings = (project.data?.settings ?? {}) as Record<string, unknown>;
   if (project.error || !project.data || settings.schematicOrigin !== "structured_proposal_intake") return Response.json({ error: "Proposed plan not found." }, { status: 404 });
   if (parsed.data.siteId !== project.data.site_id) return Response.json({ error: "A saved proposed plan cannot be moved to another Site." }, { status: 400 });
-  const savedArrays = parsed.data.arrays.length ? await supabase.from("pv_arrays").upsert(arrayRows(parsed.data.systemId, parsed.data, issues.warnings), { onConflict: "id" }).select("id") : { data: [], error: null };
-  if (savedArrays.error) return Response.json({ error: savedArrays.error.message }, { status: 400 });
-  const savedComponents = parsed.data.components.length ? await supabase.from("system_components").upsert(componentRows(parsed.data.systemId, parsed.data, issues.warnings), { onConflict: "id" }).select("id") : { data: [], error: null };
-  if (savedComponents.error) return Response.json({ error: savedComponents.error.message }, { status: 400 });
   const specifiedInverter = parsed.data.components.find((component) => component.type === "inverter" && component.rating);
   const previousCalculator = settings.designCalculator && typeof settings.designCalculator === "object" ? settings.designCalculator as Record<string, unknown> : {};
   const discoveryOrigin = settings.workflowOrigin === "discovery";
   const updatedSettings = { ...settings, systemStatus: discoveryOrigin ? "discovery" : "proposed", schematicOrigin: "structured_proposal_intake", ...(specifiedInverter ? { designCalculator: { ...previousCalculator, inverterKw: specifiedInverter.rating, updatedBy: "user" } } : {}) };
-  const updated = await supabase.from("projects").update({ name: parsed.data.systemName, mode: parsed.data.projectType.replace("-", "_"), phase: parsed.data.discoveryContext?.continueDiscovery ? "discover" : "design", settings: updatedSettings }).eq("id", parsed.data.systemId).eq("owner_id", userId);
+  const [savedArrays, savedComponents, updated] = await Promise.all([
+    parsed.data.arrays.length ? supabase.from("pv_arrays").upsert(arrayRows(parsed.data.systemId, parsed.data, issues.warnings), { onConflict: "id" }).select("id") : Promise.resolve({ data: [], error: null }),
+    parsed.data.components.length ? supabase.from("system_components").upsert(componentRows(parsed.data.systemId, parsed.data, issues.warnings), { onConflict: "id" }).select("id") : Promise.resolve({ data: [], error: null }),
+    supabase.from("projects").update({ name: parsed.data.systemName, mode: parsed.data.projectType.replace("-", "_"), phase: parsed.data.discoveryContext?.continueDiscovery ? "discover" : "design", settings: updatedSettings }).eq("id", parsed.data.systemId).eq("owner_id", userId),
+  ]);
+  if (savedArrays.error) return Response.json({ error: savedArrays.error.message }, { status: 400 });
+  if (savedComponents.error) return Response.json({ error: savedComponents.error.message }, { status: 400 });
   if (updated.error) return Response.json({ error: updated.error.message }, { status: 400 });
   if (parsed.data.discoveryContext) {
     const questionnaire = await supabase.from("questionnaire_responses").select("answers").eq("project_id", parsed.data.systemId).eq("template_key", "guided_new_system").maybeSingle();
@@ -209,7 +217,11 @@ export async function PATCH(request: Request) {
     const savedAnswers = await supabase.from("questionnaire_responses").upsert({ project_id: parsed.data.systemId, template_key: "guided_new_system", template_version: 1, status: "draft", question_id: questionAfterProposalIntake(nextAnswers), answers: nextAnswers }, { onConflict: "project_id,template_key" });
     if (savedAnswers.error) return Response.json({ error: savedAnswers.error.message }, { status: 400 });
   }
-  if (parsed.data.removedArrayIds.length) await supabase.from("pv_arrays").delete().eq("project_id", parsed.data.systemId).in("id", parsed.data.removedArrayIds);
-  if (parsed.data.removedComponentIds.length) await supabase.from("system_components").delete().eq("project_id", parsed.data.systemId).in("id", parsed.data.removedComponentIds);
+  const [removedArrays, removedComponents] = await Promise.all([
+    parsed.data.removedArrayIds.length ? supabase.from("pv_arrays").delete().eq("project_id", parsed.data.systemId).in("id", parsed.data.removedArrayIds) : Promise.resolve({ error: null }),
+    parsed.data.removedComponentIds.length ? supabase.from("system_components").delete().eq("project_id", parsed.data.systemId).in("id", parsed.data.removedComponentIds) : Promise.resolve({ error: null }),
+  ]);
+  if (removedArrays.error) return Response.json({ error: removedArrays.error.message }, { status: 400 });
+  if (removedComponents.error) return Response.json({ error: removedComponents.error.message }, { status: 400 });
   return Response.json({ siteId: project.data.site_id, systemId: parsed.data.systemId, warnings: issues.warnings, url: parsed.data.discoveryContext?.continueDiscovery ? `/discovery/new-system?edit=${parsed.data.systemId}` : `/sites/${project.data.site_id}/systems/${parsed.data.systemId}/schematic` });
 }

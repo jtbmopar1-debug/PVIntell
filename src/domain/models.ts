@@ -154,7 +154,7 @@ export interface DesignCalculatorState {
     architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
     flow: string[];
     nodes?: Array<{ id: string; label: string; detail: string; image: string; x: number; y: number; recordRef?: string; installed?: boolean; installedRecordId?: string; reviewed?: boolean; notes?: string; authorityCheck?: boolean }>;
-    connections?: Array<{ from: string; to: string; label: string; kind: "solar-dc" | "battery-dc" | "ac" | "earth"; lengthM?: number; lengthBasis?: "estimated" | "measured"; cableSizeMm2?: number; protectionAmps?: number; notes?: string; authorityCheck?: boolean; configured?: boolean }>;
+    connections?: Array<{ from: string; to: string; label: string; kind: "solar-dc" | "battery-dc" | "ac" | "earth"; lengthM?: number; lengthBasis?: "estimated" | "measured"; cableSizeMm2?: number; protectionAmps?: number; notes?: string; authorityCheck?: boolean; configured?: boolean; provisionalInterface?: boolean }>;
     panelCount?: number;
     panelWatts?: number;
     pvStrings?: number;
@@ -221,6 +221,13 @@ export interface DesignCalculatorState {
       direction?: string;
       pitch?: string;
       allocatedPanelCount?: number;
+      /** Electrical values used for this array's provisional string design. */
+      panelWatts?: number;
+      panelVmpV?: number;
+      panelVocV?: number;
+      panelImpA?: number;
+      panelIscA?: number;
+      panelElectricalBasis?: "recorded" | "representative";
       topology: {
         kind: "series" | "parallel" | "series_parallel";
         status: "pending_surface_allocation_and_equipment" | "resolved";
