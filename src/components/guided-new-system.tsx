@@ -45,11 +45,12 @@ function discoveryQuestionForUnits(question: DiscoveryQuestion, distance: UnitPr
   return { ...question, options: question.options.map((option) => ({ ...option, label: evTravelLabels[distance][option.value] ?? option.label })) };
 }
 
-export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestionId, discoveryDraftId, initialDiscoveryConversationId, existingSystemId, proposedEquipment = [], siteDiscoveryId, returnUrl, stageFilter }: {
+export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestionId, forceInitialQuestionId, discoveryDraftId, initialDiscoveryConversationId, existingSystemId, proposedEquipment = [], siteDiscoveryId, returnUrl, stageFilter }: {
   profile: OnboardingAnswers;
   sites: DiscoverySite[];
   initialAnswers: DiscoveryAnswers;
   initialQuestionId?: string;
+  forceInitialQuestionId?: string;
   discoveryDraftId?: string;
   initialDiscoveryConversationId?: string;
   existingSystemId?: string;
@@ -73,6 +74,8 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     .map((question) => discoveryQuestionForUnits(question, unitPreferences.distance)), [combinedInitialSetup, existingSystemId, siteDiscoveryId, stageFilter, unitPreferences.distance]);
   const initialQuestions = questionsFor(normalizedInitialAnswers);
   const [index, setIndex] = useState(() => {
+    const forcedIndex = initialQuestions.findIndex((question) => question.id === forceInitialQuestionId);
+    if (forcedIndex >= 0) return forcedIndex;
     const completionContext = { combinedInitialSetup, hasSavedSites: sites.length > 0 };
     const firstIncompleteIndex = initialQuestions.findIndex((question) => !guidedQuestionComplete(question, normalizedInitialAnswers, completionContext));
     const requestedIndex = initialQuestions.findIndex((question) => question.id === initialQuestionId);

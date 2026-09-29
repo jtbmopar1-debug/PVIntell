@@ -5,7 +5,7 @@ import type { DiscoveryAnswers } from "@/discovery/new-system";
 import { createClient } from "@/lib/supabase/server";
 import type { OnboardingAnswers } from "@/onboarding/assessment";
 
-export default async function NewSystemDiscoveryPage({ searchParams }: { searchParams: Promise<{ edit?: string; stage?: string; draft?: string; new?: string }> }) {
+export default async function NewSystemDiscoveryPage({ searchParams }: { searchParams: Promise<{ edit?: string; stage?: string; draft?: string; new?: string; question?: string }> }) {
   const supabase = await createClient();
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
@@ -16,7 +16,7 @@ export default async function NewSystemDiscoveryPage({ searchParams }: { searchP
   const sites = await supabase.from("sites").select("id,name,location,latitude,longitude,timezone,location_confirmed").eq("owner_id", userId).order("created_at");
   if (sites.error) throw new Error(sites.error.message);
   const assessment = (profile.data.onboarding_assessment ?? {}) as OnboardingAnswers & { guidedNewSystem?: { answers?: DiscoveryAnswers; questionId?: string } };
-  const { edit, stage, draft, new: startNew } = await searchParams;
+  const { edit, stage, draft, new: startNew, question } = await searchParams;
   if (startNew === "1") redirect(`/discovery/new-system?draft=${randomUUID()}`);
   let editAnswers: DiscoveryAnswers | undefined;
   let draftAnswers: DiscoveryAnswers | undefined;
@@ -75,5 +75,5 @@ export default async function NewSystemDiscoveryPage({ searchParams }: { searchP
     draftConversationId = savedDraft.data?.conversation_id ?? undefined;
   }
   const discoveryScope = edit ? `system:${edit}` : draft ? `draft:${draft}` : "unsaved";
-  return <GuidedNewSystem key={discoveryScope} profile={assessment} sites={sites.data ?? []} initialAnswers={editAnswers ?? draftAnswers ?? assessment.guidedNewSystem?.answers ?? {}} initialQuestionId={draftQuestionId ?? assessment.guidedNewSystem?.questionId} discoveryDraftId={draft} initialDiscoveryConversationId={draftConversationId} existingSystemId={edit} proposedEquipment={proposedEquipment} returnUrl={returnUrl} stageFilter={stage === "site" ? "site" : undefined}/>;
+  return <GuidedNewSystem key={`${discoveryScope}:${question ?? "resume"}`} profile={assessment} sites={sites.data ?? []} initialAnswers={editAnswers ?? draftAnswers ?? assessment.guidedNewSystem?.answers ?? {}} initialQuestionId={draftQuestionId ?? assessment.guidedNewSystem?.questionId} forceInitialQuestionId={question} discoveryDraftId={draft} initialDiscoveryConversationId={draftConversationId} existingSystemId={edit} proposedEquipment={proposedEquipment} returnUrl={returnUrl} stageFilter={stage === "site" ? "site" : undefined}/>;
 }

@@ -51,31 +51,35 @@ export async function GET(request: Request) {
       return Response.json({ results });
     }
     const [profile, fallbackSite] = await Promise.all([
-      supabase.from("profiles").select("home_location").eq("id", claims.data.claims.sub).maybeSingle(),
+      supabase.from("profiles").select("home_location,timezone").eq("id", claims.data.claims.sub).maybeSingle(),
       supabase.from("sites").select("location,latitude,longitude").eq("owner_id", claims.data.claims.sub).eq("location_confirmed", true).not("latitude", "is", null).not("longitude", "is", null).limit(1).maybeSingle(),
     ]);
     let accountCountry: string | undefined;
     let homeLatitude: number | undefined;
     let homeLongitude: number | undefined;
     const accountLocation = profile.data?.home_location?.trim();
-    if (accountLocation) {
-      const accountLocationResponse = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(accountLocation)}&limit=1&lang=en`, { next: { revalidate: 604_800 } });
-      if (accountLocationResponse.ok) {
-        const accountLocationBody = await accountLocationResponse.json() as { features?: PhotonFeature[] };
-        const homeMatch = accountLocationBody.features?.[0];
-        accountCountry = homeMatch?.properties?.countrycode?.toUpperCase();
-        const [longitude, latitude] = homeMatch?.geometry?.coordinates ?? [Number.NaN, Number.NaN];
-        if (Number.isFinite(latitude) && Number.isFinite(longitude)) { homeLatitude = latitude; homeLongitude = longitude; }
-      }
-    }
-    if ((homeLatitude == null || homeLongitude == null) && fallbackSite.data?.latitude != null && fallbackSite.data.longitude != null) {
+    // A confirmed Site is stronger evidence than an account-level region.
+    // Broad names such as Otaki can exist in several countries, so never let
+    // the geocoder's arbitrary first match override the user's confirmed Site.
+    if (fallbackSite.data?.latitude != null && fallbackSite.data.longitude != null) {
       homeLatitude = Number(fallbackSite.data.latitude); homeLongitude = Number(fallbackSite.data.longitude);
-    }
-    if (!accountCountry && fallbackSite.data?.latitude != null && fallbackSite.data.longitude != null) {
-      const siteCountryResponse = await fetch(`https://photon.komoot.io/reverse?lat=${Number(fallbackSite.data.latitude)}&lon=${Number(fallbackSite.data.longitude)}&limit=1&lang=en`, { next: { revalidate: 604_800 } });
+      const siteCountryResponse = await fetch(`https://photon.komoot.io/reverse?lat=${homeLatitude}&lon=${homeLongitude}&limit=1&lang=en`, { next: { revalidate: 604_800 } });
       if (siteCountryResponse.ok) {
         const siteCountryBody = await siteCountryResponse.json() as { features?: PhotonFeature[] };
         accountCountry = siteCountryBody.features?.[0]?.properties?.countrycode?.toUpperCase();
+      }
+    } else if (accountLocation) {
+      const accountLocationResponse = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(accountLocation)}&limit=10&lang=en`, { next: { revalidate: 604_800 } });
+      if (accountLocationResponse.ok) {
+        const accountLocationBody = await accountLocationResponse.json() as { features?: PhotonFeature[] };
+        const expectedTimezone = profile.data?.timezone;
+        const homeMatch = accountLocationBody.features?.find((feature) => {
+          const [longitude, latitude] = feature.geometry?.coordinates ?? [Number.NaN, Number.NaN];
+          return Number.isFinite(latitude) && Number.isFinite(longitude) && (!expectedTimezone || expectedTimezone === "UTC" || timezoneFor(latitude, longitude) === expectedTimezone);
+        });
+        accountCountry = homeMatch?.properties?.countrycode?.toUpperCase();
+        const [longitude, latitude] = homeMatch?.geometry?.coordinates ?? [Number.NaN, Number.NaN];
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) { homeLatitude = latitude; homeLongitude = longitude; }
       }
     }
     const preferredCountry = accountCountry;
