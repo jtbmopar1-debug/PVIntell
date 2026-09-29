@@ -77,6 +77,8 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     const firstIncompleteIndex = initialQuestions.findIndex((question) => !guidedQuestionComplete(question, normalizedInitialAnswers, completionContext));
     const requestedIndex = initialQuestions.findIndex((question) => question.id === initialQuestionId);
     if (requestedIndex >= 0) {
+      const requestedComplete = guidedQuestionComplete(initialQuestions[requestedIndex], normalizedInitialAnswers, completionContext);
+      if (requestedComplete) return firstIncompleteIndex < 0 ? initialQuestions.length : firstIncompleteIndex;
       if (firstIncompleteIndex < 0) return requestedIndex;
       const firstIncompleteStage = discoveryStages.findIndex((stage) => stage.id === initialQuestions[firstIncompleteIndex].stage);
       const requestedStage = discoveryStages.findIndex((stage) => stage.id === initialQuestions[requestedIndex].stage);
