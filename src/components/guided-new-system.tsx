@@ -223,10 +223,14 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   async function next() {
     if (!question) return;
     if (question.id === "site_name") {
-      const savedAnswers = await save(answers, "existing_system_status");
+      const currentQuestions = questionsFor(answers);
+      const currentIndex = currentQuestions.findIndex((item) => item.id === question.id);
+      const nextQuestionId = currentQuestions[currentIndex + 1]?.id;
+      const savedAnswers = await save(answers, nextQuestionId);
       if (!savedAnswers) return;
       const nextQuestions = questionsFor(savedAnswers);
-      setIndex(Math.max(0, nextQuestions.findIndex((item) => item.id === "existing_system_status")));
+      const nextIndex = nextQuestionId ? nextQuestions.findIndex((item) => item.id === nextQuestionId) : -1;
+      setIndex(nextIndex >= 0 ? nextIndex : Math.min(currentIndex + 1, nextQuestions.length));
       return;
     }
     const nextQuestions = questionsFor(answers);
