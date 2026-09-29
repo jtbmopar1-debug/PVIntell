@@ -205,8 +205,8 @@ export function sequentialDiscoveryStageProgress(questions: DiscoveryQuestion[],
 export const newSystemQuestions: DiscoveryQuestion[] = [
   {
     id: "site_name", stage: "discovery", title: "Where will this power system be located?",
-    noviceHelp: "Every discovery belongs to a Site. Name the property or location and confirm its map pin before describing the system or equipment.",
-    technicalHelp: "The confirmed Site coordinates control solar resource, weather, timezone and jurisdiction. They must be established before system discovery begins.",
+    noviceHelp: "Every discovery belongs to a Site. Name it and choose its town or locality before describing the system or equipment. An exact address or pin is optional.",
+    technicalHelp: "A selected town or locality supplies the regional coordinates used for solar resource, weather, timezone and jurisdiction. An exact property position can be refined later but does not block Discovery or planning.",
     type: "text",
   },
   {

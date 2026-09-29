@@ -15,7 +15,7 @@ export async function refreshProjectSolarResource(
   if (site.error) throw site.error;
   if (project.error) throw project.error;
   if (!site.data || typeof site.data.latitude !== "number" || typeof site.data.longitude !== "number") {
-    throw new Error("Confirm the Site map pin before calculating its solar resource.");
+    throw new Error("Choose the Site's town or location before calculating its solar resource.");
   }
   if (!project.data) throw new Error("Power system not found.");
   const resource = await loadSiteSolarResource(site.data.latitude, site.data.longitude, standalone);

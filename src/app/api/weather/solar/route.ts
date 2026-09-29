@@ -86,7 +86,7 @@ export async function GET(request: Request) {
       const geocodeResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(fallbackLocation)}&count=1&language=en&format=json`, { next: { revalidate: 86400 } });
       const geocode = await geocodeResponse.json() as { results?: Array<{ name: string; admin1?: string; country?: string; latitude: number; longitude: number; timezone?: string }> };
       const match = geocode.results?.[0];
-      if (!geocodeResponse.ok || !match) return Response.json({ error: "Pinpoint this Site to load local solar weather.", code: "LOCATION_REQUIRED" }, { status: 409 });
+      if (!geocodeResponse.ok || !match) return Response.json({ error: "Choose this Site's town or location to load regional solar weather.", code: "LOCATION_REQUIRED" }, { status: 409 });
       siteData = { latitude: match.latitude, longitude: match.longitude, timezone: match.timezone || site.data.timezone || "UTC", location: fallbackLocation };
     } else siteData = { latitude: site.data.latitude, longitude: site.data.longitude, timezone: site.data.timezone || "UTC", location: site.data.location || "Location not set" };
   }

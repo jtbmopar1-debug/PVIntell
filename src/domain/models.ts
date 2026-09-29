@@ -148,6 +148,8 @@ export interface DesignCalculatorState {
    * connections, which must be confirmed by the user during the build.
    */
   proposedAsBuiltDraft?: {
+    /** Fingerprint of user-entered proposal records represented by this draft. */
+    sourceRecordFingerprint?: string;
     createdAt: string;
     architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
     flow: string[];

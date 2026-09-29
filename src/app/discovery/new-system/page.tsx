@@ -28,13 +28,14 @@ export default async function NewSystemDiscoveryPage({ searchParams }: { searchP
     const project = await supabase.from("projects").select("id,site_id,name,settings").eq("id", edit).eq("owner_id", userId).maybeSingle();
     if (!project.data) redirect("/dashboard");
     const [questionnaire, arrays, components, conversations] = await Promise.all([
-      supabase.from("questionnaire_responses").select("answers").eq("project_id", edit).eq("template_key", "guided_new_system").maybeSingle(),
+      supabase.from("questionnaire_responses").select("answers,question_id").eq("project_id", edit).eq("template_key", "guided_new_system").maybeSingle(),
       supabase.from("pv_arrays").select("id,name,manufacturer,panel_model,panel_count,panel_watts").eq("project_id", edit),
       supabase.from("system_components").select("id,type,display_name,manufacturer,model,quantity,specifications").eq("project_id", edit),
       supabase.from("user_conversations").select("id").eq("project_id", edit).eq("owner_id", userId).order("updated_at", { ascending: false }),
     ]);
     if (questionnaire.error || arrays.error || components.error || conversations.error) throw new Error(questionnaire.error?.message ?? arrays.error?.message ?? components.error?.message ?? conversations.error?.message);
     editAnswers = (questionnaire.data?.answers ?? {}) as DiscoveryAnswers;
+    draftQuestionId = questionnaire.data?.question_id ?? undefined;
     const settings = (project.data.settings ?? {}) as Record<string, unknown>;
     if (settings.workflowOrigin === "discovery" && settings.schematicOrigin === "structured_proposal_intake") {
       const legacyAnswers = assessment.guidedNewSystem?.answers;

@@ -8,6 +8,7 @@ const calculatorSchema = z.object({
     proposalEngineVersion: finite.optional(),
     proposedChecklist: z.record(z.string(), z.boolean()).optional(),
     proposedAsBuiltDraft: z.object({
+      sourceRecordFingerprint: z.string().max(100).optional(),
       createdAt: z.string().datetime(),
       architecture: z.enum(["combined_hybrid_inverter", "separate_solar_controller_and_inverter", "ac_coupled", "not_decided"]).optional(),
       flow: z.array(z.string().max(100)).min(2).max(10),
@@ -122,12 +123,12 @@ export async function PUT(request: Request) {
   if (draft?.nodes?.length) {
     const componentType = (nodeId: string) => {
       if (nodeId === "battery") return "battery";
-      if (nodeId === "battery-inverter" || nodeId === "inverter" || nodeId.startsWith("inverter-") || nodeId.includes("inverter")) return "inverter";
       if (nodeId === "generator" || nodeId.startsWith("generator-")) return "generator";
       if (nodeId === "controller" || nodeId === "charge-controller") return "charger";
       if (nodeId.includes("isolator")) return "isolator";
       if (nodeId.includes("combiner")) return "combiner";
       if (/breaker|fuse|protection|safety/.test(nodeId)) return "protection";
+      if (nodeId === "battery-inverter" || nodeId === "inverter" || nodeId.startsWith("inverter-") || nodeId.includes("inverter")) return "inverter";
       if (nodeId.includes("meter")) return "meter";
       if (nodeId.includes("monitor")) return "monitoring";
       if (nodeId.includes("earth")) return "other";

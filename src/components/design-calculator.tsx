@@ -16,6 +16,7 @@ import { assessPanelSurfaces } from "@/design/panel-surfaces";
 import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
 import { balancedPanelAllocation, buildPvArrayPlan, resizeUserPvArrayPlan, setPvArrayPanelCount, splitPvArrayPlan } from "@/design/pv-array-plan";
 import { suggestPvDcStringCable } from "@/design/pv-dc-cable-sizing";
+import { reconcileStructuredProposalDraft, structuredProposalComponents, structuredProposalDesignFacts } from "@/design/structured-proposal-draft";
 import type { ComponentSpec as EquipmentComponentSpec, DesignCalculatorState, Project, Site } from "@/domain/models";
 import { EARTH_ELECTRODE_IMAGE, GRID_CONNECTION_IMAGE } from "@/ui/assets";
 
@@ -116,7 +117,11 @@ function systemScopeSummary(project: Project, design?: DesignCalculatorState) {
     : "separate hybrid inverter";
   const hasSeparateHybridPath = Boolean(config.batteryVoltage || config.batteryUsableKwh || (recordedBatteryInverter && recordedBatteryInverter.label !== "Battery power box"));
   const mixedMicroinverterRetrofit = config.inverterArrangement === "microinverters" && existingUseCount > 0 && supplementaryTargetPvKw > 0 && hasSeparateHybridPath;
-  const arrayText = existingGroup && existingUseCount
+  const recordedProposalArrays = config.pvArrayPlan?.configurationSource === "user" ? config.pvArrayPlan.arrays : [];
+  const recordedProposalPanelCount = recordedProposalArrays.reduce((total, array) => total + n(array.allocatedPanelCount), 0);
+  const arrayText = recordedProposalArrays.length
+    ? `${recordedProposalArrays.length} user-entered array${recordedProposalArrays.length === 1 ? "" : "s"}${recordedProposalPanelCount ? ` containing ${recordedProposalPanelCount} panels in total` : ""}; each array keeps its own recorded panel and cable details for assessment`
+    : existingGroup && existingUseCount
     ? `a calculated requirement using ${existingUseCount} of the ${existingGroup.availableCount} available ${panelWatts ? `${panelWatts} W ` : ""}${existingGroup.name} panels${supplementaryTargetPvKw ? ` plus a separate ${supplementaryTargetPvKw} kW minimum additional array${supplementaryCount && supplementaryWatts ? `, provisionally shown as ${supplementaryCount} × ${supplementaryWatts} W modules` : ""}` : ""}`
     : panelCount ? `${panelCount}${panelWatts ? ` × ${panelWatts} W` : ""} solar panels${pvStrings ? ` in ${pvStrings} string${pvStrings === 1 ? "" : "s"}${panelsPerString ? ` of ${panelsPerString} panels` : ""}` : ""}` : "the proposed solar array";
   const inverterArticle = n(config.inverterKw) >= 8 && n(config.inverterKw) < 9 ? "an" : "a";
@@ -286,6 +291,7 @@ export function ProposalScopeOverview({ project, design }: { project: Project; d
 }
 
 function proposalIncludesBattery(project: Project) {
+  if (structuredProposalComponents(project).some((component) => component.kind === "battery")) return true;
   const requirement = String(project.designDiscovery?.battery_requirement?.value ?? "").toLowerCase();
   if (["none", "no battery storage"].includes(requirement)) return false;
   if (["include", "include battery storage"].includes(requirement)) return true;
@@ -305,6 +311,16 @@ type DiscoveredGenerator = {
 };
 
 function discoveredGenerator(project: Project): DiscoveredGenerator {
+  const candidate = structuredProposalComponents(project).find((component) => component.kind === "generator");
+  if (candidate) return {
+    included: true,
+    purchaseStatus: "have_details",
+    generatorType: candidate.model || candidate.manufacturer || candidate.name,
+    fuel: String(candidate.specs.Fuel ?? candidate.specs["Fuel type"] ?? "") || undefined,
+    continuousKw: n(candidate.specs["Continuous output"] ?? candidate.specs["Rated power"]) || undefined,
+    surgeKw: n(candidate.specs["Surge output"] ?? candidate.specs["Peak power"]) || undefined,
+    connectionMethod: String(candidate.specs["Connection method"] ?? "") || undefined,
+  };
   return generatorFromDiscovery(project.designDiscovery ?? {});
 }
 
@@ -1215,6 +1231,7 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
   const commissioned = ["monitor", "diagnose", "maintain", "explain"].includes(project.phase);
   const includeBattery = proposalIncludesBattery(project);
   const [design, setDesign] = useState<DesignCalculatorState>(() => {
+    const structuredFacts = structuredProposalDesignFacts(project);
     const stored = { ...project.designCalculator, ...recommendedPanelOrientation(project.designCalculator ?? {}, site.latitude) };
     const saved: DesignCalculatorState = stored.panelWatts ? stored : {
       panelType: defaultProposalPanel.panelType,
@@ -1267,8 +1284,10 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       panelDatasheetUrl: saved.panelDatasheetUrl,
       panelDatasheetVersion: saved.panelDatasheetVersion,
       panelWatts,
-      panelCount,
-      targetPvKw: rejectWattsonPanelSizing ? undefined : saved.targetPvKw,
+      panelCount: structuredFacts?.panelCount ?? panelCount,
+      targetPvKw: structuredFacts?.targetPvKw ?? (rejectWattsonPanelSizing ? undefined : saved.targetPvKw),
+      panelProfileBasis: structuredFacts?.panelProfileBasis ?? saved.panelProfileBasis,
+      pvArrayPlan: structuredFacts?.pvArrayPlan ?? saved.pvArrayPlan,
       mountingLocations: saved.mountingLocations?.length ? saved.mountingLocations : discoveredMountingLocations(project),
       panelLengthMm: saved.panelLengthMm,
       panelWidthMm: saved.panelWidthMm,
@@ -1285,13 +1304,17 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       panelMaximumSystemVoltageV: saved.panelMaximumSystemVoltageV,
       panelMaximumSeriesFuseA: saved.panelMaximumSeriesFuseA,
       panelVocTemperatureCoefficientPercentPerC: saved.panelVocTemperatureCoefficientPercentPerC,
-      batteryChemistry,
-      batteryVoltage: batteryVoltage || undefined,
-      batteryUsableKwh: proposedBatteryUsableKwh || undefined,
-      batteryAh: batteryChemistry ? (batterySizing.acceptedSavedValue ? saved.batteryAh : undefined) ?? (proposedBatteryUsableKwh && batteryVoltage && usableBatteryPercent ? Math.ceil((proposedBatteryUsableKwh * 1000) / (batteryVoltage * (usableBatteryPercent / 100))) : undefined) : undefined,
-      batteryQuantity: batteryChemistry ? saved.batteryQuantity ?? 1 : undefined,
-      inverterKw,
-      generatorIncluded: generator.included,
+      architecture: structuredFacts?.architecture ?? saved.architecture,
+      inverterArrangement: structuredFacts?.inverterArrangement ?? saved.inverterArrangement,
+      inverterPlan: structuredFacts ? undefined : saved.inverterPlan,
+      batteryIncluded: structuredFacts?.batteryIncluded ?? includeBattery,
+      batteryChemistry: structuredFacts?.batteryChemistry ?? batteryChemistry,
+      batteryVoltage: structuredFacts?.batteryVoltage ?? (batteryVoltage || undefined),
+      batteryUsableKwh: structuredFacts?.batteryUsableKwh ?? (proposedBatteryUsableKwh || undefined),
+      batteryAh: structuredFacts?.batteryAh ?? (batteryChemistry ? (batterySizing.acceptedSavedValue ? saved.batteryAh : undefined) ?? (proposedBatteryUsableKwh && batteryVoltage && usableBatteryPercent ? Math.ceil((proposedBatteryUsableKwh * 1000) / (batteryVoltage * (usableBatteryPercent / 100))) : undefined) : undefined),
+      batteryQuantity: structuredFacts?.batteryQuantity ?? (batteryChemistry ? saved.batteryQuantity ?? 1 : undefined),
+      inverterKw: structuredFacts?.inverterKw ?? inverterKw,
+      generatorIncluded: structuredFacts?.generatorIncluded ?? generator.included,
       generatorPurchaseStatus: saved.generatorPurchaseStatus ?? generator.purchaseStatus,
       generatorType: saved.generatorType ?? generator.generatorType,
       generatorFuel: saved.generatorFuel ?? generator.fuel,
@@ -1299,7 +1322,7 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
       generatorSurgeKw: saved.generatorSurgeKw ?? generator.surgeKw,
       generatorConnectionMethod: saved.generatorConnectionMethod ?? generator.connectionMethod,
       usableBatteryPercent: usableBatteryPercent || undefined,
-      electricalStandard: saved.electricalStandard ?? inferElectricalStandard(site),
+      electricalStandard: site.locationConfirmed ? saved.electricalStandard ?? inferElectricalStandard(site) : "local_review",
       ...recommendedPanelOrientation(saved, site.latitude),
     };
   });
@@ -1356,7 +1379,7 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
         inverterKw,
         inverterPlan: inverterArrangementAdvice({
           requiredKw: inverterKw,
-          siteLocation: site.location,
+          siteLocation: site.locationConfirmed ? site.location : "",
           timezone: site.timezone,
           connectionType: current.connectionType,
           projectType: project.projectType,
@@ -1421,13 +1444,13 @@ export function DesignCalculator({ project, site }: { project: Project; site: Si
   }, [design, project.peakSunHours, site.latitude]);
   const gridConnected = proposalUsesPublicGrid(project);
   const overviewDraft = useMemo(() => {
-    const baseDraft = proposalDraftForCurrentDesign(design, gridConnected);
+    const baseDraft = proposalDraftForCurrentDesign(design, gridConnected, project);
     const draft = batteryAdjustedDraft(ensureInverterProtectiveEarth(ensurePvArrayEarth(upgradePvStringIsolationDraft(ensureGeneratorSupply(ensureGridSupply(baseDraft, gridConnected), design, gridConnected), design))), includeBattery);
     const connections = draft.connections?.map((connection) => preliminaryConnectionValues(connection, design));
     const calculatedDraft = { ...draft, connections };
     const routesReady = (connections ?? []).filter((connection) => !connection.authorityCheck).every((connection) => connection.configured === true);
     return { ...calculatedDraft, nodes: draft.nodes?.map((node) => componentPlanningDetail(node, calculatedDraft, design, routesReady)) };
-  }, [design, includeBattery, gridConnected]);
+  }, [design, includeBattery, gridConnected, project]);
   const sizingEvidence = deterministicSizing(
     project,
     n(design.panelWatts, defaultProposalPanel.watts),
@@ -1672,7 +1695,7 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
     }
     const completedDraft = candidate && typeof candidate === "object" && Array.isArray((candidate as { connections?: unknown }).connections)
       ? candidate as NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>
-      : design.proposedAsBuiltDraft ?? createProposedAsBuiltDraft(design, project.projectType === "hybrid" || project.projectType === "grid-tied");
+      : proposalDraftForCurrentDesign(design, project.projectType === "hybrid" || project.projectType === "grid-tied", project);
     const nextDesign: DesignCalculatorState = {
       ...design,
       proposedChecklist: { ...(design.proposedChecklist ?? {}), "proposed-schematic": true },
@@ -1699,7 +1722,7 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
 }
 
 function ProposedSchematic({ project, projectName, gridConnected, includeBattery, design, reviewed, onToggle, onDraftChange, onRedesign, wattsonHref, onOpenWattson, onWhatsNext }: { project: Project; projectName: string; gridConnected: boolean; includeBattery: boolean; design: DesignCalculatorState; reviewed: boolean; onToggle: (draft: unknown) => void; onDraftChange: (draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; onRedesign: (design: DesignCalculatorState, draft: NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]>) => void; wattsonHref: string; onOpenWattson: () => void; onWhatsNext: () => void }) {
-  const rawDraft = ensureGeneratorSupply(ensureGridSupply(proposalDraftForCurrentDesign(design, gridConnected), gridConnected), design, gridConnected);
+  const rawDraft = ensureGeneratorSupply(ensureGridSupply(proposalDraftForCurrentDesign(design, gridConnected, project), gridConnected), design, gridConnected);
   const upgradedDraft = upgradePvStringIsolationDraft(rawDraft, design);
   const repairedDraft = repairCustomEquipmentDraft(upgradedDraft);
   const routedDraft = ensureSupplementaryMicroinverterRouting(repairedDraft, design);
@@ -2002,12 +2025,12 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
         const nextDesign = {
           ...design,
           inverterKw,
-          inverterPlan: inverterArrangementAdvice({ requiredKw: inverterKw, siteLocation: project.location, connectionType: design.connectionType, projectType: project.projectType }),
+          inverterPlan: inverterArrangementAdvice({ requiredKw: inverterKw, siteLocation: design.electricalStandard === "local_review" ? "" : project.location, connectionType: design.connectionType, projectType: project.projectType }),
           pvStrings: undefined,
           panelsPerString: undefined,
           stringDesign: undefined,
         };
-        const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected);
+        const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected, project);
         onRedesign(nextDesign, nextDraft);
         const units = nextDesign.inverterPlan?.unitRatingsKw ?? [];
         const arrangement = units.length > 1 ? `${units.length} x ${units[0]} kW inverter units` : `${units[0] ?? inverterKw} kW inverter`;
@@ -2092,7 +2115,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
       inverterKw: sizing.inverterKw ?? design.inverterKw,
       inverterPlan: inverterArrangementAdvice({
         requiredKw: sizing.inverterKw ?? design.inverterKw,
-        siteLocation: project.location,
+        siteLocation: design.electricalStandard === "local_review" ? "" : project.location,
         connectionType: design.connectionType,
         projectType: project.projectType,
       }),
@@ -2122,7 +2145,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
       updatedAt: new Date().toISOString(),
       updatedBy: "user",
     };
-    const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected);
+    const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected, project);
     if (selectedExistingPvArray) {
       const arrayPanelCount = editingPlannedArray || editingUniformString ? enteredPanelCount : panelCount;
       const response = await fetch(`/api/pv-arrays/${selectedExistingPvArray.id}`, {
@@ -2199,7 +2222,7 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
       updatedAt: new Date().toISOString(),
       updatedBy: "user",
     };
-    const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected);
+    const nextDraft = proposalDraftForCurrentDesign({ ...nextDesign, proposedAsBuiltDraft: draft }, gridConnected, project);
     onRedesign(nextDesign, nextDraft);
     setConfigurationOpen(false);
     setConfigurationMessage(`Saved ${parts} arrays: ${configurationPreview.join(" + ")} panels. Total remains ${selectedArrayPanelCount}.`);
@@ -2401,7 +2424,11 @@ function DraftProposedSchematicCanvas({ draft, design, project, gridConnected, s
   </div>;
 }
 
-function proposalDraftForCurrentDesign(design: DesignCalculatorState, gridConnected: boolean): NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]> {
+function proposalDraftForCurrentDesign(design: DesignCalculatorState, gridConnected: boolean, project?: Project): NonNullable<DesignCalculatorState["proposedAsBuiltDraft"]> {
+  if (project) {
+    const structuredDraft = reconcileStructuredProposalDraft(project, design, gridConnected);
+    if (structuredDraft) return structuredDraft;
+  }
   const draft = design.proposedAsBuiltDraft;
   if (!draft) return createProposedAsBuiltDraft(design, gridConnected);
   const nodes = draft.nodes ?? [];

@@ -47,15 +47,16 @@ describe("new-system discovery", () => {
 
   it("gates proposal discovery on whether a system is already installed", () => {
     const newSystemQuestions = visibleDiscoveryQuestions({ existing_system_status: "none" });
-    expect(newSystemQuestions[0]).toMatchObject({
+    expect(newSystemQuestions[0]).toMatchObject({ id: "site_name" });
+    expect(newSystemQuestions.find((question) => question.id === "existing_system_status")).toMatchObject({
       id: "existing_system_status",
       options: [
         expect.objectContaining({ value: "installed" }),
         expect.objectContaining({ value: "none" }),
       ],
     });
-    expect(newSystemQuestions[0].options).toHaveLength(2);
-    expect(newSystemQuestions[1]).toMatchObject({
+    expect(newSystemQuestions.find((question) => question.id === "existing_system_status")?.options).toHaveLength(2);
+    expect(newSystemQuestions.find((question) => question.id === "existing_proposal_status")).toMatchObject({
       id: "existing_proposal_status",
       options: [
         expect.objectContaining({ value: "yes" }),
@@ -64,7 +65,7 @@ describe("new-system discovery", () => {
     });
 
     const installedSystemQuestions = visibleDiscoveryQuestions({ existing_system_status: "installed" });
-    expect(installedSystemQuestions[1]).toMatchObject({
+    expect(installedSystemQuestions.find((question) => question.id === "installed_system_knowledge")).toMatchObject({
       id: "installed_system_knowledge",
       options: [
         expect.objectContaining({ value: "know_well" }),
@@ -73,7 +74,7 @@ describe("new-system discovery", () => {
         expect.objectContaining({ value: "know_nothing" }),
       ],
     });
-    expect(installedSystemQuestions[1].options).toHaveLength(4);
+    expect(installedSystemQuestions.find((question) => question.id === "installed_system_knowledge")?.options).toHaveLength(4);
     expect(installedSystemQuestions.map((question) => question.id)).not.toContain("existing_proposal_status");
   });
 

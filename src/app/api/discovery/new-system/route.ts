@@ -2,6 +2,7 @@ import { z } from "zod";
 import tzLookup from "tz-lookup";
 import { applyWattsonActions, type WattsonActionRequest } from "@/ai/actions";
 import { createSystem } from "@/data/cloud-project";
+import { discoveryQuestionComplete } from "@/discovery/completion";
 import { discoveryProjectType, newSystemQuestions, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers } from "@/discovery/new-system";
 import { reconcileDiscoveryDependencies } from "@/discovery/dependencies";
 import { invalidateProposalAfterDiscovery } from "@/design/invalidate-proposal";
@@ -10,7 +11,7 @@ import { refreshProjectSolarResource } from "@/design/refresh-solar-resource";
 import { createClient } from "@/lib/supabase/server";
 
 const answersSchema = z.record(z.string(), z.union([z.string().max(4000), z.number(), z.array(z.string().max(100)).min(1).max(20)]));
-const draftSchema = z.object({ draftId: z.uuid().optional(), projectId: z.uuid().optional(), answers: answersSchema, questionId: z.string().max(100).optional() });
+const draftSchema = z.object({ draftId: z.uuid().optional(), projectId: z.uuid().optional(), answers: answersSchema, questionId: z.string().max(100).optional(), removeProposalEquipment: z.boolean().optional() });
 const completeSchema = z.object({ draftId: z.uuid().optional(), answers: answersSchema });
 const editSchema = z.object({ projectId: z.uuid(), answers: answersSchema });
 
@@ -162,7 +163,7 @@ export async function PUT(request: Request) {
     const siteName = String(answers.site_name ?? "").trim();
     const latitude = typeof answers.site_latitude === "number" ? answers.site_latitude : null;
     const longitude = typeof answers.site_longitude === "number" ? answers.site_longitude : null;
-    if (!siteName || latitude == null || longitude == null) return Response.json({ error: "Name the Site and confirm its map pin before continuing." }, { status: 400 });
+    if (!siteName || latitude == null || longitude == null) return Response.json({ error: "Name the Site and choose its town or location from the search results before continuing." }, { status: 400 });
     let timezone = typeof answers.site_timezone === "string" ? answers.site_timezone : context.profile.timezone || "UTC";
     try { timezone = tzLookup(latitude, longitude); } catch { /* Retain the geocoder timezone if lookup fails. */ }
     const sameName = await context.supabase.from("sites").select("id,latitude,longitude").eq("owner_id", context.userId).ilike("name", siteName).eq("location_confirmed", true);
@@ -188,15 +189,23 @@ export async function PUT(request: Request) {
   if (parsed.data.projectId) {
     const project = await context.supabase.from("projects").select("id").eq("id", parsed.data.projectId).eq("owner_id", context.userId).maybeSingle();
     if (project.error || !project.data) return Response.json({ error: project.error?.message ?? "System not found." }, { status: 404 });
-    const saved = await context.supabase.from("questionnaire_responses").upsert({
-      project_id: parsed.data.projectId,
-      template_key: "guided_new_system",
-      template_version: 1,
-      status: "draft",
-      answers,
-    }, { onConflict: "project_id,template_key" });
+    if (parsed.data.removeProposalEquipment) delete answers.proposal_intake_equipment;
+    const saved = parsed.data.removeProposalEquipment
+      ? await context.supabase.rpc("save_discovery_without_proposed_equipment", {
+        target_project_id: parsed.data.projectId,
+        next_answers: answers,
+        next_question_id: parsed.data.questionId ?? null,
+      })
+      : await context.supabase.from("questionnaire_responses").upsert({
+        project_id: parsed.data.projectId,
+        template_key: "guided_new_system",
+        template_version: 1,
+        status: "draft",
+        question_id: parsed.data.questionId ?? null,
+        answers,
+      }, { onConflict: "project_id,template_key" });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
-    return Response.json({ saved: true, projectId: parsed.data.projectId });
+    return Response.json({ saved: true, projectId: parsed.data.projectId, answers });
   }
   if (parsed.data.draftId) {
     const saved = await context.supabase.from("discovery_drafts").upsert({
@@ -262,6 +271,7 @@ export async function PATCH(request: Request) {
     template_key: "guided_new_system",
     template_version: 1,
     status: "completed",
+    question_id: null,
     answers,
     completed_at: new Date().toISOString(),
   }, { onConflict: "project_id,template_key" });
@@ -279,11 +289,7 @@ export async function POST(request: Request) {
     error: "Record the installed system before creating a proposal.",
     recordInstalledUrl: "/record-installed",
   }, { status: 409 });
-  const unresolvedValues = new Set([unknownAnswer, "unknown", "not_checked", "not_decided", "undecided", "unknown_chemistry"]);
-  const missingAnswers = visibleDiscoveryQuestions(answers).filter((question) => {
-    const value = answers[question.id];
-    return value === undefined || value === "" || (typeof value === "string" && unresolvedValues.has(value)) || (Array.isArray(value) && (!value.length || value.some((item) => unresolvedValues.has(item))));
-  });
+  const missingAnswers = visibleDiscoveryQuestions(answers).filter((question) => !discoveryQuestionComplete(question, answers, { combinedInitialSetup: true }));
   if (missingAnswers.length) return Response.json({ error: `Complete all discovery questions before review. First missing answer: ${missingAnswers[0].title}`, questionId: missingAnswers[0].id }, { status: 400 });
   const unknownIds = newSystemQuestions
     .filter((question) => answers[question.id] === unknownAnswer)
@@ -337,7 +343,7 @@ export async function POST(request: Request) {
   if (matchingSite && (!matchingSite.location_confirmed || typeof matchingSite.latitude !== "number" || typeof matchingSite.longitude !== "number")) {
     const latitude = typeof answers.site_latitude === "number" ? answers.site_latitude : null;
     const longitude = typeof answers.site_longitude === "number" ? answers.site_longitude : null;
-    if (latitude == null || longitude == null) return Response.json({ error: "Confirm this Site's map pin before building the proposal." }, { status: 400 });
+    if (latitude == null || longitude == null) return Response.json({ error: "Choose this Site's town or location from the search results before building the proposal." }, { status: 400 });
     let timezone = typeof answers.site_timezone === "string" ? answers.site_timezone : context.profile.timezone || "UTC";
     try { timezone = tzLookup(latitude, longitude); } catch { /* Retain the geocoder timezone if lookup fails. */ }
     const updated = await context.supabase.from("sites").update({
@@ -354,7 +360,7 @@ export async function POST(request: Request) {
     if (!requestedSiteName) return Response.json({ error: "Enter a name for the new Site." }, { status: 400 });
     const latitude = typeof answers.site_latitude === "number" ? answers.site_latitude : null;
     const longitude = typeof answers.site_longitude === "number" ? answers.site_longitude : null;
-    if (latitude == null || longitude == null) return Response.json({ error: "Search for the new Site and confirm its map pin before continuing." }, { status: 400 });
+    if (latitude == null || longitude == null) return Response.json({ error: "Choose the new Site's town or location from the search results before continuing." }, { status: 400 });
     let timezone = typeof answers.site_timezone === "string" ? answers.site_timezone : context.profile.timezone || "UTC";
     try { timezone = tzLookup(latitude, longitude); } catch { /* Retain the geocoder timezone if lookup fails. */ }
     const created = await context.supabase.from("sites").insert({
@@ -397,6 +403,7 @@ export async function POST(request: Request) {
       template_key: "guided_new_system",
       template_version: 1,
       status: "completed",
+      question_id: null,
       answers,
       completed_at: new Date().toISOString(),
     }, { onConflict: "project_id,template_key" });

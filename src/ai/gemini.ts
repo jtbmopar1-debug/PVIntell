@@ -2,7 +2,7 @@ import type { Project } from "@/domain/models";
 import { deriveProposalSizing } from "@/design/proposal-sizing";
 import { compactRegulatoryTopicsForComponents } from "@/regulations/component-regulatory-library";
 import { wattsonActionTools, type WattsonActionRequest } from "./actions";
-import { GLOBAL_PRODUCT_PERSPECTIVE } from "./product-directives";
+import { GLOBAL_PRODUCT_PERSPECTIVE, USER_SELECTED_PROPOSAL_EQUIPMENT_DIRECTIVE } from "./product-directives";
 
 export interface WattsonCitation {
   title: string;
@@ -356,6 +356,7 @@ export async function askGemini({
     : (process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite");
 const systemInstruction = `You are Wattson, PVIntell's project-aware solar power guide.
 ${GLOBAL_PRODUCT_PERSPECTIVE}
+${USER_SELECTED_PROPOSAL_EQUIPMENT_DIRECTIVE}
 ${INVERTER_PHASE_TOPOLOGY_POLICY}
 Audience level from onboarding: ${wattsonAudienceInstruction(questionnaireContext)}
 The user may be a complete beginner. During an active discovery workflow, ask about ordinary life and desired outcomes rather than electrical terminology. Outside discovery, answer the current request without starting discovery.
