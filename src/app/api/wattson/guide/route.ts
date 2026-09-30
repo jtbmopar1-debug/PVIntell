@@ -4,6 +4,7 @@ import { loadWorkspace } from "@/data/cloud-project";
 import { demoProject } from "@/data/demo-project";
 import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
+import { recordOwnShadowCreditUsage } from "@/credits/usage";
 
 const guideSchema = z.object({
   id: z.string().min(1).max(120),
@@ -71,5 +72,11 @@ export async function POST(request: Request) {
   const messageWithoutMarkdownEmphasis = result.message
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/__([^_]+)__/g, "$1");
+  await recordOwnShadowCreditUsage(supabase, {
+    action: "wattson_reply",
+    siteId: parsed.data.siteId ?? project.siteId,
+    projectId: parsed.data.projectId,
+    metadata: { surface: "how_to_guide", guide: guide.title, provider: "gemini" },
+  });
   return Response.json({ message: messageWithoutMarkdownEmphasis, citations: result.citations });
 }

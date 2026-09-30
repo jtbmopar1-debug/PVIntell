@@ -1,5 +1,6 @@
 import { extractEquipmentLabel } from "@/ai/equipment-label";
 import { createClient } from "@/lib/supabase/server";
+import { recordOwnShadowCreditUsage } from "@/credits/usage";
 
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxFileBytes = 2 * 1024 * 1024;
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
     const photoPath = `${userId}/${projectId}/equipment-labels/${crypto.randomUUID()}.${extension}`;
     const uploaded = await supabase.storage.from("project-photos").upload(photoPath, file, { contentType: file.type, upsert: false });
     if (uploaded.error) throw new Error(`The label was read, but its photo could not be stored: ${uploaded.error.message}`);
+    await recordOwnShadowCreditUsage(supabase, { action: "image_analysis", siteId: owned.data.site_id, projectId, metadata: { surface: "equipment_label" } });
     return Response.json({ extraction, photoPath, siteId: owned.data.site_id });
   } catch (problem) {
     return Response.json({ error: problem instanceof Error ? problem.message : "Wattson could not read this label." }, { status: 502 });

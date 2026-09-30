@@ -6,6 +6,7 @@ import { userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversa
 import { conversationStatePromptContext, recordWattsonAssistantTurn, reduceWattsonUserTurn } from "@/ai/conversation-state";
 import { cachedConversationResponse, startedConversationRequest } from "@/ai/conversation-request";
 import { extractEquipmentLabel } from "@/ai/equipment-label";
+import { recordOwnShadowCreditUsage } from "@/credits/usage";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(3000),
@@ -199,5 +200,12 @@ export async function POST(request: Request) {
   if (stateWrite.error) return Response.json({ error: stateWrite.error.message }, { status: 400 });
   const assistantWrite = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: result.message, structured_context: { kind: "discovery_help", questionId: question.id, evidenceRevision: conversationState.revision, provider: "gemini", model: result.model, citations: result.citations, usage: result.usage }, response_to_request_id: parsed.data.requestId });
   if (assistantWrite.error) return Response.json({ error: assistantWrite.error.message }, { status: 400 });
+  await recordOwnShadowCreditUsage(supabase, {
+    action: imageFile ? "image_analysis" : "wattson_reply",
+    siteId: parsed.data.siteId,
+    projectId: parsed.data.projectId,
+    idempotencyKey: parsed.data.requestId ? `discovery-help:${parsed.data.requestId}` : undefined,
+    metadata: { conversationId, questionId: question.id, provider: "gemini" },
+  });
   return Response.json({ conversationId, message: result.message, citations: result.citations });
 }

@@ -1759,7 +1759,7 @@ export function ProposedBuildSchematic({ project, site, showIntro = false, initi
     const savedDesign = { ...nextDesign, proposedAsBuiltDraft: draft };
     setDesign(savedDesign);
     setStatus("Saving redesign…");
-    const response = await fetch("/api/design-calculator", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, design: savedDesign }) });
+    const response = await fetch("/api/design-calculator", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ projectId: project.id, design: savedDesign, creditEvent: "proposal_rebuild", requestId: crypto.randomUUID() }) });
     const body = await response.json();
     if (response.ok && body.design) setDesign(body.design);
     setStatus(response.ok ? "Redesign saved" : body.error ?? "Could not save redesign");

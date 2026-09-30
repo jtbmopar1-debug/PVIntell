@@ -7,6 +7,7 @@ import {
   regulatorySubjectKey,
   resolveComponentRegulatoryBundle,
 } from "@/regulations/component-regulatory-library";
+import { recordOwnShadowCreditUsage } from "@/credits/usage";
 
 const missingTableCodes = new Set(["42P01", "PGRST205"]);
 
@@ -128,6 +129,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       onConflict: "owner_id,subject_key,jurisdiction_key,topic_library_version",
     });
     if (saved.error && !missingTableCodes.has(saved.error.code)) throw saved.error;
+    await recordOwnShadowCreditUsage(context.supabase, { action: "wattson_reply", siteId: context.workspace.site.id, projectId: context.workspace.project.id, metadata: { surface: "component_regulations", componentId: id } });
     return Response.json({
       bundle: context.bundle,
       guidance: {

@@ -1,9 +1,12 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { recordOwnShadowCreditUsage } from "@/credits/usage";
 
 const finite = z.number().finite().min(0).max(1_000_000);
 const calculatorSchema = z.object({
   projectId: z.uuid(),
+  creditEvent: z.literal("proposal_rebuild").optional(),
+  requestId: z.uuid().optional(),
   design: z.object({
     proposalEngineVersion: finite.optional(),
     proposedChecklist: z.record(z.string(), z.boolean()).optional(),
@@ -118,7 +121,7 @@ export async function PUT(request: Request) {
   const claims = await supabase.auth.getClaims();
   const userId = claims.data?.claims?.sub;
   if (claims.error || typeof userId !== "string") return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const current = await supabase.from("projects").select("settings,phase").eq("id", parsed.data.projectId).eq("owner_id", userId).maybeSingle();
+  const current = await supabase.from("projects").select("settings,phase,site_id").eq("id", parsed.data.projectId).eq("owner_id", userId).maybeSingle();
   if (current.error) return Response.json({ error: current.error.message }, { status: 400 });
   if (!current.data) return Response.json({ error: "Power system not found." }, { status: 404 });
   const settings = (current.data.settings ?? {}) as Record<string, unknown>;
@@ -296,5 +299,12 @@ export async function PUT(request: Request) {
     : current.data.phase;
   const saved = await supabase.from("projects").update({ settings, phase: proposalPhase }).eq("id", parsed.data.projectId).eq("owner_id", userId);
   if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+  if (parsed.data.creditEvent === "proposal_rebuild") await recordOwnShadowCreditUsage(supabase, {
+    siteId: current.data.site_id,
+    projectId: parsed.data.projectId,
+    action: "proposal_rebuild",
+    idempotencyKey: parsed.data.requestId ? `proposal-rebuild:${parsed.data.requestId}` : undefined,
+    metadata: { source: "design_calculator" },
+  });
   return Response.json({ saved: true, design: settings.designCalculator });
 }

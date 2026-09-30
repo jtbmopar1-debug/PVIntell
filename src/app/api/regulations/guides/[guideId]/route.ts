@@ -8,6 +8,7 @@ import {
   regulatoryJurisdictionKey,
   resolveComponentRegulatoryBundle,
 } from "@/regulations/component-regulatory-library";
+import { recordOwnShadowCreditUsage } from "@/credits/usage";
 
 const guideSchema = z.object({
   title: z.string().trim().min(1).max(180),
@@ -155,6 +156,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ gui
     };
     const saved = await context.supabase.from("component_regulatory_guidance").upsert(row, { onConflict: "owner_id,subject_key,jurisdiction_key,topic_library_version" });
     if (saved.error && !missingTableCodes.has(saved.error.code)) throw saved.error;
+    await recordOwnShadowCreditUsage(context.supabase, { action: "wattson_reply", siteId: context.site.id, metadata: { surface: "guide_regulations", guideId: context.guideId } });
     return Response.json({ bundle, guidance: { guidance_markdown: result.message, citations: result.citations, checked_at: row.checked_at, refresh_after: row.refresh_after, jurisdiction_label: row.jurisdiction_label }, cached: false, persisted: !saved.error });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Could not check the local component rules" }, { status: 502 });

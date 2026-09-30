@@ -27,3 +27,23 @@ export async function recordShadowCreditUsage(
   if (recorded.error && recorded.error.code !== "23505")
     console.error("Could not record shadow Wattson Credit usage", recorded.error.message);
 }
+
+export async function recordOwnShadowCreditUsage(
+  db: SupabaseClient,
+  input: {
+    action: WattsonCreditAction;
+    projectId?: string;
+    siteId?: string;
+    idempotencyKey?: string;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const recorded = await db.rpc("record_own_wattson_credit_usage", {
+    usage_action_key: input.action,
+    usage_project_id: input.projectId ?? null,
+    usage_site_id: input.siteId ?? null,
+    usage_idempotency_key: input.idempotencyKey ?? null,
+    usage_metadata: input.metadata ?? {},
+  });
+  if (recorded.error) console.error("Could not record own shadow Wattson Credit usage", recorded.error.message);
+}

@@ -25,6 +25,7 @@ import { wattsonErrorDetail } from "@/ai/error-detail";
 import { cachedConversationResponse, startedConversationRequest } from "@/ai/conversation-request";
 import { attachImageToRecord, requestsExistingRecordAttachment, resolveRecordAttachmentTarget, type RecordAttachmentTarget } from "@/ai/record-attachment";
 import { systemConfirmationReadiness } from "@/lib/system-confirmation-readiness";
+import { recordOwnShadowCreditUsage } from "@/credits/usage";
 
 const schema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -844,6 +845,17 @@ export async function POST(request: Request) {
     if (stateSaved.error) throw stateSaved.error;
     const saved = await supabase.from("user_chat_messages").insert({ conversation_id: conversationId, role: "assistant", content: message, structured_context: { provider: "gemini", model: result.model, citations: result.citations, usage: result.usage, actions: appliedActions, imagePath, inventoryCapture, evidenceRevision: conversationState.revision, actionUrl: proposedDesignLink ?? monitorModeLink ?? startSystemLink, actionLabel: proposedDesignLink ? "Open proposed design" : monitorModeLink ? "Open monitor" : startSystemLink ? "Start guided setup" : undefined }, response_to_request_id: parsed.data.requestId });
     if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+    const generatedProposal = appliedActions.some((action) => action.type === "preliminary_design_updated");
+    const priorCalculator = activeSettings.designCalculator && typeof activeSettings.designCalculator === "object" ? activeSettings.designCalculator as Record<string, unknown> : {};
+    const hadPriorProposal = Boolean(priorCalculator.panelCount || priorCalculator.targetPvKw || priorCalculator.proposedAsBuiltDraft);
+    const shadowAction = generatedProposal ? hadPriorProposal ? "proposal_rebuild" as const : "system_proposal" as const : imageFile ? "image_analysis" as const : "wattson_reply" as const;
+    await recordOwnShadowCreditUsage(supabase, {
+      action: shadowAction,
+      siteId: activeSystem?.site_id ?? conversationSiteId,
+      projectId: activeSystem?.id,
+      idempotencyKey: parsed.data.requestId ? `dashboard-wattson:${parsed.data.requestId}` : undefined,
+      metadata: { conversationId, provider: "gemini", actionCount: appliedActions.length },
+    });
     const proposedDesignUrl = proposedDesignUpdated && activeSystem
       ? `/sites/${activeSystem.site_id}/systems/${activeSystem.id}/design`
       : undefined;
