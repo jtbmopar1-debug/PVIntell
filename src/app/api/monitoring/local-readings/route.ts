@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { recordShadowCreditUsage } from "@/credits/usage";
 
 const input = z.object({
   siteId: z.uuid(), systemId: z.uuid(), adapter: z.literal("junctek"), deviceId: z.string().min(1).max(300), displayName: z.string().min(1).max(200),
@@ -34,5 +35,6 @@ export async function POST(request: Request) {
   const expired = await admin.from("monitoring_samples").delete().eq("connection_id", connectionId).lt("measured_at", cutoff);
   if (expired.error) return Response.json({ error: "The local reading was saved, but expired history could not be removed" }, { status: 500 });
   await admin.from("monitoring_connections").update({ status: "connected", is_active: true, last_attempt_at: now, last_success_at: now, status_message: null }).eq("id", connectionId);
+  await recordShadowCreditUsage(admin, { ownerId, siteId: parsed.data.siteId, projectId: parsed.data.systemId, action: "monitoring_connection", idempotencyKey: `monitoring-connection:${connectionId}`, metadata: { provider: "junctek_local" } });
   return Response.json({ ok: true, measuredAt: r.measuredAt });
 }

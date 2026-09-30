@@ -3,6 +3,8 @@ import { askGemini } from "@/ai/gemini";
 import { concerningHandoverAnswers, handoverModuleIds, handoverModuleLabels, handoverReviewAllowsCompletion, handoverReviewPrompt, missingHandoverEvidence, parseHandoverReview, type HandoverEvidence } from "@/commissioning/handover-review";
 import { loadWorkspace } from "@/data/cloud-project";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { recordShadowCreditUsage } from "@/credits/usage";
 
 const evidenceSchema = z.object({
   moduleId: z.enum(handoverModuleIds),
@@ -27,7 +29,7 @@ async function context(id: string) {
   const project = await supabase.from("projects").select("id,site_id").eq("id", id).eq("owner_id", userId).maybeSingle();
   if (project.error) return { error: Response.json({ error: project.error.message }, { status: 400 }) } as const;
   if (!project.data) return { error: Response.json({ error: "Power system not found." }, { status: 404 }) } as const;
-  return { supabase, project: project.data } as const;
+  return { supabase, project: project.data, userId } as const;
 }
 
 const recordRow = (id: string, evidence: z.infer<typeof evidenceSchema>) => ({
@@ -143,5 +145,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     reviewed_at: new Date().toISOString(),
   }, { onConflict: "project_id,module_id" });
   if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+  await recordShadowCreditUsage(createAdminClient(), {
+    ownerId: owned.userId,
+    siteId: owned.project.site_id,
+    projectId: id,
+    action: "handover_review",
+    idempotencyKey: `handover-review:${id}:${parsed.data.moduleId}:${crypto.randomUUID()}`,
+    metadata: { moduleId: parsed.data.moduleId, model: result.model },
+  });
   return Response.json({ review, complete, pendingQuestions: missing, wattsonInvoked: true });
 }

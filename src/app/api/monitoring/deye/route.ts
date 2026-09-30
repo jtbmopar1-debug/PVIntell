@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SupabaseVaultCredentialService } from "@/monitoring/credential-service";
 import { authenticateDeye, fetchDeyeStationLatest, listDeyeStationDevices, listDeyeStations, type DeyeTokenCredential } from "@/monitoring/deye-cloud";
+import { recordShadowCreditUsage } from "@/credits/usage";
 
 const scope = z.object({ siteId: z.uuid(), systemId: z.uuid() });
 const login = z.object({ email: z.email(), password: z.string().min(1).max(300), region: z.enum(["eu", "us"]) });
@@ -84,6 +85,7 @@ export async function POST(request: Request) {
       await saveReading(admin, readingRow(reading, { connectionId: connection.data.id, ownerId, siteId: values.siteId, systemId: values.systemId }));
       const connected = await admin.from("monitoring_connections").update({ status: "connected", status_message: null, last_success_at: now, last_attempt_at: now }).eq("id", connection.data.id);
       if (connected.error) throw new Error("DeyeCloud connected, but its status could not be saved");
+      await recordShadowCreditUsage(admin, { ownerId, siteId: values.siteId, projectId: values.systemId, action: "monitoring_connection", idempotencyKey: `monitoring-connection:${connection.data.id}`, metadata: { provider: "deye_cloud" } });
       return Response.json({ ok: true, connectionId: connection.data.id, station: { id: station.id, name: station.name } });
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 240) : "DeyeCloud connection failed";

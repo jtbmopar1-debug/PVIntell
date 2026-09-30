@@ -6,6 +6,7 @@ import { AdminUsers, type AdminUserRow } from "@/components/admin-users";
 import { BrandLogo } from "@/components/brand-logo";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { WATTSON_STARTING_CREDITS, wattsonCreditCatalog } from "@/credits/catalog";
 
 export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
   const supabase = await createClient();
@@ -25,6 +26,13 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
   const profiles = ids.length ? await admin.from("profiles").select("id,display_name").in("id", ids) : { data: [], error: null };
   if (profiles.error) throw profiles.error;
   const names = new Map((profiles.data ?? []).map((profile) => [profile.id, profile.display_name ?? ""]));
+  const usageResult = ids.length ? await admin.from("wattson_credit_usage").select("owner_id,proposed_credits").in("owner_id", ids) : { data: [], error: null };
+  if (usageResult.error && usageResult.error.code !== "42P01") throw usageResult.error;
+  const usage = new Map<string, { credits: number; events: number }>();
+  for (const event of usageResult.data ?? []) {
+    const current = usage.get(event.owner_id) ?? { credits: 0, events: 0 };
+    usage.set(event.owner_id, { credits: current.credits + event.proposed_credits, events: current.events + 1 });
+  }
   const users: AdminUserRow[] = authUsers.map((user) => {
     const plan = user.app_metadata?.plan_status;
     return {
@@ -34,6 +42,9 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
       createdAt: user.created_at,
       planStatus: typeof plan === "string" && plan.trim() ? plan.trim().replaceAll("_", " ") : "Testing",
       protected: isAdminEmail(user.email),
+      shadowCreditsUsed: usage.get(user.id)?.credits ?? 0,
+      shadowEventCount: usage.get(user.id)?.events ?? 0,
+      startingCredits: WATTSON_STARTING_CREDITS,
     };
   }).sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
 
@@ -60,6 +71,10 @@ export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
       <form method="get" className="flex flex-col gap-2 p-4 sm:flex-row"><input name="site" defaultValue={requestedSiteId} required placeholder="Site UUID" className="field flex-1"/><button type="submit" className="h-11 rounded-xl bg-brand px-5 text-xs font-bold text-white">Find site</button></form>
       {requestedSiteId && !inspectedSite ? <p role="status" className="border-t border-line bg-[#fff7dc] px-4 py-3 text-xs text-[#765400]">No site was found for that UUID.</p> : null}
       {inspectedSite ? <div className="border-t border-line p-4"><div className="rounded-xl bg-[#f5f8fb] p-3 text-xs"><strong>{inspectedSite.name}</strong><code className="mt-1 block text-[9px] text-muted">{inspectedSite.id}</code></div><div className="mt-3 space-y-2">{inspectedSystems.map((system) => <div key={system.id} className="flex flex-col justify-between gap-3 rounded-xl border border-line p-3 sm:flex-row sm:items-center"><div><strong className="text-xs">{system.name}</strong><span className="mt-1 block text-[10px] capitalize text-muted">{system.mode.replaceAll("_", " ")} · {system.phase.replaceAll("_", " ")}</span><code className="mt-1 block text-[9px] text-muted">{system.id}</code></div><Link href={`/admin/sites/${inspectedSite.id}/systems/${system.id}/schematic`} className="inline-flex h-9 items-center justify-center rounded-lg border border-brand bg-white px-3 text-[11px] font-bold text-brand">View proposed schematic</Link></div>)}{!inspectedSystems.length ? <p className="text-xs text-muted">This site has no systems.</p> : null}</div></div> : null}
+    </section>
+    <section className="card mt-5 overflow-hidden">
+      <div className="border-b border-line p-4"><div className="eyebrow">Shadow mode</div><h2 className="mt-1 text-sm font-extrabold">Wattson Credit price list</h2><p className="mt-1 text-[10px] leading-4 text-muted">New users receive {WATTSON_STARTING_CREDITS} WC. Admin accounts are unlimited. Usage is recorded silently during testing; no balance is deducted and no action is blocked.</p></div>
+      <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-left"><thead className="bg-[#f5f8fb] text-[9px] font-extrabold uppercase tracking-[.1em] text-muted"><tr><th className="px-4 py-3">Action</th><th className="px-4 py-3">Category</th><th className="px-4 py-3 text-right">Trial price</th></tr></thead><tbody className="divide-y divide-line">{wattsonCreditCatalog.map((item) => <tr key={item.key} className="text-xs"><td className="px-4 py-3 font-bold">{item.label}</td><td className="px-4 py-3 text-muted">{item.category}</td><td className="px-4 py-3 text-right font-extrabold text-brand">{item.credits} WC</td></tr>)}<tr className="bg-[#f8fbf9] text-xs"><td className="px-4 py-3 font-bold">Manual tools, settings, edits, calculations and exports</td><td className="px-4 py-3 text-muted">Included</td><td className="px-4 py-3 text-right font-extrabold text-[#207554]">Free</td></tr></tbody></table></div>
     </section>
     <AdminUsers users={users}/>
   </div></main>;

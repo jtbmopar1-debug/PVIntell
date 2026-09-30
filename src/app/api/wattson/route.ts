@@ -34,6 +34,8 @@ import { insertGeneratorMcb, requestedGeneratorMcb } from "@/ai/generator-protec
 import { requestsMrbfCardUpdate, updateMrbfTechnicalCards } from "@/ai/mrbf-specification-editor";
 import { systemConfirmationReadiness } from "@/lib/system-confirmation-readiness";
 import { wattsonErrorDetail } from "@/ai/error-detail";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { recordShadowCreditUsage } from "@/credits/usage";
 
 const requestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
@@ -251,6 +253,7 @@ export async function POST(request: Request) {
   // The browser project snapshot is transport compatibility only. Reload the
   // canonical record so stale UI state cannot replace confirmed database facts.
   const canonicalProject = (await loadWorkspace(supabase, parsed.data.projectId, conversationId)).project;
+  const hadPriorProposal = Boolean(canonicalProject.designCalculator?.panelCount || canonicalProject.designCalculator?.targetPvKw || canonicalProject.designCalculator?.proposedAsBuiltDraft);
   const userInsert = await supabase
     .from("chat_messages")
     .insert({
@@ -803,6 +806,18 @@ export async function POST(request: Request) {
       { error: assistantInsert.error.message },
       { status: 400 },
     );
+  const generatedProposal = appliedActions.some((action) => action.type === "preliminary_design_updated");
+  const shadowAction = generatedProposal
+    ? hadPriorProposal ? "proposal_rebuild" as const : "system_proposal" as const
+    : imageFile ? "image_analysis" as const : "wattson_reply" as const;
+  await recordShadowCreditUsage(createAdminClient(), {
+    ownerId: userId,
+    siteId: owned.data.site_id,
+    projectId: parsed.data.projectId,
+    action: shadowAction,
+    idempotencyKey: parsed.data.requestId ? `wattson:${parsed.data.requestId}` : `wattson-message:${conversationId}:${crypto.randomUUID()}`,
+    metadata: { conversationId, provider: structuredContext.provider, actionCount: appliedActions.length },
+  });
   return Response.json({
     conversationId,
     message,

@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { recordShadowCreditUsage } from "@/credits/usage";
 
 const schema = z.object({
   projectId: z.uuid(),
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
   const claims = await supabase.auth.getClaims();
   if (claims.error || typeof claims.data?.claims?.sub !== "string")
     return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const userId = claims.data.claims.sub;
   const input = parsed.data;
   if (input.type === "inverter" && input.quantity !== 1)
     return Response.json(
@@ -80,5 +83,14 @@ export async function POST(request: Request) {
     .from("projects")
     .update({ updated_at: new Date().toISOString() })
     .eq("id", input.projectId);
+  const project = await supabase.from("projects").select("site_id,phase").eq("id", input.projectId).eq("owner_id", userId).maybeSingle();
+  if (project.data?.phase === "monitor") await recordShadowCreditUsage(createAdminClient(), {
+    ownerId: userId,
+    siteId: project.data.site_id,
+    projectId: input.projectId,
+    action: "captured_component",
+    idempotencyKey: `captured-component:${created.data.id}`,
+    metadata: { recordType: "component", componentType: input.type, quantity: input.quantity },
+  });
   return Response.json({ component: created.data }, { status: 201 });
 }
