@@ -62,6 +62,97 @@ interface GeminiInteraction {
   error?: { message?: string };
 }
 
+interface GeminiGenerateContentResponse {
+  candidates?: Array<{
+    content?: { parts?: Array<{ text?: string }> };
+    finishReason?: string;
+    groundingMetadata?: {
+      groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
+      webSearchQueries?: string[];
+    };
+  }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    totalTokenCount?: number;
+  };
+  error?: { message?: string };
+}
+
+async function askGeminiWithGroundedSearch({
+  apiKey,
+  model,
+  systemInstruction,
+  prompt,
+  image,
+}: {
+  apiKey: string;
+  model: string;
+  systemInstruction: string;
+  prompt: string;
+  image?: { data: string; mimeType: string };
+}): Promise<GeminiWattsonResult> {
+  const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+  if (image)
+    parts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemInstruction }] },
+        contents: [{ role: "user", parts }],
+        tools: [{ google_search: {} }],
+      }),
+      signal: AbortSignal.timeout(25_000),
+    },
+  );
+  const raw = (await response.json().catch(() => ({}))) as GeminiGenerateContentResponse;
+  if (!response.ok)
+    throw new Error(
+      response.status === 504
+        ? "The model took too long to respond. Please send that message again."
+        : raw.error?.message ?? `Gemini grounded-search request failed with status ${response.status}.`,
+    );
+
+  const candidate = raw.candidates?.[0];
+  const message = candidate?.content?.parts
+    ?.map((part) => part.text?.trim() ?? "")
+    .filter(Boolean)
+    .join("\n")
+    .trim() ?? "";
+  if (!message)
+    throw new Error(`Gemini grounded search returned no text (${candidate?.finishReason ?? "unknown finish reason"}).`);
+
+  const citations = Array.from(new Map(
+    (candidate?.groundingMetadata?.groundingChunks ?? [])
+      .map((chunk) => chunk.web)
+      .filter((web): web is { uri: string; title?: string } => Boolean(web?.uri))
+      .map((web) => [web.uri, {
+        title: web.title?.trim() || new URL(web.uri).hostname,
+        url: web.uri,
+      }]),
+  ).values());
+  const usage = raw.usageMetadata;
+  return {
+    message,
+    citations,
+    model,
+    searched: true,
+    usage: {
+      inputTokens: usage?.promptTokenCount,
+      outputTokens: usage?.candidatesTokenCount,
+      thoughtTokens: usage?.thoughtsTokenCount,
+      totalTokens: usage?.totalTokenCount,
+      searches: candidate?.groundingMetadata?.webSearchQueries?.length || 1,
+    },
+    actions: [],
+  };
+}
+
 function omitContextFields(value: object, fields: readonly string[]) {
   const excluded = new Set(fields);
   return Object.fromEntries(Object.entries(value).filter(([key]) => !excluded.has(key)));
@@ -261,7 +352,8 @@ function parseInteraction(
   const functionCalls = responseSteps
     .filter((step) => step.type === "function_call" && step.name)
     .map((step) => ({ name: step.name as string, arguments: step.arguments }));
-  const actions = functionCalls.filter((action) => action.name !== "offer_optional_record_action");
+  const applicationActionNames = new Set<string>(wattsonActionTools.map((tool) => tool.name));
+  const actions = functionCalls.filter((action) => applicationActionNames.has(action.name));
   const offeredCall = functionCalls.find((action) => action.name === "offer_optional_record_action");
   const offeredArguments = offeredCall?.arguments && typeof offeredCall.arguments === "object"
     ? offeredCall.arguments as Record<string, unknown>
@@ -509,8 +601,16 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
         additionalProperties: false,
       },
     });
+  const prompt = image
+    ? `Structured PVIntell context:\n${JSON.stringify({ project: compactProject, questionnaireContext, recentConversation: compactRecentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message and inspect the attached image:\n${message}`
+    : `Structured PVIntell context:\n${JSON.stringify({ project: compactProject, questionnaireContext, recentConversation: compactRecentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message:\n${message}`;
+
+  // Interactions can expose Google Search as a requires_action function call
+  // instead of executing it. Grounded requests use Gemini's automatic search
+  // transport so every Wattson surface receives a completed, cited answer.
   if (route.search)
-    tools.unshift({ type: "google_search", search_types: ["web_search"] });
+    return askGeminiWithGroundedSearch({ apiKey, model, systemInstruction, prompt, image });
+
   const body: Record<string, unknown> = {
     model,
     store: false,
@@ -519,11 +619,11 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
       ? [
           {
             type: "text",
-            text: `Structured PVIntell context:\n${JSON.stringify({ project: compactProject, questionnaireContext, recentConversation: compactRecentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message and inspect the attached image:\n${message}`,
+            text: prompt,
           },
           { type: "image", data: image.data, mime_type: image.mimeType },
         ]
-      : `Structured PVIntell context:\n${JSON.stringify({ project: compactProject, questionnaireContext, recentConversation: compactRecentConversation, monitoringContext, telemetryStatus: monitoringContext ? "measured provider data supplied" : "no monitoring readings supplied", requestClassification: route })}\n\nRespond to the latest user message:\n${message}`,
+      : prompt,
     tools,
   };
   const response = await fetch(
@@ -543,7 +643,23 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
         : raw.error?.message ??
         `Gemini request failed with status ${response.status}.`,
     );
-  const result = parseInteraction(raw, model, route.search);
+  let result: GeminiWattsonResult;
+  try {
+    result = parseInteraction(raw, model, route.search);
+  } catch (problem) {
+    if (directAnswerRetry) throw problem;
+    return askGemini({
+      message: `${message}\n\nThe previous attempt returned no user-visible answer after using its tools. Answer the question directly in visible text. Use declarative sentences, cite any material current regulatory claims, and do not return only a search or tool call.`,
+      project,
+      recentConversation,
+      questionnaireContext,
+      monitoringContext,
+      image,
+      allowActions: false,
+      allowOptionalRecordAction: false,
+      directAnswerRetry: true,
+    });
+  }
   if (!result.message && result.offeredAction && allowOptionalRecordAction)
     result.message = `${result.offeredAction.description} Would you like me to make that change?`;
   const visibleSentences = result.message
