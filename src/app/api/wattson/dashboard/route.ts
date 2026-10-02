@@ -751,7 +751,8 @@ export async function POST(request: Request) {
     }
     const updateSummary = appliedActions.map((action) => action.summary).join("; ");
     let message = friendlyMonitoringReferences(result.message.trim(), connectedSystems);
-    message = removeAnsweredWattsonQuestions(message, conversationState);
+    const unfilteredMessage = message;
+    message = removeAnsweredWattsonQuestions(message, conversationState) || unfilteredMessage;
     if (containsUnsupportedSettingsSetupAdvice(message)) {
       message = `${message.replace(/[^.!?]*(?:go|head|navigate) to (?:the )?settings[^.!?]*[.!?]?|[^.!?]*open (?:the )?settings[^.!?]*[.!?]?/gi, "").trim()}${message.trim() ? "\n\n" : ""}You do not need generic Settings for this. I can keep working from the confirmed details in this conversation; a specific PVIntell page should be named only when its actual controls are needed.`.trim();
     }

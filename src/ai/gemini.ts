@@ -331,6 +331,7 @@ export async function askGemini({
   image,
   allowActions = true,
   allowOptionalRecordAction = true,
+  directAnswerRetry = false,
 }: {
   message: string;
   project: Project;
@@ -340,6 +341,7 @@ export async function askGemini({
   image?: { data: string; mimeType: string };
   allowActions?: boolean;
   allowOptionalRecordAction?: boolean;
+  directAnswerRetry?: boolean;
 }): Promise<GeminiWattsonResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
@@ -544,5 +546,22 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
   const result = parseInteraction(raw, model, route.search);
   if (!result.message && result.offeredAction && allowOptionalRecordAction)
     result.message = `${result.offeredAction.description} Would you like me to make that change?`;
+  const visibleSentences = result.message
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!directAnswerRetry && route.technical && visibleSentences.length > 0 && visibleSentences.every((part) => part.endsWith("?"))) {
+    return askGemini({
+      message: `${message}\n\nAnswer the question directly with the confirmed context already supplied. Give the useful technical answer in declarative sentences. Do not respond only with another question. If one fact prevents a definitive conclusion, state the conditional answer and identify that fact briefly.`,
+      project,
+      recentConversation,
+      questionnaireContext,
+      monitoringContext,
+      image,
+      allowActions: false,
+      allowOptionalRecordAction: false,
+      directAnswerRetry: true,
+    });
+  }
   return result;
 }

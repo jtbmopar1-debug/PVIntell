@@ -733,7 +733,8 @@ export async function POST(request: Request) {
         message = result.actions.length
           ? "I couldn’t safely apply that change to a specific record. Tell me which item it belongs to."
           : "I didn’t produce a useful reply. Please send that once more.";
-      message = removeAnsweredWattsonQuestions(message, conversationState);
+      const unfilteredMessage = message;
+      message = removeAnsweredWattsonQuestions(message, conversationState) || unfilteredMessage;
       if (containsUnsupportedSettingsSetupAdvice(message)) {
         const withoutSettingsAdvice = message.replace(/[^.!?]*(?:go|head|navigate) to (?:the )?settings[^.!?]*[.!?]?|[^.!?]*open (?:the )?settings[^.!?]*[.!?]?/gi, "").trim();
         message = `${withoutSettingsAdvice}${withoutSettingsAdvice ? "\n\n" : ""}You do not need generic Settings for this. I can keep working from the confirmed details in this conversation; a specific PVIntell page should be named only when its actual controls are needed.`;
