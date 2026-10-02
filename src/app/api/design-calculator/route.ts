@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { recordOwnShadowCreditUsage } from "@/credits/usage";
+import { syncPlannedInverterCards } from "@/design/inverter-card-sync";
 
 const finite = z.number().finite().min(0).max(1_000_000);
 const calculatorSchema = z.object({
@@ -299,6 +300,11 @@ export async function PUT(request: Request) {
     : current.data.phase;
   const saved = await supabase.from("projects").update({ settings, phase: proposalPhase }).eq("id", parsed.data.projectId).eq("owner_id", userId);
   if (saved.error) return Response.json({ error: saved.error.message }, { status: 400 });
+  try {
+    await syncPlannedInverterCards(supabase, parsed.data.projectId, settings);
+  } catch (problem) {
+    return Response.json({ error: problem instanceof Error ? problem.message : "Could not align the inverter technical cards." }, { status: 400 });
+  }
   if (parsed.data.creditEvent === "proposal_rebuild") await recordOwnShadowCreditUsage(supabase, {
     siteId: current.data.site_id,
     projectId: parsed.data.projectId,

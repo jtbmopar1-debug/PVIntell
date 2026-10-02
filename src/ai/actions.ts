@@ -6,6 +6,7 @@ import { recommendedPanelOrientation } from "@/design/panel-orientation";
 import { generatorFromDiscovery, proposalIncludesSolar } from "@/design/proposal-inputs";
 import { assessPanelSurfaces } from "@/design/panel-surfaces";
 import { inverterArrangementAdvice } from "@/design/inverter-arrangement";
+import { syncPlannedInverterCards } from "@/design/inverter-card-sync";
 import { buildPvArrayPlan } from "@/design/pv-array-plan";
 import type { DesignCalculatorState } from "@/domain/models";
 
@@ -1574,6 +1575,7 @@ export async function applyWattsonActions(
       settings.designCalculator = nextDesign;
       const changed = await supabase.from("projects").update({ settings }).eq("id", projectId);
       if (changed.error) throw changed.error;
+      await syncPlannedInverterCards(supabase, projectId, settings);
       applied.push({
         type: "preliminary_design_updated",
         summary: sizing.withheld.length

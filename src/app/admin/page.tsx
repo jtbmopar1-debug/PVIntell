@@ -1,6 +1,7 @@
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { isAdminEmail } from "@/admin/access";
 import { AdminUsers, type AdminUserRow } from "@/components/admin-users";
 import { BrandLogo } from "@/components/brand-logo";
@@ -9,6 +10,9 @@ import { createClient } from "@/lib/supabase/server";
 import { WATTSON_STARTING_CREDITS, wattsonCreditCatalog } from "@/credits/catalog";
 
 export default async function AdminPage({ searchParams }: PageProps<"/admin">) {
+  // Credit usage is operational data and must be read fresh on every Admin
+  // visit rather than being retained in a prerendered or prefetched shell.
+  await connection();
   const supabase = await createClient();
   const current = await supabase.auth.getUser();
   if (current.error || !current.data.user) redirect("/login?next=/admin");
