@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { askGemini } from "@/ai/gemini";
-import { demoProject } from "@/data/demo-project";
+import { loadWorkspace } from "@/data/cloud-project";
+import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 import { userConversationCount, WATTSON_CONVERSATION_LIMIT } from "@/ai/conversation-limit";
 import { conversationStatePromptContext, recordWattsonAssistantTurn, reduceWattsonUserTurn } from "@/ai/conversation-state";
@@ -46,7 +47,7 @@ export async function POST(request: Request) {
   const startedRequest = await startedConversationRequest(supabase, "user_chat_messages", undefined, parsed.data.requestId);
   if (startedRequest) return Response.json({ error: "That message is already being handled, so Wattson did not run it again.", conversationId: startedRequest.conversationId, retryable: false }, { status: 409 });
 
-  let location = "Location not set"; let siteName = "New system";
+  let location = "Location not set"; let siteName = "New system"; let selectedProject: Project | undefined;
   if (parsed.data.siteId) {
     const site = await supabase.from("sites").select("id,name,location,location_confirmed").eq("id", parsed.data.siteId).eq("owner_id", userId).maybeSingle();
     if (site.error || !site.data) return Response.json({ error: "Site not found." }, { status: 404 });
@@ -55,7 +56,10 @@ export async function POST(request: Request) {
   if (parsed.data.projectId) {
     const project = await supabase.from("projects").select("id,name,site_id").eq("id", parsed.data.projectId).eq("owner_id", userId).maybeSingle();
     if (project.error || !project.data) return Response.json({ error: "System not found." }, { status: 404 });
-    siteName = project.data.name;
+    const workspace = await loadWorkspace(supabase, project.data.id);
+    selectedProject = workspace.project;
+    siteName = workspace.project.name;
+    location = workspace.site.locationConfirmed ? workspace.site.location : location;
   }
 
   let conversationId = parsed.data.conversationId;
@@ -168,7 +172,7 @@ export async function POST(request: Request) {
     return Response.json({ conversationId, message, safetyDecision: "do_not_use" });
   }
   const utilityRelationship = discoveryAnswers.utility_relationship;
-  const confirmedProjectType = utilityRelationship === "off_grid" ? "off-grid" : utilityRelationship === "grid_connected" ? "hybrid" : demoProject.projectType;
+  const confirmedProjectType = utilityRelationship === "off_grid" ? "off-grid" : utilityRelationship === "grid_connected" ? "hybrid" : "grid-tied";
   const contextInstruction = (helpContext === "discovery"
     ? "This is discovery help. Once the user has a usable answer, tell them they can return to the questionnaire and confirm it manually."
     : helpContext === "configure"
@@ -176,11 +180,36 @@ export async function POST(request: Request) {
       : helpContext === "schematic"
         ? "This came from the working schematic. Keep the selected component or connection and neighbouring items in view, and refer back to its schematic record—not the questionnaire."
         : "This came from Build It. Focus on implementation, parts, checks and recorded evidence, and refer back to this Build It item—not the questionnaire.")
-    + " For a heat-pump photo, read the advertised heating capacity and model but do not use any input explicitly marked indoor-only. Keep this workflow simple: use heating capacity divided by 5 as the average-operating planning input. State the exact Heating size shown on label and resulting Average electrical input fields for the user. Keep the result visibly estimated and replace it with a representative measured average when available. Never present thermal capacity, indoor-only watts, an uncited model match, or the planning estimate as confirmed.";
+    + " Use only the supplied selected-system record and confirmed discovery answers as facts. Never import equipment, loads, ratings or assumptions from examples or another system. Distinguish present recorded loads from future possibilities and calculated allowances. If a claimed load cannot be tied to an exact supplied record, say it is not recorded instead of inventing a justification. For a heat-pump photo, read the advertised heating capacity and model but do not use any input explicitly marked indoor-only. Keep this workflow simple: use heating capacity divided by 5 as the average-operating planning input. State the exact Heating size shown on label and resulting Average electrical input fields for the user. Keep the result visibly estimated and replace it with a representative measured average when available. Never present thermal capacity, indoor-only watts, an uncited model match, or the planning estimate as confirmed.";
+  const neutralDiscoveryProject: Project = {
+    id: parsed.data.projectId ?? `discovery-${conversationId}`,
+    siteId: parsed.data.siteId,
+    name: `${siteName} discovery help`,
+    description: "Guided discovery help without a saved system record.",
+    location,
+    projectType: confirmedProjectType,
+    phase: "discover",
+    goal: "Answer the active discovery question.",
+    priorities: [],
+    systemVoltage: 0,
+    autonomyDays: 0,
+    peakSunHours: 0,
+    loads: [],
+    assumptions: [],
+    components: [],
+    connections: [],
+    schematicPositions: [],
+    overviewCardOrder: [],
+    pvArrays: [],
+    installationSteps: [],
+    commissioning: [],
+    designDiscovery: undefined,
+    designCalculator: undefined,
+  };
   let result;
   try {
     result = await askGemini({
-      project: { ...demoProject, id: parsed.data.projectId ?? `discovery-${conversationId}`, siteId: parsed.data.siteId, name: `${siteName} discovery help`, location, projectType: confirmedProjectType },
+      project: selectedProject ?? neutralDiscoveryProject,
       recentConversation: parsed.data.recentConversation,
       allowActions: false,
       message: parsed.data.message,

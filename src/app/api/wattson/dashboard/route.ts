@@ -143,15 +143,15 @@ function dashboardProject(location: string): Project {
   return {
     id: "dashboard",
     name: "PVIntell dashboard",
-    description: "Synthetic dashboard transport context only. Ignore its project type, voltage, autonomy and empty equipment fields; use connectedSiteSystems and discovery records instead.",
+    description: "Empty dashboard context envelope only. It contains no system design facts; use connectedSiteSystems and recorded discovery evidence instead.",
     projectType: "off-grid",
     phase: "discover",
     location: location || "Location not set",
     goal: "Answer the user's general question, using the selected Site and its recorded systems when that context is relevant.",
     priorities: [],
     systemVoltage: 0,
-    autonomyDays: 2,
-    peakSunHours: 4,
+    autonomyDays: 0,
+    peakSunHours: 0,
     loads: [], assumptions: [], components: [], connections: [], schematicPositions: [], overviewCardOrder: [], pvArrays: [], installationSteps: [], commissioning: [],
   };
 }

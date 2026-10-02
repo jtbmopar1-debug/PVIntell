@@ -483,12 +483,15 @@ describe("discovery → stored proposal → calculator save", () => {
   it("shows the multi-unit inverter plan instead of one oversized inverter", () => {
     const design = {
       inverterKw: 14,
+      connectionType: "ac_single",
+      connectionVoltage: 230,
       inverterPlan: {
         jurisdiction: "nz",
         selectionStatus: "candidate_selected",
         unitRatingsKw: [8, 8],
         preferredPhase: "three",
         message: "Local checks required.",
+        acceptedByUser: true,
       },
     } as DesignCalculatorState;
     const project = { projectType: "grid-tied", designDiscovery: {} } as unknown as Project;
@@ -525,6 +528,25 @@ describe("discovery → stored proposal → calculator save", () => {
     expect(card("inverter-ac-protection-1")).toBe("44 A · AC");
     expect(card("inverter-battery-protection-1")).toBe("196 A · DC");
     expect(card("battery")).toBe("51.2 V · TBC Ah");
+  });
+
+  it("does not turn an unaccepted inverter calculation into schematic equipment", () => {
+    const design = {
+      inverterKw: 6,
+      inverterPlan: {
+        jurisdiction: "nz",
+        selectionStatus: "candidate_selected",
+        unitRatingsKw: [6, 6],
+        preferredPhase: "three",
+        message: "Advisory calculation only.",
+      },
+    } as DesignCalculatorState;
+    const formatted = planningNodeDetail({ id: "inverter", label: "GoodWe GW6000-MS", detail: "6 kW", image: "/inverter.jpg", x: 0, y: 0, recordRef: "component:recorded-inverter" }, design);
+    expect(formatted).toMatchObject({ label: "GoodWe GW6000-MS", detail: "6 kW" });
+
+    const draft = createProposedAsBuiltDraft({ ...design, architecture: "combined_hybrid_inverter" }, true);
+    expect(draft.nodes?.some((node) => node.id === "inverter")).toBe(true);
+    expect(draft.nodes?.some((node) => node.id === "inverter-1" || node.id === "inverter-2")).toBe(false);
   });
 
   it("uses the tidy grid by default and grows the canvas around every row", () => {

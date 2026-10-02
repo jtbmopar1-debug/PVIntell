@@ -16,7 +16,7 @@ const calculatorSchema = z.object({
       createdAt: z.string().datetime(),
       architecture: z.enum(["combined_hybrid_inverter", "separate_solar_controller_and_inverter", "ac_coupled", "not_decided"]).optional(),
       flow: z.array(z.string().max(100)).min(2).max(10),
-      nodes: z.array(z.object({ id: z.string().max(50), label: z.string().max(160), detail: z.string().max(2000), image: z.string().max(200), x: finite, y: finite, recordRef: z.string().max(100).optional(), installed: z.boolean().optional(), installedRecordId: z.string().uuid().optional(), reviewed: z.boolean().optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional() })).max(100).optional(),
+      nodes: z.array(z.object({ id: z.string().max(50), label: z.string().max(160), detail: z.string().max(2000), image: z.string().max(200), x: finite, y: finite, recordRef: z.string().max(100).optional(), installed: z.boolean().optional(), installedRecordId: z.string().uuid().optional(), reviewed: z.boolean().optional(), rejected: z.boolean().optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional(), introduced: z.boolean().optional(), introductionReason: z.string().max(500).optional() })).max(100).optional(),
       connections: z.array(z.object({ from: z.string().max(50), to: z.string().max(50), label: z.string().max(200), kind: z.enum(["solar-dc", "battery-dc", "ac", "earth"]), lengthM: finite.optional(), lengthBasis: z.enum(["estimated", "measured"]).optional(), cableSizeMm2: finite.optional(), protectionAmps: finite.optional(), notes: z.string().max(2000).optional(), authorityCheck: z.boolean().optional(), configured: z.boolean().optional(), provisionalInterface: z.boolean().optional() })).max(200).optional(),
       panelCount: finite.optional(), panelWatts: finite.optional(), pvStrings: finite.optional(), panelsPerString: finite.optional(),
       panelVmpV: finite.optional(), panelVocV: finite.optional(), panelImpA: finite.optional(), panelIscA: finite.optional(), batteryVoltage: finite.optional(),
@@ -55,6 +55,7 @@ const calculatorSchema = z.object({
     existingPanelGroup: z.object({
       name: z.string().max(160), availableCount: finite, maximumAvailableToProposal: finite.optional(), proposedUseCount: finite.optional(),
       surplusCount: finite.optional(), supplementaryCount: finite.optional(), supplementaryTargetPvKw: finite.optional(), wattsEach: finite.optional(), supplementaryWattsEach: finite.optional(),
+      recordedCapacityKw: finite.optional(),
       supplementaryPanelType: z.string().max(80).optional(), supplementaryLengthMm: finite.optional(), supplementaryWidthMm: finite.optional(),
       assessmentStatus: z.literal("provisional_pending_datasheet_and_condition"),
     }).optional(),
@@ -65,6 +66,7 @@ const calculatorSchema = z.object({
     }).optional(),
     panelVmpV: finite.optional(), panelVocV: finite.optional(), panelImpA: finite.optional(), panelIscA: finite.optional(),
     targetPvKw: finite.optional(), energyTargetPvKw: finite.optional(), energyTargetPanelCount: finite.optional(),
+    calculatedPvRequirementKw: finite.optional(), calculatedInverterRequirementKw: finite.optional(), recordedPvCapacityKw: finite.optional(), recordedInverterCapacityKw: finite.optional(),
     planningPanelCapacity: finite.optional(), fitLimited: z.boolean().optional(), panelLengthMm: finite.optional(),
     panelWidthMm: finite.optional(), panelThicknessMm: finite.optional(), panelWeightKg: finite.optional(),
     panelWeightBasis: z.string().max(300).optional(), panelMaximumSystemVoltageV: finite.optional(),
@@ -80,9 +82,10 @@ const calculatorSchema = z.object({
       unitRatingsKw: z.array(finite).max(20),
       preferredPhase: z.enum(["single", "three", "confirm"]),
       message: z.string().max(2000),
+      acceptedByUser: z.boolean().optional(),
     }).optional(),
     batteryAh: finite.optional(), batteryQuantity: finite.optional(), usableBatteryPercent: finite.max(100).optional(),
-    batteryUsableKwh: finite.optional(),
+    batteryUsableKwh: finite.optional(), calculatedBatteryUsableKwh: finite.optional(), recordedBatteryUsableKwh: finite.optional(),
     sizingMethod: z.enum(["deterministic-v1", "user-adjusted"]).optional(),
     sizingInputs: z.object({
       dailyEnergyKwh: finite.optional(), dailyEnergySource: z.enum(["off_grid_daily_energy_use", "current_energy_use", "pool_equipment_schedule"]).optional(),
@@ -94,7 +97,7 @@ const calculatorSchema = z.object({
     }).optional(),
     sizingAssumptions: z.array(z.string().max(2000)).max(100).optional(),
     sizingWarnings: z.array(z.string().max(2000)).max(100).optional(),
-    generatorIncluded: z.boolean().optional(), generatorPurchaseStatus: z.enum(["not_purchased", "have_details"]).optional(), generatorType: z.string().max(100).optional(), generatorFuel: z.string().max(100).optional(), generatorContinuousKw: finite.optional(), generatorSurgeKw: finite.optional(), generatorConnectionMethod: z.string().max(100).optional(), electricalStandard: z.enum(["as_nzs", "nec", "iec", "local_review"]).optional(), connectionType: z.enum(["dc", "ac_single", "ac_three"]).optional(),
+    generatorIncluded: z.boolean().optional(), generatorPurchaseStatus: z.enum(["not_purchased", "have_details"]).optional(), generatorType: z.string().max(100).optional(), generatorFuel: z.string().max(100).optional(), generatorContinuousKw: finite.optional(), generatorSurgeKw: finite.optional(), calculatedGeneratorContinuousKw: finite.optional(), calculatedGeneratorSurgeKw: finite.optional(), recordedGeneratorContinuousKw: finite.optional(), recordedGeneratorSurgeKw: finite.optional(), generatorConnectionMethod: z.string().max(100).optional(), electricalStandard: z.enum(["as_nzs", "nec", "iec", "local_review"]).optional(), connectionType: z.enum(["dc", "ac_single", "ac_three"]).optional(),
     connectionVoltage: finite.optional(), connectionCurrent: finite.optional(), connectionLengthM: finite.optional(),
     cableSizeMm2: finite.optional(), breakerAmps: finite.optional(), maxVoltageDropPercent: finite.max(20).optional(),
   }),
@@ -128,6 +131,9 @@ export async function PUT(request: Request) {
   const settings = (current.data.settings ?? {}) as Record<string, unknown>;
   const draft = parsed.data.design.proposedAsBuiltDraft;
   if (draft?.nodes?.length) {
+    // Introduced shortfall options belong in the working schematic, but are not
+    // equipment records until the user explicitly accepts their specification.
+    const materializedNodes = draft.nodes.filter((node) => !node.rejected && (!node.introduced || node.reviewed === true));
     const componentType = (nodeId: string) => {
       if (nodeId === "battery") return "battery";
       if (nodeId === "generator") return "generator";
@@ -143,7 +149,7 @@ export async function PUT(request: Request) {
     };
     const plannedArrays = parsed.data.design.pvArrayPlan?.arrays ?? [];
     try {
-      await Promise.all(draft.nodes.map(async (node) => {
+      await Promise.all(materializedNodes.map(async (node) => {
         if (node.authorityCheck || node.recordRef) return;
         const isPvArray = node.id === "solar" || node.id.startsWith("solar-pv-");
         if (isPvArray) {
@@ -228,7 +234,7 @@ export async function PUT(request: Request) {
         node.recordRef = `component:${id}`;
       }));
 
-      const currentNodeIds = new Set(draft.nodes.map((node) => node.id));
+      const currentNodeIds = new Set(materializedNodes.map((node) => node.id));
       const generatedComponents = await supabase.from("system_components")
         .select("id,specifications")
         .eq("project_id", parsed.data.projectId)
@@ -252,7 +258,7 @@ export async function PUT(request: Request) {
       return Response.json({ error: problem instanceof Error ? problem.message : "Could not save the proposed equipment." }, { status: 400 });
     }
 
-    const nodeRefs = new Map(draft.nodes.flatMap((node) => node.recordRef ? [[node.id, node.recordRef] as const] : []));
+    const nodeRefs = new Map(materializedNodes.flatMap((node) => node.recordRef ? [[node.id, node.recordRef] as const] : []));
     const proposalConnections = (draft.connections ?? []).filter((connection) =>
       !connection.authorityCheck && nodeRefs.has(connection.from) && nodeRefs.has(connection.to));
     if (proposalConnections.length) {

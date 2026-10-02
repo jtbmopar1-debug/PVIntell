@@ -3,7 +3,6 @@ import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { PVIntellWorkspace } from "@/components/pvintell-workspace";
 import { SystemSchematic } from "@/components/system-schematic";
-import { initialConversation } from "@/data/demo-project";
 import { loadSiteWorkspace } from "@/data/cloud-project";
 import { createClient } from "@/lib/supabase/server";
 import type { ComponentSpec } from "@/domain/models";
@@ -116,7 +115,7 @@ export default async function SchematicPage({
     return <PVIntellWorkspace
       key={`${workspace.project.id}:${workspace.project.updatedAt ?? ""}:schematic`}
       initialProject={workspace.project}
-      initialMessages={workspace.messages.length ? workspace.messages : initialConversation}
+      initialMessages={workspace.messages}
       initialConversationId={workspace.conversationId}
       initialSite={workspace.site}
       sites={workspace.sites}

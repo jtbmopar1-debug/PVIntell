@@ -3,11 +3,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 type ProjectSettings = {
   schematicOrigin?: unknown;
   designCalculator?: {
-    inverterPlan?: { unitRatingsKw?: unknown };
+    inverterPlan?: { unitRatingsKw?: unknown; acceptedByUser?: unknown };
   };
 };
 
 const generatedUnitSource = "Wattson inverter plan";
+
+function ratedPowerKw(specifications: unknown) {
+  const value = String((specifications as Record<string, unknown> | null)?.["Rated power"] ?? "");
+  const amount = Number(value.match(/\d+(?:\.\d+)?/)?.[0]);
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+  return /\b(?:w|watt)s?\b/i.test(value) && !/\bkw\b/i.test(value) ? amount / 1000 : amount;
+}
 
 /**
  * Keeps a structured proposal's physical inverter cards aligned with the
@@ -21,9 +28,43 @@ export async function syncPlannedInverterCards(
 ) {
   if (settings.schematicOrigin !== "structured_proposal_intake") return;
   const rawRatings = settings.designCalculator?.inverterPlan?.unitRatingsKw;
-  if (!Array.isArray(rawRatings)) return;
+  const accepted = settings.designCalculator?.inverterPlan?.acceptedByUser === true;
+  const generated = await supabase
+    .from("system_components")
+    .select("id,specifications")
+    .eq("project_id", projectId)
+    .eq("type", "inverter")
+    .contains("specifications", { "Planning unit source": generatedUnitSource });
+  if (generated.error) throw generated.error;
+  const generatedCards = generated.data ?? [];
+
+  // Calculated alternatives are guidance, not permission to create hardware.
+  // Remove only Wattson-generated units when no multi-unit choice is accepted.
+  if (!Array.isArray(rawRatings) || rawRatings.length < 2 || !accepted) {
+    for (const card of generatedCards) {
+      const recordRef = `component:${card.id}`;
+      const links = await supabase.from("system_connections").delete().eq("project_id", projectId).or(`source_ref.eq.${recordRef},target_ref.eq.${recordRef}`);
+      if (links.error) throw links.error;
+    }
+    if (generatedCards.length) {
+      const removed = await supabase.from("system_components").delete().eq("project_id", projectId).in("id", generatedCards.map((card) => card.id));
+      if (removed.error) throw removed.error;
+    }
+    return;
+  }
   const ratings = rawRatings.map(Number).filter((rating) => Number.isFinite(rating) && rating > 0);
   if (ratings.length < 2) return;
+
+  const surplus = generatedCards.filter((card) => Number((card.specifications as Record<string, unknown>)["Planning unit number"]) > ratings.length);
+  for (const card of surplus) {
+    const recordRef = `component:${card.id}`;
+    const links = await supabase.from("system_connections").delete().eq("project_id", projectId).or(`source_ref.eq.${recordRef},target_ref.eq.${recordRef}`);
+    if (links.error) throw links.error;
+  }
+  if (surplus.length) {
+    const removed = await supabase.from("system_components").delete().eq("project_id", projectId).in("id", surplus.map((card) => card.id));
+    if (removed.error) throw removed.error;
+  }
 
   const existing = await supabase
     .from("system_components")
@@ -33,14 +74,30 @@ export async function syncPlannedInverterCards(
     .order("created_at", { ascending: true });
   if (existing.error) throw existing.error;
   const cards = existing.data ?? [];
-  if (!cards.length || cards.length >= ratings.length) return;
+  if (!cards.length) return;
+
+  const authoritativeCards = cards.filter((card) => {
+    const specs = (card.specifications ?? {}) as Record<string, unknown>;
+    return specs["Planning unit source"] !== generatedUnitSource;
+  });
+  const unmatchedRatingIndexes = ratings.map((_, index) => index);
+  for (const card of authoritativeCards) {
+    const rating = ratedPowerKw(card.specifications);
+    if (rating === undefined) throw new Error("Confirm the recorded inverter rating before accepting a multi-inverter arrangement.");
+    const matchPosition = unmatchedRatingIndexes.findIndex((index) => Math.abs(ratings[index] - rating) < 0.01);
+    if (matchPosition < 0) throw new Error(`The recorded ${rating} kW inverter does not match any unit in the proposed ${ratings.map((item) => `${item} kW`).join(" + ")} arrangement. Revise the arrangement before accepting it.`);
+    unmatchedRatingIndexes.splice(matchPosition, 1);
+  }
+  if (!unmatchedRatingIndexes.length) return;
 
   const source = cards.find((card) => {
     const specs = (card.specifications ?? {}) as Record<string, unknown>;
     return specs["Planning unit source"] !== generatedUnitSource;
   }) ?? cards[0];
 
-  for (let index = cards.length; index < ratings.length; index += 1) {
+  for (const index of unmatchedRatingIndexes) {
+    const alreadyGenerated = cards.some((card) => Number(((card.specifications ?? {}) as Record<string, unknown>)["Planning unit number"]) === index + 1);
+    if (alreadyGenerated) continue;
     const unitNumber = index + 1;
     const specifications = {
       ...((source.specifications ?? {}) as Record<string, unknown>),

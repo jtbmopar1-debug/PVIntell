@@ -89,6 +89,7 @@ describe("new-system discovery", () => {
   it("uses floor area only as a fallback when reliable measured energy is unavailable", () => {
     const residential = { utility_relationship: "grid_connected", building_type: ["detached_house"] };
     expect(hasReliableMeasuredEnergyUse({ ...residential, current_energy_use: 430 })).toBe(true);
+    expect(hasReliableMeasuredEnergyUse({ ...residential, current_energy_use: "monthly_760_1520" })).toBe(true);
     expect(visibleDiscoveryQuestions({ ...residential, current_energy_use: 430 }).map((question) => question.id)).not.toContain("served_floor_area");
     expect(visibleDiscoveryQuestions(residential).map((question) => question.id)).toContain("served_floor_area");
     expect(visibleDiscoveryQuestions({ utility_relationship: "off_grid", building_type: ["detached_house"], off_grid_daily_energy_use: 12 }).map((question) => question.id)).not.toContain("served_floor_area");

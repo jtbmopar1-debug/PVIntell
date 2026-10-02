@@ -2,7 +2,6 @@ import { z } from "zod";
 import { askGemini } from "@/ai/gemini";
 import { applyWattsonActions, type AppliedWattsonAction } from "@/ai/actions";
 import { discoveryGuidance, nextRequiredDiscoveryQuestion, userExpressesUncertainty } from "@/ai/discovery";
-import { MockAIProvider } from "@/ai/provider";
 import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 import { isNewSystemSetupIntent, startHereLabel, startHereMessage, startHereUrl } from "@/ai/new-system-intent";
@@ -780,10 +779,15 @@ export async function POST(request: Request) {
       );
     }
   } else {
-    message = await new MockAIProvider().sendMessage(privateGuidance, {
-      project: groundedProject,
-    });
-    structuredContext = { provider: "mock", projectId: parsed.data.projectId, evidenceRevision: conversationState.revision };
+    return Response.json(
+      {
+        error: "Wattson is not configured on this service. Your records have not been changed.",
+        conversationId,
+        retryable: false,
+        code: "ai_not_configured",
+      },
+      { status: 503 },
+    );
   }
   if (inventoryCapture?.saved)
     message = `${message}\n\nI added ${inventoryCapture.equipmentName ?? "this equipment"} to this Site’s inventory from the label photo. I saved only visible label details and marked its physical condition as needing testing; you can review or correct the inventory record at any time.`;

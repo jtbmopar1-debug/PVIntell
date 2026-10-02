@@ -15,7 +15,6 @@ function componentSpecLines(components: ComponentSpec[]) {
 }
 
 function systemVoltageLabel(project: Project) {
-  const phase = String(project.designDiscovery?.ac_phase_arrangement?.value ?? "").toLowerCase();
   const recorded = String(project.designDiscovery?.nominal_ac_voltage?.value ?? "");
   const designVoltage = project.designCalculator?.connectionVoltage;
   if (designVoltage) return `${designVoltage} V AC`;
@@ -25,8 +24,6 @@ function systemVoltageLabel(project: Project) {
   if (/110[_ –-]120/.test(recorded)) return "120 V AC";
   const exact = Number(recorded.match(/\d+(?:\.\d+)?/)?.[0]);
   if (exact) return `${exact} V AC`;
-  if (/three|3[ -]?phase/.test(phase)) return "400 V AC";
-  if (/single|split/.test(phase)) return "230 V AC";
   return project.systemVoltage > 0 ? `${project.systemVoltage} V DC` : "Supply voltage not recorded";
 }
 

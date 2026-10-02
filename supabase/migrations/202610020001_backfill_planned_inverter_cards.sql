@@ -8,6 +8,8 @@ with planned_projects as (
     project.settings#>'{designCalculator,inverterPlan,unitRatingsKw}' as ratings
   from public.projects project
   where project.settings->>'schematicOrigin' = 'structured_proposal_intake'
+    -- A calculated comparison is not permission to create physical equipment.
+    and project.settings#>>'{designCalculator,inverterPlan,acceptedByUser}' = 'true'
     and jsonb_typeof(project.settings#>'{designCalculator,inverterPlan,unitRatingsKw}') = 'array'
     and jsonb_array_length(project.settings#>'{designCalculator,inverterPlan,unitRatingsKw}') > 1
 ), ranked_inverters as (

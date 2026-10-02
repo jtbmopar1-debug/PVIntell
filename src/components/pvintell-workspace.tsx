@@ -41,12 +41,6 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { MockAIProvider } from "@/ai/provider";
-import {
-  demoProject,
-  demoTelemetry,
-  initialConversation,
-} from "@/data/demo-project";
 import {
   calculateLoads,
   sizeBattery,
@@ -55,13 +49,11 @@ import {
 } from "@/domain/calculations";
 import type {
   ChatMessage,
-  Load,
   Project,
   Site,
   SiteEquipment,
   SystemSummary,
 } from "@/domain/models";
-import { evaluateDiagnostics } from "@/diagnostics/rules";
 import { mountingShoppingItems } from "@/design/panel-surfaces";
 import { BrowserProjectStore } from "@/persistence/project-store";
 import { SiteEquipmentInventory } from "@/components/site-equipment";
@@ -124,7 +116,6 @@ type QuestionnaireDrafts = Record<
     answers: Record<string, unknown>;
   }
 >;
-const ai = new MockAIProvider();
 const store = new BrowserProjectStore();
 
 function useCloseFloatingMenus() {
@@ -152,21 +143,6 @@ function useCloseFloatingMenus() {
   }, []);
 }
 
-const demoSite: Site = {
-  id: "demo-site",
-  name: "Demo site",
-  location: demoProject.location,
-  timezone: "Pacific/Auckland",
-  locationSource: "manual",
-  locationConfirmed: true,
-};
-const demoSystem: SystemSummary = {
-  id: demoProject.id,
-  siteId: demoSite.id,
-  name: demoProject.name,
-  projectType: demoProject.projectType,
-  phase: demoProject.phase,
-};
 function Badge({
   children,
   tone = "neutral",
@@ -213,81 +189,13 @@ function Heading({
   );
 }
 
-function discoverLoads(message: string, project: Project) {
-  const templates: Array<{ words: string[]; load: Omit<Load, "id"> }> = [
-    {
-      words: ["fridge", "freezer"],
-      load: {
-        name: "Fridge / freezer",
-        watts: 140,
-        quantity: 1,
-        hoursPerDay: 10,
-        surgeWatts: 700,
-        currentType: "AC",
-        confidence: "estimated",
-        simultaneous: true,
-      },
-    },
-    {
-      words: ["water pump", "pump"],
-      load: {
-        name: "Water pump",
-        watts: 1200,
-        quantity: 1,
-        hoursPerDay: 1,
-        surgeWatts: 3600,
-        currentType: "AC",
-        confidence: "estimated",
-        simultaneous: true,
-      },
-    },
-    {
-      words: ["television", "tv"],
-      load: {
-        name: "TV",
-        watts: 110,
-        quantity: 1,
-        hoursPerDay: 4,
-        surgeWatts: 110,
-        currentType: "AC",
-        confidence: "estimated",
-        simultaneous: true,
-      },
-    },
-    {
-      words: ["microwave"],
-      load: {
-        name: "Microwave",
-        watts: 1500,
-        quantity: 1,
-        hoursPerDay: 0.3,
-        surgeWatts: 1800,
-        currentType: "AC",
-        confidence: "estimated",
-        simultaneous: false,
-      },
-    },
-  ];
-  const lower = message.toLowerCase();
-  const additions = templates
-    .filter(
-      (t) =>
-        t.words.some((w) => lower.includes(w)) &&
-        !project.loads.some((l) => l.name === t.load.name),
-    )
-    .map((t) => ({ ...t.load, id: crypto.randomUUID() }));
-  return additions.length
-    ? { ...project, loads: [...project.loads, ...additions] }
-    : project;
-}
-
 export function PVIntellWorkspace({
-  initialProject = demoProject,
-  initialMessages = initialConversation,
+  initialProject,
+  initialMessages = [],
   initialConversationId,
-  initialSite = demoSite,
-  sites = [demoSite],
-  systems = [demoSystem],
+  initialSite,
+  sites,
+  systems,
   initialSiteEquipment = [],
   cloud = false,
   sitePage = false,
@@ -298,12 +206,12 @@ export function PVIntellWorkspace({
   showGoogleWelcome = false,
   showProposalIntro = false,
 }: {
-  initialProject?: Project;
+  initialProject: Project;
   initialMessages?: ChatMessage[];
   initialConversationId?: string;
-  initialSite?: Site;
-  sites?: Site[];
-  systems?: SystemSummary[];
+  initialSite: Site;
+  sites: Site[];
+  systems: SystemSummary[];
   initialQuestionnaires?: QuestionnaireDrafts;
   initialSiteEquipment?: SiteEquipment[];
   cloud?: boolean;
@@ -376,16 +284,6 @@ export function PVIntellWorkspace({
     [loads.dailyWh, project.autonomyDays, project.systemVoltage],
   );
   const inverter = useMemo(() => sizeInverter(loads), [loads]);
-  const findings = useMemo(
-    () =>
-      evaluateDiagnostics({
-        current: demoTelemetry,
-        inverterRatedWatts: 8000,
-        lowBatteryVoltage: 48,
-        isDaylight: true,
-      }),
-    [],
-  );
   const monitorOnly = ["check", "monitor", "diagnose", "maintain", "explain"].includes(project.phase);
   const hasProjectHistory = project.goal !== "Record equipment that is already installed";
   const viewingProjectHistory = monitorOnly && hasProjectHistory && ["design", "proposed-schematic", "build", "commission"].includes(view);
@@ -424,8 +322,6 @@ export function PVIntellWorkspace({
       return;
     }
     if (!message || sending) return;
-    const updated = discoverLoads(message, project);
-    persist(updated);
     setMessages((m) => [
       ...m,
       {
@@ -448,8 +344,8 @@ export function PVIntellWorkspace({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             message,
-            projectId: updated.id,
-            project: updated,
+            projectId: project.id,
+            project,
             conversationId,
             requestId: crypto.randomUUID(),
           }),
@@ -463,16 +359,11 @@ export function PVIntellWorkspace({
         actionUrl = body.actionUrl;
         actionLabel = body.actionLabel;
         if (body.actions?.length) router.refresh();
-      } else
-        reply = await ai.sendMessage(message, {
-          project: updated,
-          telemetry: demoTelemetry,
-          findings,
-        });
+      } else reply = "Wattson requires a saved Site and system context before answering.";
     } catch (error) {
       reply =
         error instanceof Error
-          ? `I couldn't reach the cloud service just now: ${error.message}. Your project changes are still saved.`
+          ? `Wattson is temporarily unavailable: ${error.message}. Your records have not been changed; try again shortly.`
           : "I couldn't reach the cloud service just now.";
     }
     setMessages((m) => [
@@ -1778,7 +1669,7 @@ function Build({ project, location, cloud, onAskGuide, shoppingListOnly = false,
   for (const node of acceptedComponents.filter((node) => !node.recordRef)) {
     if (node.id === "solar" || node.id.startsWith("solar-pv-") || node.id.includes("solar-safety")) continue;
     if (node.id.includes("inverter")) shoppingItems.push({ name: node.label, specification: `${design.inverterKw ?? "Rating to confirm"} kW continuous · ${node.detail}`, quantity: "1", regulated: true });
-    else if (node.id === "ac-safety") shoppingItems.push({ name: "AC circuit breaker / safety switch", specification: `${design.connectionType === "ac_three" ? 400 : 230} V AC · ${acProtection || "rating to confirm"} A · poles, curve, fault rating and RCD type to final design`, quantity: "1", regulated: true });
+    else if (node.id === "ac-safety") shoppingItems.push({ name: "AC circuit breaker / safety switch", specification: `${design.connectionVoltage ? `${design.connectionVoltage} V AC` : "AC voltage to confirm"} · ${acProtection || "rating to confirm"} A · poles, curve, fault rating and RCD type to final design`, quantity: "1", regulated: true });
     else if (node.id === "battery-safety") shoppingItems.push({ name: "Battery DC fuse and isolator", specification: node.detail, quantity: "1 set", regulated: true });
     else if (node.id === "earth") shoppingItems.push({ name: "Earthing electrode and termination kit", specification: node.detail, quantity: "1 set", regulated: true });
     else shoppingItems.push({ name: node.label, specification: node.detail, quantity: "1", regulated: node.id.includes("switchboard") || node.id.includes("controller") || node.authorityCheck === true });

@@ -1329,6 +1329,50 @@ export async function applyWattsonActions(
       const previous = settings.designCalculator && typeof settings.designCalculator === "object"
         ? settings.designCalculator as Record<string, unknown>
         : {};
+      const componentRecords = await supabase
+        .from("system_components")
+        .select("id,type,specifications,notes,quantity")
+        .eq("project_id", projectId)
+        .order("created_at", { ascending: true });
+      if (componentRecords.error) throw componentRecords.error;
+      const arrayRecords = await supabase
+        .from("pv_arrays")
+        .select("id,name,panel_count,panel_watts,panel_type,specifications")
+        .eq("project_id", projectId)
+        .order("created_at", { ascending: true });
+      if (arrayRecords.error) throw arrayRecords.error;
+      const authoritativeArrays = (arrayRecords.data ?? []).filter((record) => {
+        const specifications = (record.specifications ?? {}) as Record<string, unknown>;
+        return String(specifications["Proposal source"] ?? "").toLowerCase() !== "wattson design";
+      });
+      const recordedPanelCount = authoritativeArrays.reduce((total, array) => total + Number(array.panel_count ?? 0), 0);
+      const recordedPvCapacityKw = authoritativeArrays.reduce((total, array) => total + Number(array.panel_count ?? 0) * Number(array.panel_watts ?? 0) / 1000, 0);
+      const recordedPanelRatings = [...new Set(authoritativeArrays.map((array) => Number(array.panel_watts)).filter((watts) => Number.isFinite(watts) && watts > 0))];
+      const uniformRecordedPanelWatts = recordedPanelRatings.length === 1 ? recordedPanelRatings[0] : undefined;
+      const authoritativeComponents = (componentRecords.data ?? []).filter((record) => {
+        const specifications = (record.specifications ?? {}) as Record<string, unknown>;
+        return specifications["Planning unit source"] !== "Wattson inverter plan"
+          && specifications["Proposal source"] !== "Wattson design";
+      });
+      const authoritativeInverter = authoritativeComponents.find((record) => record.type === "inverter");
+      const authoritativeBattery = authoritativeComponents.find((record) => record.type === "battery");
+      const authoritativeGenerator = authoritativeComponents.find((record) => record.type === "generator");
+      const ratedPower = String((authoritativeInverter?.specifications as Record<string, unknown> | undefined)?.["Rated power"] ?? "");
+      const ratedPowerValue = Number(ratedPower.match(/\d+(?:\.\d+)?/)?.[0]);
+      const recordedInverterKw = Number.isFinite(ratedPowerValue) && ratedPowerValue > 0
+        ? ratedPowerValue * (/\b(?:w|watt)s?\b/i.test(ratedPower) && !/\bkw\b/i.test(ratedPower) ? 0.001 : 1)
+        : undefined;
+      const hasUserSelectedStructuredInverter = Boolean(authoritativeInverter && recordedInverterKw);
+      const batterySpecs = (authoritativeBattery?.specifications ?? {}) as Record<string, unknown>;
+      const batteryText = `${authoritativeBattery?.notes ?? ""} ${batterySpecs["Usable energy"] ?? ""} ${batterySpecs["Nominal energy"] ?? ""}`;
+      const batteryEnergy = Number(batteryText.match(/\d+(?:\.\d+)?\s*kWh/i)?.[0].match(/\d+(?:\.\d+)?/)?.[0]);
+      const recordedBatteryUsableKwh = Number.isFinite(batteryEnergy) && batteryEnergy > 0 ? batteryEnergy * Number(authoritativeBattery?.quantity ?? 1) : undefined;
+      const generatorSpecs = (authoritativeGenerator?.specifications ?? {}) as Record<string, unknown>;
+      const generatorPowerText = String(generatorSpecs["Continuous output"] ?? generatorSpecs["Rated power"] ?? "");
+      const generatorPower = Number(generatorPowerText.match(/\d+(?:\.\d+)?/)?.[0]);
+      const recordedGeneratorContinuousKw = Number.isFinite(generatorPower) && generatorPower > 0
+        ? generatorPower * (/\b(?:w|watt)s?\b/i.test(generatorPowerText) && !/\bkw\b/i.test(generatorPowerText) ? 0.001 : 1)
+        : undefined;
       const discovery = settings.designDiscovery && typeof settings.designDiscovery === "object"
         ? settings.designDiscovery as Record<string, { value?: unknown }>
         : {};
@@ -1349,7 +1393,7 @@ export async function applyWattsonActions(
         ...defaultProposalPanel,
         ...proposalPanelProfile(suggestedPanelType),
       } : undefined;
-      const representativePanelWatts = input.representative_panel_watts ?? candidate?.watts ?? previousPanelWatts ?? defaultProposalPanel.watts;
+      const representativePanelWatts = input.representative_panel_watts ?? uniformRecordedPanelWatts ?? candidate?.watts ?? previousPanelWatts ?? defaultProposalPanel.watts;
       const sizing = validatePreliminarySizing(
         { ...input, representative_panel_watts: representativePanelWatts },
         settings,
@@ -1367,7 +1411,8 @@ export async function applyWattsonActions(
       }) : undefined;
       let proposedPanelCount = solarFirstUpgrade?.totalPanelCount ?? sizing.panelCount;
       let proposedPvKw = solarFirstUpgrade?.targetPvKw ?? sizing.pvKw;
-      const proposedInverterKw = solarFirstUpgrade?.inverterKw ?? sizing.inverterKw;
+      const calculatedInverterKw = solarFirstUpgrade?.inverterKw ?? sizing.inverterKw;
+      const proposedInverterKw = hasUserSelectedStructuredInverter ? recordedInverterKw! : calculatedInverterKw;
       const retainUserModule = previous.updatedBy === "user" && Number(previous.panelWatts) === representativePanelWatts;
       const batteryChemistry = batteryChemistryFromDiscovery(discovery);
       const nominalDcVoltage = Number(String(discovery.dc_system_voltage?.value ?? "").match(/\d+(?:\.\d+)?/)?.[0]);
@@ -1388,13 +1433,18 @@ export async function applyWattsonActions(
       const connectionType = /three|3[ -]?phase/.test(recordedPhase) ? "ac_three" as const
         : /single|split/.test(recordedPhase) ? "ac_single" as const
         : undefined;
-      const inverterPlan = inverterArrangementAdvice({
-        requiredKw: proposedInverterKw,
+      const gridSupportedRecordedInverter = !standaloneMode
+        && hasUserSelectedStructuredInverter
+        && recordedInverterKw! >= Number(sizing.sizing.simultaneousLoadKw ?? 0);
+      const calculatedInverterRequirementKw = gridSupportedRecordedInverter ? recordedInverterKw! : calculatedInverterKw;
+      const inverterPlan = gridSupportedRecordedInverter ? undefined : inverterArrangementAdvice({
+        requiredKw: calculatedInverterRequirementKw,
         siteLocation: input.site_location,
         timezone: input.site_timezone,
         connectionType,
         projectType: String(current.data.mode) as "off-grid" | "grid-tied" | "hybrid",
       });
+      if (inverterPlan && hasUserSelectedStructuredInverter) inverterPlan.acceptedByUser = false;
       const batteryVoltage = sizing.batteryUsableKwh && batteryChemistry
         ? (Number(previous.batteryVoltage) || (nominalDcVoltage === 48 && /lifepo/i.test(batteryChemistry) ? 51.2 : nominalDcVoltage || undefined))
         : undefined;
@@ -1404,7 +1454,10 @@ export async function applyWattsonActions(
       const batteryAh = sizing.batteryUsableKwh && batteryVoltage && usableBatteryPercent
         ? Math.ceil(sizing.batteryUsableKwh * 1000 / (batteryVoltage * usableBatteryPercent / 100))
         : undefined;
-      const existingPanelAvailable = input.existing_panel_assessment_required ? input.existing_panel_available_count : undefined;
+      const existingPanelAvailable = authoritativeArrays.length
+        ? recordedPanelCount || undefined
+        : input.existing_panel_assessment_required ? input.existing_panel_available_count : undefined;
+      const recordedPanelCapacity = authoritativeArrays.length ? Number(recordedPvCapacityKw.toFixed(3)) : undefined;
       const existingPanelAllocation = existingPanelAvailable ? Math.min(input.existing_panel_max_use_count ?? existingPanelAvailable, existingPanelAvailable) : undefined;
       let existingPanelsUsed = existingPanelAllocation && proposedPanelCount ? Math.min(existingPanelAllocation, proposedPanelCount) : undefined;
       // A second array is selected independently. Discovery establishes its
@@ -1422,6 +1475,7 @@ export async function applyWattsonActions(
           targetPvKw: targetFrontSidePvKw,
           existingPanelCount: existingPanelsUsed,
           existingPanelWatts: representativePanelWatts,
+          existingCapacityKw: recordedPanelCapacity,
         }) : undefined;
         supplementaryCapacityRequiredKw = supplementary?.requiredCapacityKw || undefined;
         supplementaryPanelsRequired = supplementaryCapacityRequiredKw ? supplementary?.planningCount : undefined;
@@ -1432,7 +1486,7 @@ export async function applyWattsonActions(
       }
       const existingPanelsSurplus = existingPanelAvailable && existingPanelsUsed !== undefined ? existingPanelAvailable - existingPanelsUsed : undefined;
       const existingPanelWarnings = existingPanelAvailable ? [
-        `${existingPanelAvailable} user-owned ${input.representative_panel_watts} W panels are recorded, with up to ${existingPanelAllocation} made available to this proposal. The proposal uses ${existingPanelsUsed ?? 0}; ${existingPanelsSurplus ?? 0} remain unused${supplementaryCapacityRequiredKw ? `, and a separate array supplying at least ${supplementaryCapacityRequiredKw} kW is included` : ""}.`,
+        `${existingPanelAvailable} user-selected panel${existingPanelAvailable === 1 ? " is" : "s are"} recorded${recordedPanelCapacity ? ` (${recordedPanelCapacity} kW total)` : input.representative_panel_watts ? ` at ${input.representative_panel_watts} W each` : ""}, with up to ${existingPanelAllocation} made available to this proposal. The proposal uses ${existingPanelsUsed ?? 0}; ${existingPanelsSurplus ?? 0} remain unused${supplementaryCapacityRequiredKw ? `, and a separate unaccepted array supplying at least ${supplementaryCapacityRequiredKw} kW is proposed` : ""}.`,
         "Existing-panel suitability is provisional until the exact model, dimensions, weight, Voc, Vmp, Isc, Imp, temperature coefficient, condition and inverter/MPPT limits are verified. Any electrically different additional modules must use a separately compatible string or input.",
       ] : [];
       const solarFirstWarnings = solarFirstUpgrade ? [
@@ -1455,14 +1509,15 @@ export async function applyWattsonActions(
         panelWatts: representativePanelWatts,
         panelCount: proposedPanelCount,
         existingPanelGroup: existingPanelAvailable ? {
-          name: input.existing_panel_name ?? "Existing panels",
+          name: authoritativeArrays.length === 1 ? authoritativeArrays[0].name || "Selected panels" : input.existing_panel_name ?? "Selected panel arrays",
           availableCount: existingPanelAvailable,
           maximumAvailableToProposal: existingPanelAllocation,
           proposedUseCount: existingPanelsUsed,
           surplusCount: existingPanelsSurplus,
           supplementaryCount: supplementaryPanelsRequired,
           supplementaryTargetPvKw: supplementaryCapacityRequiredKw,
-          wattsEach: input.representative_panel_watts,
+          recordedCapacityKw: recordedPanelCapacity,
+          wattsEach: input.representative_panel_watts ?? uniformRecordedPanelWatts,
           supplementaryWattsEach: undefined,
           supplementaryPanelType: undefined,
           supplementaryLengthMm: undefined,
@@ -1499,6 +1554,11 @@ export async function applyWattsonActions(
           tiltDegrees: input.tilt_degrees ?? previous.tiltDegrees,
         }, (settings.solarResource as { latitude?: number } | undefined)?.latitude),
         inverterKw: proposedInverterKw,
+        calculatedPvRequirementKw: sizing.pvKw,
+        calculatedInverterRequirementKw,
+        recordedPvCapacityKw: recordedPanelCapacity,
+        recordedInverterCapacityKw: hasUserSelectedStructuredInverter ? recordedInverterKw : undefined,
+        recordedBatteryUsableKwh,
         evChargingKw: sizing.evChargingKw,
         evChargingPhase: sizing.evChargingPhase,
         inverterPlan,
@@ -1507,6 +1567,9 @@ export async function applyWattsonActions(
         generatorPurchaseStatus: generatorDetails.purchaseStatus || undefined,
         generatorContinuousKw: generatorIncluded ? generatorDetails.purchaseStatus === "not_purchased" ? calculatedGeneratorContinuousKw : generatorDetails.continuousKw : undefined,
         generatorSurgeKw: generatorIncluded ? generatorDetails.purchaseStatus === "not_purchased" ? calculatedGeneratorSurgeKw : generatorDetails.surgeKw : undefined,
+        calculatedGeneratorContinuousKw,
+        calculatedGeneratorSurgeKw,
+        recordedGeneratorContinuousKw,
         generatorConnectionMethod: generatorDetails.connectionMethod,
         generatorType: generatorDetails.generatorType,
         generatorFuel: generatorDetails.fuel,

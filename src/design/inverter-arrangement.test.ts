@@ -3,7 +3,7 @@ import { inverterArrangementAdvice } from "./inverter-arrangement";
 
 describe("inverter arrangement advice", () => {
   it("keeps a New Zealand residential-scale proposal at or below 10 kW", () => {
-    expect(inverterArrangementAdvice({ requiredKw: 10, timezone: "Pacific/Auckland", connectionType: "ac_single" }))
+    expect(inverterArrangementAdvice({ requiredKw: 10, siteLocation: "Auckland, New Zealand", connectionType: "ac_single" }))
       .toMatchObject({ jurisdiction: "nz", selectionStatus: "candidate_selected", unitRatingsKw: [10], preferredPhase: "single" });
   });
 
@@ -15,8 +15,13 @@ describe("inverter arrangement advice", () => {
   });
 
   it("selects two standard 8 kW units for a 15 kW requirement", () => {
-    expect(inverterArrangementAdvice({ requiredKw: 15, timezone: "Pacific/Auckland", connectionType: "ac_single" }))
+    expect(inverterArrangementAdvice({ requiredKw: 15, siteLocation: "Auckland, New Zealand", connectionType: "ac_single" }))
       .toMatchObject({ jurisdiction: "nz", unitRatingsKw: [8, 8], preferredPhase: "three" });
+  });
+
+  it("does not infer the Site jurisdiction from the account or server timezone", () => {
+    expect(inverterArrangementAdvice({ requiredKw: 15, timezone: "Pacific/Auckland", connectionType: "ac_single" }))
+      .toMatchObject({ jurisdiction: "local_review", unitRatingsKw: [15], preferredPhase: "three" });
   });
 
   it("selects three capped 10 kW units for a 25 kW requirement", () => {

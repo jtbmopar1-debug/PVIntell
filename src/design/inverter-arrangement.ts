@@ -4,6 +4,7 @@ export type InverterArrangementAdvice = {
   unitRatingsKw: number[];
   preferredPhase: "single" | "three" | "confirm";
   message: string;
+  acceptedByUser?: boolean;
 };
 
 const rounded = (value: number) => Number(value.toFixed(1));
@@ -30,8 +31,8 @@ export function inverterArrangementAdvice(input: {
 }): InverterArrangementAdvice | undefined {
   const requiredKw = Number(input.requiredKw);
   if (!Number.isFinite(requiredKw) || requiredKw <= 0) return undefined;
-  const location = `${input.siteLocation ?? ""} ${input.timezone ?? ""}`.toLowerCase();
-  const isNz = location.includes("new zealand") || input.timezone === "Pacific/Auckland";
+  const location = String(input.siteLocation ?? "").toLowerCase();
+  const isNz = location.includes("new zealand");
   const offGrid = input.projectType === "off-grid";
 
   if (offGrid) return {

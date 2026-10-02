@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FormattedChatMessage } from "@/components/formatted-chat-message";
 import { PoolHeatingCalculator } from "@/components/pool-heating-calculator";
 import { discoveryQuestionComplete } from "@/discovery/completion";
+import { discoveryClarifications } from "@/discovery/clarifications";
 import { nextVisibleQuestionId, previousVisibleQuestionId, routesToInstalledSystemCapture } from "@/discovery/navigation";
 import { discoveryStages, evAvailableSupplyOptions, evBidirectionalOptions, evChargingPriorityOptions, evChargingWindowOptions, evPlanningPowerBand, evPlanningPowerBands, evVehicleSizeOptions, helpForExperience, highPowerOptionsForEverydayNeeds, sequentialDiscoveryStageProgress, unknownAnswer, visibleDiscoveryQuestions, type DiscoveryAnswers, type DiscoveryQuestion } from "@/discovery/new-system";
 import { reconcileDiscoveryDependencies } from "@/discovery/dependencies";
@@ -94,6 +95,7 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [helpQuestion, setHelpQuestion] = useState<DiscoveryQuestion>();
+  const [helpClarification, setHelpClarification] = useState<{ title: string; message: string }>();
   const [discoveryConversationId, setDiscoveryConversationId] = useState<string | undefined>(initialDiscoveryConversationId);
   const [returningToReview, setReturningToReview] = useState(false);
   const [buildingProposal, setBuildingProposal] = useState(false);
@@ -233,10 +235,11 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
     });
   }
 
-  function openDiscoveryHelp(activeQuestion: DiscoveryQuestion) {
+  function openDiscoveryHelp(activeQuestion: DiscoveryQuestion, clarification?: { title: string; message: string }) {
     if (answers[activeQuestion.id] === unknownAnswer) {
       setAnswers((current) => ({ ...current, [activeQuestion.id]: "" }));
     }
+    setHelpClarification(clarification);
     setHelpQuestion(activeQuestion);
   }
 
@@ -402,14 +405,14 @@ export function GuidedNewSystem({ profile, sites, initialAnswers, initialQuestio
             })}
             setSiteLocation={(location) => setAnswers((current) => ({ ...current, ...location }))}
             onAskWattson={() => openDiscoveryHelp(question)}
-          /> : <Review answers={answers} questions={questions} completionContext={completionContext} proposedEquipment={visibleProposedEquipment} proposedEquipmentEditHref={existingSystemId && visibleProposedEquipment.length ? `/proposals/new?from=discovery&system=${existingSystemId}` : undefined} onSelectQuestion={(questionId) => void returnToQuestion(questionId)}/>}
+          /> : <Review answers={answers} questions={questions} completionContext={completionContext} proposedEquipment={visibleProposedEquipment} proposedEquipmentEditHref={existingSystemId && visibleProposedEquipment.length ? `/proposals/new?from=discovery&system=${existingSystemId}` : undefined} onSelectQuestion={(questionId) => void returnToQuestion(questionId)} onAskWattson={(questionId, clarification) => { const clarificationQuestion = questions.find((item) => item.id === questionId); if (clarificationQuestion) openDiscoveryHelp(clarificationQuestion, clarification); }}/>}
           {siteDiscoveryId && <div className="mt-4 rounded-xl border border-[#f1ce71] bg-[#fff9df] p-3 text-xs leading-5 text-[#725800]">This is the complete brief for this Site, including its proposed system. Saving changes flags every proposed design at this Site for review; nothing is silently overwritten.</div>}
           {error && <div className="mt-4 rounded-xl border border-[#efb6a7] bg-[#fff1ed] p-3 text-xs text-[#9b3f2c]">{error}</div>}
           <div className="mt-5 flex items-center justify-between gap-3"><button type="button" onClick={() => returningToReview ? void returnToReview() : void back()} disabled={(!returningToReview && index===0) || saving} className="flex h-11 items-center gap-2 rounded-xl border border-line bg-white px-5 text-xs font-bold disabled:opacity-40"><ArrowLeft size={15}/>{returningToReview ? "Back to review" : "Back"}</button>{reviewing?<button type="button" onClick={() => incompleteQuestions.length ? void returnToQuestion(incompleteQuestions[0].id) : void complete()} disabled={saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{incompleteQuestions.length ? <CircleHelp size={16}/> : null}{incompleteQuestions.length ? `Complete ${incompleteQuestions.length} missing answer${incompleteQuestions.length === 1 ? "" : "s"}` : "Save and build proposal"}</button>:question?<button type="button" onClick={() => void next()} disabled={!canLeaveCurrentQuestion || saving} className="flex h-11 items-center gap-2 rounded-xl bg-brand px-6 text-xs font-bold text-white disabled:opacity-40">{returningToReview ? "Save answer and return to review" : "Continue"}<ArrowRight size={15}/></button>:null}</div>
         </main>
       </div>
     </div>
-    {helpQuestion ? <DiscoveryHelpDialog question={helpQuestion} discoveryAnswers={answers} conversationId={discoveryConversationId} discoveryDraftId={discoveryDraftId} onConversation={setDiscoveryConversationId} onSafetyDecision={(decision) => setAnswers((current) => ({ ...current, custom_battery_assessment: decision }))} siteId={siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined)} projectId={existingSystemId} onClose={() => setHelpQuestion(undefined)}/> : null}
+    {helpQuestion ? <DiscoveryHelpDialog question={helpQuestion} clarification={helpClarification} discoveryAnswers={answers} conversationId={discoveryConversationId} discoveryDraftId={discoveryDraftId} onConversation={setDiscoveryConversationId} onSafetyDecision={(decision) => setAnswers((current) => ({ ...current, custom_battery_assessment: decision }))} siteId={siteDiscoveryId ?? (typeof answers.site_id === "string" && answers.site_id !== "__new__" ? answers.site_id : undefined)} projectId={existingSystemId} onClose={() => { setHelpQuestion(undefined); setHelpClarification(undefined); }}/> : null}
     {buildingProposal ? <div className="fixed inset-0 z-[1000] grid place-items-center bg-[#f3f6fa]/95 p-6 backdrop-blur-sm"><div className="card w-full max-w-lg p-8 text-center shadow-2xl"><span className="mx-auto grid size-16 place-items-center rounded-2xl bg-[#eaf2fb] text-brand"><LoaderCircle className="animate-spin" size={30}/></span><div className="eyebrow mt-6">Discovery complete</div><h2 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">Building your system proposal…</h2><p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted">Wattson is turning your confirmed requirements into the proposed system page. Nothing is being marked as purchased or installed.</p></div></div> : null}
   </div>;
 }
@@ -1445,7 +1448,7 @@ async function prepareDiscoveryPhoto(file: File) {
   return new File([blob], file.name.replace(/\.[^.]+$/, "") + "-label.jpg", { type: "image/jpeg", lastModified: Date.now() });
 }
 
-function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: existingConversationId, discoveryDraftId, onConversation, onSafetyDecision, siteId, projectId, onClose }: { question: DiscoveryQuestion; discoveryAnswers: DiscoveryAnswers; conversationId?: string; discoveryDraftId?: string; onConversation: (conversationId: string) => void; onSafetyDecision: (decision: string) => void; siteId?: string; projectId?: string; onClose: () => void }) {
+function DiscoveryHelpDialog({ question, clarification, discoveryAnswers, conversationId: existingConversationId, discoveryDraftId, onConversation, onSafetyDecision, siteId, projectId, onClose }: { question: DiscoveryQuestion; clarification?: { title: string; message: string }; discoveryAnswers: DiscoveryAnswers; conversationId?: string; discoveryDraftId?: string; onConversation: (conversationId: string) => void; onSafetyDecision: (decision: string) => void; siteId?: string; projectId?: string; onClose: () => void }) {
   const selectedAnswer = discoveryAnswers[question.id];
   const existingEquipment = selectedAnswer === "existing" || (Array.isArray(selectedAnswer) && selectedAnswer.includes("existing"));
   const equipmentName = question.id === "dc_system_voltage" ? "battery" : question.id === "architecture_preference" ? "inverter" : question.id === "panel_construction_interest" ? "solar panels" : "equipment";
@@ -1453,7 +1456,9 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
   const explainingArchitecture = question.id === "architecture_preference" && !existingEquipment;
   const compareModuleArrangements = question.id === "module_level_electronics" && Array.isArray(selectedAnswer) && selectedAnswer.includes("compare");
   const existingModuleEquipment = question.id === "module_level_electronics" && Array.isArray(selectedAnswer) && selectedAnswer.includes("existing_mixed");
-  const openingMessage = compareModuleArrangements
+  const openingMessage = clarification
+    ? `You asked about the optional clarification “${clarification.title}”. ${clarification.message} I can explain why it was raised, how the recorded answers can work together, and whether changing either answer would make this proposal more precise. Nothing needs to be changed unless you decide it should be.`
+    : compareModuleArrangements
     ? "Let’s compare the three arrangements for this Site: a standard string inverter, DC optimisers with a compatible string inverter, and microinverters. I’ll use the recorded roof directions, shading, array areas, monitoring needs, service access, expansion plans and local constraints. I’ll explain the electrical, practical, maintenance and cost trade-offs, then recommend the best fit rather than leaving the comparison open-ended."
     : existingModuleEquipment
       ? "Let’s identify the existing or mixed panel-level equipment you want considered for this build. Send the exact panel, optimiser, microinverter and main-inverter makes and models, plus label photos or manufacturer documents where available. I’ll verify voltage, current, power, connector, string or branch, communications and firmware compatibility. Nothing will be treated as compatible merely because the connectors fit or the brands appear related."
@@ -1495,7 +1500,7 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
     const nextMessages = [...messages, { role: "user" as const, content: displayedMessage }];
     setMessages(nextMessages); setInput(""); setSending(true); setError("");
     try {
-      const payload = { message, conversationId, requestId: crypto.randomUUID(), discoveryDraftId, siteId, projectId, discoveryAnswers, question: { id: question.id, title: question.title, stage: question.stage, help: question.noviceHelp, options: question.options }, recentConversation: nextMessages.slice(-8) };
+      const payload = { message, conversationId, requestId: crypto.randomUUID(), discoveryDraftId, siteId, projectId, discoveryAnswers, question: { id: question.id, title: clarification?.title ?? question.title, stage: question.stage, help: clarification ? `${clarification.message}\n\nRelated discovery question: ${question.title}\n${question.noviceHelp}` : question.noviceHelp, options: question.options }, recentConversation: nextMessages.slice(-8) };
       const formData = new FormData();
       formData.set("payload", JSON.stringify(payload));
       if (attachment) formData.set("file", attachment);
@@ -1536,8 +1541,9 @@ function DiscoveryHelpDialog({ question, discoveryAnswers, conversationId: exist
   </div>;
 }
 
-function Review({ answers, questions, completionContext, proposedEquipment, proposedEquipmentEditHref, onSelectQuestion }: { answers: DiscoveryAnswers; questions: DiscoveryQuestion[]; completionContext: { combinedInitialSetup: boolean }; proposedEquipment: Array<{ id: string; label: string; detail: string }>; proposedEquipmentEditHref?: string; onSelectQuestion: (questionId: string) => void }) {
+function Review({ answers, questions, completionContext, proposedEquipment, proposedEquipmentEditHref, onSelectQuestion, onAskWattson }: { answers: DiscoveryAnswers; questions: DiscoveryQuestion[]; completionContext: { combinedInitialSetup: boolean }; proposedEquipment: Array<{ id: string; label: string; detail: string }>; proposedEquipmentEditHref?: string; onSelectQuestion: (questionId: string) => void; onAskWattson: (questionId: string, clarification: { title: string; message: string }) => void }) {
   const incomplete = questions.filter((question) => !discoveryQuestionComplete(question, answers, completionContext));
+  const clarifications = discoveryClarifications(answers);
   const blueYellowDiscovery = answers.existing_proposal_status === "yes" || (Array.isArray(answers.proposal_intake_equipment) && answers.proposal_intake_equipment.length > 0);
   const reviewHeaderClass = blueYellowDiscovery ? "bg-[linear-gradient(110deg,#eaf3fb_0%,#eef5fc_42%,#fff2ad_100%)]" : "bg-[#eef5fc]";
   const recordedTypes = new Set(Array.isArray(answers.proposal_intake_equipment) ? answers.proposal_intake_equipment.map(String) : []);
@@ -1555,6 +1561,7 @@ function Review({ answers, questions, completionContext, proposedEquipment, prop
   return <section className="card overflow-hidden bg-white">
     <div className={`border-b border-line p-6 md:p-8 ${reviewHeaderClass}`}><div className="eyebrow">Review</div><h1 className="mt-3 font-display text-3xl font-extrabold tracking-[-.04em]">{incomplete.length ? "Complete your discovery" : "Ready for Wattson"}</h1><p className="mt-2 text-sm leading-6 text-muted">{incomplete.length ? `${incomplete.length} visible question${incomplete.length === 1 ? " is" : "s are"} still unanswered. Select any highlighted card to complete it before Wattson prepares the design.` : "Every visible question has been answered. These confirmed answers will form the design brief."}</p></div>
     {blueYellowDiscovery && displayedEquipment.length ? <div className="border-b border-line bg-[#fffaf0] p-6 md:p-8"><div><div className="eyebrow">Proposed equipment</div><h2 className="mt-2 font-display text-xl font-extrabold">Equipment you want to use</h2><p className="mt-1 text-xs leading-5 text-muted">These items came from the yellow equipment intake and will be assessed as part of this design.</p></div><div className="mt-4 grid gap-3 md:grid-cols-2">{displayedEquipment.map((item) => proposedEquipmentEditHref ? <Link key={item.id} href={proposedEquipmentEditHref} className="rounded-2xl border border-[#e5b92e] bg-[#fff8d8] p-4 transition hover:border-[#b99100]"><div className="text-xs font-extrabold">{item.label}</div><div className="mt-2 text-[11px] leading-5 text-muted">{item.detail || "Specifications recorded in the equipment intake"}</div></Link> : <div key={item.id} className="rounded-2xl border border-[#e5b92e] bg-[#fff8d8] p-4"><div className="text-xs font-extrabold">{item.label}</div><div className="mt-2 text-[11px] leading-5 text-muted">{item.detail}</div></div>)}</div></div> : null}
+    {clarifications.length ? <div className="border-b border-[#efd98e] bg-[#fffdf4] p-6 md:p-8"><div className="eyebrow text-[#765918]">Optional clarification</div><h2 className="mt-2 font-display text-xl font-extrabold">A few answers may describe different situations</h2><p className="mt-1 text-xs leading-5 text-muted">They are not necessarily mistakes and will not stop you continuing. Clarifying them now can make the proposal more precise.</p><div className="mt-4 space-y-2">{clarifications.map((item) => <article key={item.id} className="rounded-xl border border-[#e6c96c] bg-white p-4"><strong className="text-xs text-[#624b14]">{item.title}</strong><p className="mt-1 text-[11px] leading-5 text-muted">{item.message}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => onAskWattson(item.questionId, { title: item.title, message: item.message })} className="inline-flex items-center gap-2 rounded-lg bg-brand px-3 py-2 text-[10px] font-bold text-white"><Bot size={13}/>Ask Wattson</button><button type="button" onClick={() => onSelectQuestion(item.questionId)} className="rounded-lg border border-brand bg-white px-3 py-2 text-[10px] font-bold text-brand">Review this answer (optional)</button></div></article>)}</div></div> : null}
     <div className="[&>section]:contents [&>section>div:first-child]:hidden"><DiscoveryReviewQuestions answers={answers} questions={questions} completionContext={completionContext} onSelectQuestion={onSelectQuestion}/></div>
   </section>;
 }

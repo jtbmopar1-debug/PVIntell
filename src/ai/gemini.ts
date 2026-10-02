@@ -80,6 +80,23 @@ interface GeminiGenerateContentResponse {
   error?: { message?: string };
 }
 
+async function fetchGemini(url: string, init: RequestInit) {
+  const delaysMs = [0, 500, 1_500, 3_500];
+  let lastProblem: unknown;
+  for (let attempt = 0; attempt < delaysMs.length; attempt += 1) {
+    if (delaysMs[attempt]) await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+    try {
+      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(25_000) });
+      if (![408, 429, 500, 502, 503, 504].includes(response.status) || attempt === delaysMs.length - 1) return response;
+      lastProblem = new Error(`Transient Gemini response ${response.status}`);
+    } catch (problem) {
+      lastProblem = problem;
+      if (attempt === delaysMs.length - 1) throw problem;
+    }
+  }
+  throw lastProblem instanceof Error ? lastProblem : new Error("Gemini is temporarily unavailable.");
+}
+
 async function askGeminiWithGroundedSearch({
   apiKey,
   model,
@@ -97,7 +114,7 @@ async function askGeminiWithGroundedSearch({
   if (image)
     parts.push({ inline_data: { mime_type: image.mimeType, data: image.data } });
 
-  const response = await fetch(
+  const response = await fetchGemini(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
       method: "POST",
@@ -107,7 +124,6 @@ async function askGeminiWithGroundedSearch({
         contents: [{ role: "user", parts }],
         tools: [{ google_search: {} }],
       }),
-      signal: AbortSignal.timeout(25_000),
     },
   );
   const raw = (await response.json().catch(() => ({}))) as GeminiGenerateContentResponse;
@@ -626,13 +642,12 @@ When an image is attached, inspect it conservatively. Extract only clearly visib
       : prompt,
     tools,
   };
-  const response = await fetch(
+  const response = await fetchGemini(
     "https://generativelanguage.googleapis.com/v1beta/interactions",
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey, "Api-Revision": "2026-05-20" },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(25_000),
     },
   );
   const raw = (await response.json().catch(() => ({}))) as GeminiInteraction;

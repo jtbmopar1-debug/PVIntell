@@ -185,7 +185,8 @@ export const discoveryStages: Array<{ id: DiscoveryStage; label: string; descrip
 export function hasReliableMeasuredEnergyUse(answers: DiscoveryAnswers) {
   const monthly = Number(answers.current_energy_use);
   const daily = Number(answers.off_grid_daily_energy_use);
-  return (Number.isFinite(monthly) && monthly > 0) || (Number.isFinite(daily) && daily > 0);
+  const selectedBand = /^(?:monthly|daily)_(?:under|over|\d)/.test(String(answers.current_energy_use ?? answers.off_grid_daily_energy_use ?? ""));
+  return (Number.isFinite(monthly) && monthly > 0) || (Number.isFinite(daily) && daily > 0) || selectedBand;
 }
 
 export function sequentialDiscoveryStageProgress(questions: DiscoveryQuestion[], completedQuestionIds: ReadonlySet<string>) {

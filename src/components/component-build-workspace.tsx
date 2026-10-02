@@ -45,8 +45,8 @@ const connectionGuideIds: Record<string, string[]> = {
 const subjectTitles: Record<string, string> = { solar: "Solar panel installation", battery: "Battery storage installation", inverter: "Hybrid inverter installation", "battery-safety": "Battery fuse and isolation", "solar-safety": "PV isolation", switchboard: "Building power board", "ac-safety": "Building supply protection", "grid-changeover": "Grid changeover and isolation", "pv-connection": "PV DC cable and connection", "battery-connection": "Battery DC cable, lugs and protection", "ac-connection": "AC cable, changeover and protection", "earth-connection": "Earthing and bonding connection" };
 
 export function ComponentBuildWorkspace({ project, site, itemId }: { project: Project; site: Site; itemId: string }) {
-  const regionalContext = `${site.location} ${site.timezone ?? ""}`.toLowerCase();
-  const isNewZealand = regionalContext.includes("new zealand") || regionalContext.includes("auckland") || site.timezone === "Pacific/Auckland";
+  const regionalContext = site.location.toLowerCase();
+  const isNewZealand = site.locationConfirmed && regionalContext.includes("new zealand");
   const isPvSubject = itemId === "solar" || itemId === "pv-connection";
   const regionalPurchaseNote = isNewZealand && isPvSubject
     ? <>PV array cabling and its containment and identification must comply with the currently cited New Zealand requirements. Do not buy ordinary unmarked conduit on the assumption it will pass: confirm the required containment duty and durable <strong>SOLAR</strong> identification for the actual route before purchase and inspection.</>

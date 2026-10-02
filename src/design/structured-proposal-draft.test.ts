@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Project } from "../domain/models";
-import { createStructuredProposalDraft, structuredProposalDesignFacts } from "./structured-proposal-draft";
+import { createStructuredProposalDraft, reconcileStructuredProposalDraft, structuredProposalDesignFacts } from "./structured-proposal-draft";
 
 function arronLikeProject(): Project {
   const arrays: Project["pvArrays"] = [
@@ -25,6 +25,21 @@ function arronLikeProject(): Project {
 }
 
 describe("structured proposal schematic", () => {
+  it("rebuilds stale labels from authoritative equipment even when the source fingerprint is unchanged", () => {
+    const project = arronLikeProject();
+    const canonical = createStructuredProposalDraft(project, {}, true)!;
+    const stale = {
+      ...canonical,
+      nodes: canonical.nodes?.map((node) => node.id === "inverter"
+        ? { ...node, label: "2 x 6 kW inverter arrangement", detail: "Stale advisory presentation" }
+        : node),
+    };
+    const reconciled = reconcileStructuredProposalDraft(project, { proposedAsBuiltDraft: stale }, true)!;
+    expect(reconciled.nodes?.find((node) => node.id === "inverter")).toMatchObject({
+      label: "Inverter · Sigen Energy SigenStor EC 25.0 TP AU",
+    });
+  });
+
   it("preserves every user-entered item while excluding generated placeholders", () => {
     const project = arronLikeProject();
     const draft = createStructuredProposalDraft(project, {}, true)!;
@@ -88,5 +103,61 @@ describe("structured proposal schematic", () => {
     expect(facts.batteryUsableKwh).toBe(39);
     expect(facts.generatorIncluded).toBe(true);
     expect(facts.generatorContinuousKw).toBe(6);
+  });
+
+  it("normalises a recorded inverter rating in watts to kilowatts", () => {
+    const project = arronLikeProject();
+    const inverter = project.components.find((component) => component.id === "inverter")!;
+    inverter.specs["Rated power"] = "6000 W";
+
+    expect(structuredProposalDesignFacts(project)?.inverterKw).toBe(6);
+    expect(structuredProposalDesignFacts(project)?.recordedInverterCapacityKw).toBe(6);
+  });
+
+  it("shows an unaccepted supplementary array on a structured schematic", () => {
+    const project = arronLikeProject();
+    project.pvArrays = project.pvArrays.slice(0, 1);
+    project.connections = project.connections.filter((connection) => connection.sourceRef === "pv:garage" || !connection.sourceRef.startsWith("pv:"));
+    const inverter = project.components.find((component) => component.id === "inverter")!;
+    inverter.specs["MPPT count"] = "3";
+    const draft = createStructuredProposalDraft(project, {
+      existingPanelGroup: {
+        name: "Recorded arrays",
+        availableCount: 53,
+        proposedUseCount: 53,
+        supplementaryTargetPvKw: 8.74,
+        assessmentStatus: "provisional_pending_datasheet_and_condition",
+      },
+    }, true)!;
+
+    expect(draft.nodes).toContainEqual(expect.objectContaining({
+      id: "supplementary-solar-array-1",
+      label: "Additional solar array 1",
+      introduced: true,
+      reviewed: false,
+    }));
+    expect(draft.nodes).toContainEqual(expect.objectContaining({
+      id: "supplementary-solar-array-2",
+      label: "Additional solar array 2",
+      introduced: true,
+    }));
+    expect(draft.connections).toContainEqual(expect.objectContaining({
+      from: "supplementary-solar-array-1",
+      to: "inverter",
+      kind: "solar-dc",
+    }));
+  });
+
+  it("offers a shade-management comparison without silently selecting optimisers", () => {
+    const project = arronLikeProject();
+    project.designDiscovery = { shading: { value: "significant", confidence: "confirmed" } };
+    const draft = createStructuredProposalDraft(project, {}, true)!;
+
+    expect(draft.nodes).toContainEqual(expect.objectContaining({
+      id: "shade-optimiser-option",
+      label: "Panel optimisers to compare",
+      introduced: true,
+      reviewed: false,
+    }));
   });
 });

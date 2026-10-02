@@ -209,7 +209,7 @@ describe("preliminary proposal sizing boundary", () => {
       panelCount: 16,
       pvStrings: 2,
       panelsPerString: 8,
-      inverterPlan: { unitRatingsKw: [8, 8] },
+      inverterPlan: { unitRatingsKw: [14] },
       pvArrayPlan: { status: "surface_allocation_required", arrays: [{ topology: { strings: [{ panelsInSeries: 8 }, { panelsInSeries: 8 }] } }] },
     });
   });
@@ -224,6 +224,6 @@ describe("preliminary proposal sizing boundary", () => {
     expect(adjusted.designCalculator).not.toHaveProperty("pvStrings");
     expect(adjusted.designCalculator).not.toHaveProperty("panelsPerString");
     expect(adjusted.designCalculator).not.toHaveProperty("proposedAsBuiltDraft");
-    expect(adjusted.designCalculator).toMatchObject({ inverterPlan: { unitRatingsKw: [8, 8] } });
+    expect(adjusted.designCalculator).toMatchObject({ inverterPlan: { unitRatingsKw: [14] } });
   });
 });

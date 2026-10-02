@@ -245,6 +245,7 @@ export function structuredProposalDesignFacts(project: Project): Partial<DesignC
   return {
     panelCount: totalPanels || undefined,
     targetPvKw: totalPvKw ? Number(totalPvKw.toFixed(3)) : undefined,
+    recordedPvCapacityKw: totalPvKw ? Number(totalPvKw.toFixed(3)) : undefined,
     panelProfileBasis: "user_equipment",
     sizingWarnings: compatibilityWarnings,
     pvArrayPlan: arrays.length ? {
@@ -254,7 +255,8 @@ export function structuredProposalDesignFacts(project: Project): Partial<DesignC
     } : undefined,
     architecture: inverterType === "hybrid" ? "combined_hybrid_inverter" : undefined,
     inverterArrangement: inverter ? "combined" : undefined,
-    inverterKw: numberFrom(inverter?.specs["Rated power"]),
+    inverterKw: powerKwFrom(inverter?.specs["Rated power"]),
+    recordedInverterCapacityKw: powerKwFrom(inverter?.specs["Rated power"]),
     inverterPlan: undefined,
     batteryIncluded: Boolean(battery),
     batteryChemistry: text(battery?.specs["Battery type"] ?? battery?.specs["Chemistry / battery type"]) || undefined,
@@ -262,8 +264,10 @@ export function structuredProposalDesignFacts(project: Project): Partial<DesignC
     batteryAh: numberFrom(battery?.specs["Rated capacity"] ?? battery?.specs.Capacity),
     batteryQuantity: battery?.quantity,
     batteryUsableKwh: battery ? batteryUsableFromNotes ?? (batteryNominalKwh ? Number((batteryNominalKwh * battery.quantity).toFixed(2)) : undefined) : undefined,
+    recordedBatteryUsableKwh: battery ? batteryUsableFromNotes ?? (batteryNominalKwh ? Number((batteryNominalKwh * battery.quantity).toFixed(2)) : undefined) : undefined,
     generatorIncluded: Boolean(generator),
     generatorContinuousKw: powerKwFrom(generator?.specs["Rated power"]),
+    recordedGeneratorContinuousKw: powerKwFrom(generator?.specs["Rated power"]),
   };
 }
 
@@ -292,6 +296,51 @@ export function createStructuredProposalDraft(project: Project, design: DesignCa
     });
   });
 
+  const supplementaryPvKw = Number(design.existingPanelGroup?.supplementaryTargetPvKw ?? 0);
+  const recordedMpptCount = numberFrom(inverter?.specs["MPPT count"] ?? inverter?.specs["Number of MPPTs"]);
+  const usedMpptCount = arrays.reduce((total, array) => total + Math.max(1, array.strings ?? 1), 0);
+  const spareMpptCount = recordedMpptCount ? Math.max(0, recordedMpptCount - usedMpptCount) : 0;
+  const recordedPanelWatts = [...new Set(arrays.map((array) => array.panelWatts).filter((watts): watts is number => Boolean(watts)))];
+  const planningPanelWatts = recordedPanelWatts.length === 1 ? recordedPanelWatts[0] : undefined;
+  const supplementaryPartCount = supplementaryPvKw > 0 ? Math.max(1, spareMpptCount) : 0;
+  const provisionalPanelsPerPart = planningPanelWatts ? Math.max(1, Math.floor(supplementaryPvKw * 1000 / supplementaryPartCount / planningPanelWatts)) : undefined;
+  const supplementaryPartKw = provisionalPanelsPerPart && planningPanelWatts
+    ? provisionalPanelsPerPart * planningPanelWatts / 1000
+    : supplementaryPvKw / Math.max(1, supplementaryPartCount);
+  const supplementaryArrayNodeIds = Array.from({ length: supplementaryPartCount }, (_, index) => `supplementary-solar-array-${index + 1}`);
+  supplementaryArrayNodeIds.forEach((id, index) => nodes.push({
+    id,
+    label: spareMpptCount > 0 ? supplementaryPartCount > 1 ? `Additional solar array ${index + 1}` : "Additional solar array" : "Extra solar not yet allocated",
+    detail: !recordedMpptCount
+      ? `Up to ${supplementaryPvKw.toFixed(2)} kW is being considered, but the inverter's number of solar inputs has not been recorded. Add that information before splitting or connecting extra arrays.`
+      : spareMpptCount === 0
+        ? `Up to ${supplementaryPvKw.toFixed(2)} kW is being considered, but no spare inverter solar input is currently shown. Review the recorded strings and inverter details before adding panels.`
+        : gridConnected
+      ? `${provisionalPanelsPerPart && planningPanelWatts ? `A provisional ${provisionalPanelsPerPart} × ${planningPanelWatts} W (${supplementaryPartKw.toFixed(2)} kW) option` : `About ${supplementaryPartKw.toFixed(2)} kW`} for spare solar input ${index + 1}. This helps solar cover more yearly use, but it is optional because the grid supplies the rest. Check the panel electrical details and available mounting area before accepting it.`
+      : `${provisionalPanelsPerPart && planningPanelWatts ? `A provisional ${provisionalPanelsPerPart} × ${planningPanelWatts} W (${supplementaryPartKw.toFixed(2)} kW) option` : `About ${supplementaryPartKw.toFixed(2)} kW`} for solar input ${index + 1}. Check the panel electrical details, available mounting area and least-sunny-season performance before accepting it.`,
+    image: "/schematic-components/solar-panel-pv-module.jpg",
+    x: 40,
+    y: 30 + (arrays.length + index) * 145,
+    reviewed: false,
+    introduced: true,
+    introductionReason: gridConnected
+      ? "Optional extra panels to help solar cover more of the estimated yearly use. They are not required because the grid can supply the rest."
+      : "Extra panels suggested to help supply enough energy through the least-sunny part of the year.",
+  }));
+
+  const recordedShade = text(project.designDiscovery?.shading?.value).toLowerCase();
+  if (["some", "significant", "fairly_consistent", "consistent"].includes(recordedShade)) nodes.push({
+    id: "shade-optimiser-option",
+    label: "Panel optimisers to compare",
+    detail: "Shade has been recorded. First see whether panels can be moved out of the shade. If shade will still fall across panels in the same string, compare compatible panel optimisers or microinverters. They can reduce losses between unevenly shaded panels, but they cannot replace missing sunlight.",
+    image: "/schematic-components/dc-optimisers.svg",
+    x: 285,
+    y: 30 + (arrays.length + supplementaryPartCount) * 145,
+    reviewed: false,
+    introduced: true,
+    introductionReason: "Optional shade-management equipment to compare because shade was recorded during discovery.",
+  });
+
   const byKind = new Map<ComponentSpec["kind"], number>();
   components.forEach((component) => {
     const kindIndex = (byKind.get(component.kind) ?? 0) + 1;
@@ -303,17 +352,28 @@ export function createStructuredProposalDraft(project: Project, design: DesignCa
           : `proposal-${component.kind}-${kindIndex}`;
     const recordRef = `component:${component.id}`;
     nodeByRecordRef.set(recordRef, id);
+    const missingSolarInputDetails = component.kind === "inverter" ? [
+      numberFrom(component.specs["MPPT count"] ?? component.specs["Number of MPPTs"]) ? undefined : "number of solar inputs",
+      numberFrom(component.specs["MPPT minimum voltage"]) ? undefined : "minimum input voltage",
+      numberFrom(component.specs["MPPT maximum voltage"] ?? component.specs["Maximum PV voltage"]) ? undefined : "maximum input voltage",
+      numberFrom(component.specs["Maximum PV input current"]) ? undefined : "maximum input current",
+      powerKwFrom(component.specs["Maximum PV input power"] ?? component.specs["Maximum recommended PV power"]) ? undefined : "maximum total panel power",
+    ].filter((value): value is string => Boolean(value)) : [];
     const column = component.kind === "inverter" ? 560 : component.kind === "battery" ? 330 : component.kind === "generator" ? 330 : 730;
     const row = component.kind === "inverter" ? 200 + (kindIndex - 1) * 190 : component.kind === "battery" ? 650 + (kindIndex - 1) * 145 : component.kind === "generator" ? 820 + (kindIndex - 1) * 145 : 40 + (kindIndex - 1) * 145;
     nodes.push({
       id,
       label: recordLabel(component),
-      detail: componentDetail(component, componentAssessment(component, inverter)),
+      detail: `${componentDetail(component, componentAssessment(component, inverter))}${missingSolarInputDetails.length ? ` User check: add the inverter's ${missingSolarInputDetails.join(", ")} from its datasheet before accepting extra panels.` : ""}`,
       image: componentImage(component.kind),
       x: column,
       y: row,
       recordRef,
       reviewed: false,
+      introduced: text(component.specs["Planning unit source"]).toLowerCase() === "wattson inverter plan",
+      introductionReason: text(component.specs["Planning unit source"]).toLowerCase() === "wattson inverter plan"
+        ? "Added by Wattson after the user accepted a multi-inverter arrangement."
+        : undefined,
     });
   });
 
@@ -368,6 +428,14 @@ export function createStructuredProposalDraft(project: Project, design: DesignCa
         notes: "Candidate battery-to-inverter route. Confirm BMS communications, voltage/current limits, isolation, protection and cable sizing before installation.",
       });
     }
+    if (spareMpptCount > 0) supplementaryArrayNodeIds.forEach((nodeId, index) => connections.push({
+      from: nodeId,
+      to: inverterNode,
+      label: `Additional array ${index + 1} proposed solar input`,
+      kind: "solar-dc",
+      notes: "This option has not been accepted. Check the panel details, mounting area, string layout and inverter input limits before adding it to the equipment list.",
+      configured: false,
+    }));
   }
 
   const generators = components.filter((component) => component.kind === "generator");
@@ -458,7 +526,6 @@ export function reconcileStructuredProposalDraft(project: Project, design: Desig
   const rebuilt = createStructuredProposalDraft(project, design, gridConnected);
   if (!rebuilt) return undefined;
   const previous = design.proposedAsBuiltDraft;
-  if (previous?.sourceRecordFingerprint === rebuilt.sourceRecordFingerprint) return previous;
   if (!previous) return rebuilt;
   const previousNodes = new Map((previous.nodes ?? []).map((node) => [node.recordRef ?? node.id, node]));
   const nodes = rebuilt.nodes?.map((node) => {
@@ -469,6 +536,7 @@ export function reconcileStructuredProposalDraft(project: Project, design: Desig
       x: prior.x,
       y: prior.y,
       reviewed: prior.reviewed,
+      rejected: prior.rejected,
       installed: prior.installed,
       installedRecordId: prior.installedRecordId,
     };

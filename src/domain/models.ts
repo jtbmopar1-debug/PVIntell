@@ -153,7 +153,7 @@ export interface DesignCalculatorState {
     createdAt: string;
     architecture?: "combined_hybrid_inverter" | "separate_solar_controller_and_inverter" | "ac_coupled" | "not_decided";
     flow: string[];
-    nodes?: Array<{ id: string; label: string; detail: string; image: string; x: number; y: number; recordRef?: string; installed?: boolean; installedRecordId?: string; reviewed?: boolean; notes?: string; authorityCheck?: boolean }>;
+    nodes?: Array<{ id: string; label: string; detail: string; image: string; x: number; y: number; recordRef?: string; installed?: boolean; installedRecordId?: string; reviewed?: boolean; rejected?: boolean; notes?: string; authorityCheck?: boolean; introduced?: boolean; introductionReason?: string }>;
     connections?: Array<{ from: string; to: string; label: string; kind: "solar-dc" | "battery-dc" | "ac" | "earth"; lengthM?: number; lengthBasis?: "estimated" | "measured"; cableSizeMm2?: number; protectionAmps?: number; notes?: string; authorityCheck?: boolean; configured?: boolean; provisionalInterface?: boolean }>;
     panelCount?: number;
     panelWatts?: number;
@@ -197,6 +197,7 @@ export interface DesignCalculatorState {
     surplusCount?: number;
     supplementaryCount?: number;
     supplementaryTargetPvKw?: number;
+    recordedCapacityKw?: number;
     wattsEach?: number;
     supplementaryWattsEach?: number;
     supplementaryPanelType?: string;
@@ -270,6 +271,11 @@ export interface DesignCalculatorState {
   peakSunHours?: number;
   systemEfficiencyPercent?: number;
   inverterKw?: number;
+  /** Deterministic requirements remain separate from recorded/selected equipment. */
+  calculatedPvRequirementKw?: number;
+  calculatedInverterRequirementKw?: number;
+  recordedPvCapacityKw?: number;
+  recordedInverterCapacityKw?: number;
   evChargingKw?: number;
   evChargingPhase?: "single" | "three";
   inverterPlan?: {
@@ -278,6 +284,8 @@ export interface DesignCalculatorState {
     unitRatingsKw: number[];
     preferredPhase: "single" | "three" | "confirm";
     message: string;
+    /** Calculated alternatives do not create equipment until the user accepts one. */
+    acceptedByUser?: boolean;
   };
   batteryChemistry?: string;
   batteryVoltage?: number;
@@ -287,6 +295,7 @@ export interface DesignCalculatorState {
   usableBatteryPercent?: number;
   batteryUsableKwh?: number;
   calculatedBatteryUsableKwh?: number;
+  recordedBatteryUsableKwh?: number;
   sizingMethod?: "deterministic-v1" | "user-adjusted";
   sizingInputs?: {
     dailyEnergyKwh?: number;
@@ -311,6 +320,10 @@ export interface DesignCalculatorState {
   generatorFuel?: string;
   generatorContinuousKw?: number;
   generatorSurgeKw?: number;
+  calculatedGeneratorContinuousKw?: number;
+  calculatedGeneratorSurgeKw?: number;
+  recordedGeneratorContinuousKw?: number;
+  recordedGeneratorSurgeKw?: number;
   generatorConnectionMethod?: string;
   /** Regional rules basis used for preliminary protective-earth calculations. */
   electricalStandard?: "as_nzs" | "nec" | "iec" | "local_review";

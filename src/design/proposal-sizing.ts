@@ -329,12 +329,13 @@ export function supplementaryArrayPlan(input: {
   targetPvKw: number;
   existingPanelCount: number;
   existingPanelWatts: number;
+  existingCapacityKw?: number;
   planningModuleWatts?: number;
 }) {
   const targetPvKw = finitePositive(input.targetPvKw) ?? 0;
   const existingPanelCount = Math.max(0, Math.floor(finitePositive(input.existingPanelCount) ?? 0));
   const existingPanelWatts = finitePositive(input.existingPanelWatts) ?? 0;
-  const existingPvKw = rounded(existingPanelCount * existingPanelWatts / 1000);
+  const existingPvKw = rounded(finitePositive(input.existingCapacityKw) ?? existingPanelCount * existingPanelWatts / 1000);
   const requiredCapacityKw = rounded(Math.max(0, targetPvKw - existingPvKw));
   const planningModuleWatts = finitePositive(input.planningModuleWatts);
   const planningCount = requiredCapacityKw > 0 && planningModuleWatts

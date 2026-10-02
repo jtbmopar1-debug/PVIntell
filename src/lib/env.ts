@@ -14,4 +14,3 @@ export const publicEnvironment = publicEnvironmentSchema.parse({
   NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
 });
 
-export const persistenceMode = process.env.DATABASE_URL ? "postgres" : "demo";

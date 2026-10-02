@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { askGemini } from "@/ai/gemini";
 import { loadWorkspace } from "@/data/cloud-project";
-import { demoProject } from "@/data/demo-project";
 import type { Project } from "@/domain/models";
 import { createClient } from "@/lib/supabase/server";
 import { recordOwnShadowCreditUsage } from "@/credits/usage";
@@ -51,7 +50,29 @@ export async function POST(request: Request) {
   } else if (parsed.data.siteId) {
     const site = await supabase.from("sites").select("id,name,location,location_confirmed").eq("id", parsed.data.siteId).eq("owner_id", userId).maybeSingle();
     if (site.error || !site.data) return Response.json({ error: "Site not found" }, { status: 404 });
-    project = { ...demoProject, id: `guide-${site.data.id}`, siteId: site.data.id, name: `${site.data.name} guide help`, location: site.data.location_confirmed && site.data.location ? site.data.location : "Location not set" };
+    project = {
+      id: `guide-${site.data.id}`,
+      siteId: site.data.id,
+      name: `${site.data.name} guide help`,
+      description: "Site-scoped How-to help without a selected power system.",
+      projectType: "grid-tied",
+      phase: "discover",
+      location: site.data.location_confirmed && site.data.location ? site.data.location : "Location not set",
+      goal: "Explain the selected guide only.",
+      priorities: [],
+      systemVoltage: 0,
+      autonomyDays: 0,
+      peakSunHours: 0,
+      loads: [],
+      assumptions: [],
+      components: [],
+      connections: [],
+      schematicPositions: [],
+      overviewCardOrder: [],
+      pvArrays: [],
+      installationSteps: [],
+      commissioning: [],
+    };
   }
   if (!project) return Response.json({ error: "Guide context is unavailable" }, { status: 400 });
 
